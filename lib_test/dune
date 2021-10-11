@@ -1,0 +1,10 @@
+(executable
+  (public_name tag)
+  (libraries alcotest cstruct littlefs)
+)
+(rule
+  (alias runtest)
+  (action
+    (run ./tag.exe)
+  )
+)
