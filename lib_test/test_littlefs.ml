@@ -16,7 +16,7 @@ module Tag = struct
     | Ok _ -> Alcotest.fail "abstract type 1 was accepted"
     | Error _ -> ()
   
-  let test_maxint () =
+  let read_maxint () =
     let valid = true
     and abstract_type = Littlefs.Tag.LFS_TYPE_GSTATE
     and chunk = 0xff
@@ -35,6 +35,18 @@ module Tag = struct
     Alcotest.(check int) "id" id t.id;
     Alcotest.(check int) "length" length t.length;
     ()
+
+  let write_maxint () =
+    let valid = true
+    and abstract_type = Littlefs.Tag.LFS_TYPE_GSTATE
+    and chunk = 0xff
+    and id = 0x3ff
+    and length = 0x3ff
+    in
+    let t = Littlefs.Tag.{ valid; type3 = (abstract_type, chunk); id; length } in
+    let cs = Cstruct.create 4 in
+    Cstruct.BE.set_uint32 cs 0 Int32.minus_one;
+    Alcotest.(check @@ of_pp Cstruct.hexdump_pp) "tag writing: maxint" cs (Littlefs.Tag.print t)
 
 end
 
@@ -56,9 +68,10 @@ let () =
   let tc = Alcotest.test_case in
   Alcotest.run "littlefs" [
     ( "tags", [
-          tc "all bits are zero" `Quick Tag.test_zero;
-          tc "all fields are 1" `Quick Tag.test_ones;
-          tc "all bits are 1" `Quick Tag.test_maxint;
+          tc "read: all bits are zero" `Quick Tag.test_zero;
+          tc "read: all fields are 1" `Quick Tag.test_ones;
+          tc "read: all bits are 1" `Quick Tag.read_maxint;
+          tc "write: all bits are 1" `Quick Tag.write_maxint;
         ]);
     ( "superblock", [
           tc "all bits are zero" `Quick Superblock.test_zero;

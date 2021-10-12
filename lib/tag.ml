@@ -37,3 +37,17 @@ let parse r =
   | Some abstract_type ->
     let type3 = abstract_type, chunk in
     Ok {valid; type3; id; length}
+
+let print_to cs t =
+  let bit_1 = if t.valid then 1 lsl 31 else 0
+  and abstract_type = (abstract_type_to_int (fst t.type3)) lsl 28
+  and chunk = (snd t.type3) lsl 20
+  and id = t.id lsl 10
+  in
+  let n = bit_1 + abstract_type + chunk + id + t.length |> Int32.of_int in
+  Cstruct.BE.set_uint32 cs 0 n
+
+let print t =
+  let cs = Cstruct.create 4 in
+  print_to cs t;
+  cs

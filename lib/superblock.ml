@@ -28,3 +28,16 @@ let parse cs =
     file_size_max = get_superblock_file_size_max cs;
     file_attribute_size_max = get_superblock_file_attribute_size_max cs;
   }
+
+let print_to cs sb =
+  set_superblock_version cs sb.version;
+  set_superblock_block_size cs sb.block_size;
+  set_superblock_block_count cs sb.block_count;
+  set_superblock_name_length_max cs sb.name_length_max;
+  set_superblock_file_size_max cs sb.file_size_max;
+  set_superblock_file_attribute_size_max cs sb.file_attribute_size_max;
+  cs
+
+let print sb =
+  let cs = Cstruct.create sizeof_superblock in
+  print_to cs sb
