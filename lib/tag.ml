@@ -25,6 +25,9 @@ type tag = {
   length : int;
 }
 
+let not_associated = 0x3ff (* special value for "id" field *)
+let deleted_tag = 0x3ff (* special value for "length" field *)
+
 let parse r =
   let valid = (1 = r lsr 31)
   and abstract_type = (r lsr 28) land 0x7 |> int_to_abstract_type
@@ -40,7 +43,7 @@ let parse r =
 
 let print_to cs t =
   let bit_1 = if t.valid then 1 lsl 31 else 0
-  and abstract_type = (abstract_type_to_int (fst t.type3)) lsl 28
+  and abstract_type = (abstract_type_to_int @@ fst t.type3) lsl 28
   and chunk = (snd t.type3) lsl 20
   and id = t.id lsl 10
   in
