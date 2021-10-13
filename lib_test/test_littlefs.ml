@@ -64,6 +64,21 @@ module Superblock = struct
 
 end
 
+module Block = struct
+  module Block = Littlefs.Block
+
+  (* what's a reasonable block size? let's assume 4Kib *)
+  let block_size = 4096
+
+  let commit_empty_list () =
+    let block = Block.empty in
+    let entries = [] in
+    let block = Block.commit block_size block entries in
+    let commit = List.hd block.commits in
+    Alcotest.(check int) "padding should be the whole block less revision count and crc" (4096 - 8) commit.padding;
+    Alcotest.(check int) "crc should be CRC of 0xffffffff and 0x00000000" 558161692 (Optint.to_int commit.crc)
+end
+
 let () =
   let tc = Alcotest.test_case in
   Alcotest.run "littlefs" [
@@ -75,5 +90,8 @@ let () =
         ]);
     ( "superblock", [
           tc "all bits are zero" `Quick Superblock.test_zero;
+      ]);
+    ( "block", [
+          tc "we can construct a block" `Quick Block.commit_empty_list;
       ]);
   ]

@@ -1,6 +1,6 @@
 (library
   (public_name littlefs)
-  (modules superblock tag)
+  (modules superblock tag block)
   (libraries checkseum cstruct)
   (preprocess (pps ppx_cstruct))
   )
