@@ -20,7 +20,7 @@ type type3 = abstract_type * chunk
 
 type tag = {
   valid : bool;
-  type3 : (abstract_type * int);
+  type3 : (abstract_type * Cstruct.uint8);
   id : int;
   length : int;
 }
