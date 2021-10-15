@@ -1,7 +1,7 @@
 (* a block is, physically, a revision count and series of commits *)
 
 type commit = {
-  entries : Cstruct.t list;
+  entries : Entry.t list;
   crc : Optint.t;
   padding : int; (* make the commit 32-bit word-aligned *)
 }
@@ -50,3 +50,13 @@ let commit block_size block entries =
                    }]
     }
   | _ -> block (* lol TODO *)
+
+let into_cstruct cs block =
+  Cstruct.LE.set_uint32 cs 0 block.revision_count;
+  let _copied, _left = Cstruct.fillv ~src:block.commits ~dst:(Cstruct.shift cs 4) in
+  ()
+
+let to_cstruct ~block_size block =
+  let cs = Cstruct.create block_size in
+  into_cstruct cs block;
+  cs

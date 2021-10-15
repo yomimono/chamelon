@@ -18,7 +18,7 @@ type abstract_type =
 type chunk = int
 type type3 = abstract_type * chunk
 
-type tag = {
+type t = {
   valid : bool;
   type3 : (abstract_type * Cstruct.uint8);
   id : int;
@@ -27,6 +27,9 @@ type tag = {
 
 let not_associated = 0x3ff (* special value for "id" field *)
 let deleted_tag = 0x3ff (* special value for "length" field *)
+
+let size = 4 (* tags are always 32 bits, with internal
+                numerical representations big-endian *)
 
 let parse r =
   let valid = (1 = r lsr 31)
@@ -41,7 +44,7 @@ let parse r =
     let type3 = abstract_type, chunk in
     Ok {valid; type3; id; length}
 
-let print_to cs t =
+let into_cstruct cs t =
   let bit_1 = if t.valid then 1 lsl 31 else 0
   and abstract_type = (abstract_type_to_int @@ fst t.type3) lsl 28
   and chunk = (snd t.type3) lsl 20
@@ -50,7 +53,7 @@ let print_to cs t =
   let n = bit_1 + abstract_type + chunk + id + t.length |> Int32.of_int in
   Cstruct.BE.set_uint32 cs 0 n
 
-let print t =
+let to_cstruct t =
   let cs = Cstruct.create 4 in
   print_to cs t;
   cs
