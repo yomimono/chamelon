@@ -10,6 +10,5 @@ module Make(Mirage_block : Mirage_block.S) = struct
     let name = Littlefs.Superblock.name in
     let inline_struct = Littlefs.Superblock.inline_struct block_size block_count in
     let write_me = Littlefs.Block.commit block_size Littlefs.Block.empty [name; inline_struct] in
-    Mirage_block.write device 0L [(Littlefs.Block.to_cstruct ~block_size write_me)] >>= fun _ ->
-    Mirage_block.write device (Int64.of_int32 block_size) [(Littlefs.Block.to_cstruct ~block_size write_me)];
+    Mirage_block.write device 0L [(Littlefs.Block.to_cstruct ~block_size write_me)]
 end
