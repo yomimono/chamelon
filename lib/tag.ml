@@ -55,5 +55,8 @@ let into_cstruct cs t =
 
 let to_cstruct t =
   let cs = Cstruct.create 4 in
-  print_to cs t;
+  into_cstruct cs t;
   cs
+
+let crc start_crc t =
+  Checkseum.Crc32.digest_bigstring (Cstruct.to_bigarray @@ to_cstruct t) 0 4 start_crc
