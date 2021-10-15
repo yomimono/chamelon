@@ -44,20 +44,19 @@ let parse r =
     let type3 = abstract_type, chunk in
     Ok {valid; type3; id; length}
 
-let into_cstruct ~prev_tag cs t =
+let into_cstruct cs t =
   let bit_1 = if t.valid then 1 lsl 31 else 0
   and abstract_type = (abstract_type_to_int @@ fst t.type3) lsl 28
   and chunk = (snd t.type3) lsl 20
   and id = t.id lsl 10
   in
-  let backlink = Cstruct.LE.get_uint32 prev_tag 0 |> Int32.to_int in
-  let n = (lxor) backlink @@ bit_1 + abstract_type + chunk + id + t.length in
-  Cstruct.BE.set_uint32 cs 0 (Int32.of_int n)
+  let n = bit_1 + abstract_type + chunk + id + t.length |> Int32.of_int in
+  Cstruct.BE.set_uint32 cs 0 n
 
-let to_cstruct ~prev_tag t =
+let to_cstruct t =
   let cs = Cstruct.create 4 in
-  into_cstruct ~prev_tag cs t;
+  into_cstruct cs t;
   cs
 
-let crc start_crc cs =
-  Checkseum.Crc32.digest_bigstring (Cstruct.to_bigarray cs) 0 4 start_crc
+let crc start_crc t =
+  Checkseum.Crc32.digest_bigstring (Cstruct.to_bigarray @@ to_cstruct t) 0 4 start_crc

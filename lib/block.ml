@@ -6,16 +6,12 @@ type t = {
 }
 
 let empty = {
-  revision_count = 3l;
+  revision_count = 0l;
   commits = [];
 }
 
 let crc_entries start_crc entries =
-  fst @@
-    List.fold_left (fun (prev_crc, prev_tag) entry ->
-      let crc = Entry.crc ~prev_tag prev_crc entry in
-      let tag = Tag.to_cstruct ~prev_tag (fst entry) in
-      crc, tag) (start_crc, Cstruct.of_string "\xff\xff\xff\xff") entries
+    List.fold_left Entry.crc start_crc entries
 
 let commit block_size block entries =
   match block.commits with
@@ -46,7 +42,7 @@ let commit block_size block entries =
 
 let into_cstruct cs block =
   Cstruct.LE.set_uint32 cs 0 block.revision_count;
-  let _bytes_written = List.fold_left (fun pointer commit ->
+  let _ = List.fold_left (fun pointer commit ->
       Commit.into_cstruct (Cstruct.shift cs pointer) commit;
       pointer + Commit.sizeof commit
     ) 4 block.commits in
