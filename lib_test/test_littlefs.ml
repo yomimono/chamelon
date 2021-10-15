@@ -46,7 +46,7 @@ module Tag = struct
     let t = Littlefs.Tag.{ valid; type3 = (abstract_type, chunk); id; length } in
     let cs = Cstruct.create 4 in
     Cstruct.BE.set_uint32 cs 0 Int32.minus_one;
-    Alcotest.(check @@ of_pp Cstruct.hexdump_pp) "tag writing: maxint" cs (Littlefs.Tag.to_cstruct t)
+    Alcotest.(check @@ of_pp Cstruct.hexdump_pp) "tag writing: maxint" cs (Littlefs.Tag.to_cstruct ~xor_tag_with:0xffffffffl t)
 
 end
 
@@ -54,7 +54,8 @@ module Superblock = struct
   let test_zero () =
     let cs = Cstruct.(create @@ Littlefs.Superblock.sizeof_superblock) in
     let sb = Littlefs.Superblock.parse cs in
-    Alcotest.(check int32) "version" Int32.zero sb.version;
+    Alcotest.(check int) "major version" 0 sb.version_major;
+    Alcotest.(check int) "minor version" 0 sb.version_minor;
     Alcotest.(check int32) "block size" Int32.zero sb.block_size;
     Alcotest.(check int32) "block count" Int32.zero sb.block_count;
     Alcotest.(check int32) "name length maximum" Int32.zero sb.name_length_max;
