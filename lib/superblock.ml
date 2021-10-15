@@ -21,7 +21,7 @@ type superblock = {
     name_length_max : uint32_t;
     file_size_max : uint32_t;
     file_attribute_size_max : uint32_t;
-  } [@@big_endian]]
+  } [@@little_endian]]
 
 let parse cs =
   {

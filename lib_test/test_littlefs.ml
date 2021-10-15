@@ -46,7 +46,7 @@ module Tag = struct
     let t = Littlefs.Tag.{ valid; type3 = (abstract_type, chunk); id; length } in
     let cs = Cstruct.create 4 in
     Cstruct.BE.set_uint32 cs 0 Int32.minus_one;
-    Alcotest.(check @@ of_pp Cstruct.hexdump_pp) "tag writing: maxint" cs (Littlefs.Tag.to_cstruct t)
+    Alcotest.(check @@ of_pp Cstruct.hexdump_pp) "tag writing: maxint" cs (Littlefs.Tag.to_cstruct ~prev_tag:(Cstruct.of_string "\xff\xff\xff\xff") t)
 
 end
 
