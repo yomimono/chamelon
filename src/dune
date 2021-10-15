@@ -9,6 +9,6 @@
             (run dd if=/dev/zero of=test.img bs=4M count=1)
             (run %{exe:format.exe} test.img)
             (run grep littlefs test.img)
-            (run readmdir.py test.img 4096 0)
+            (run readmdir.py -a test.img 4096 0)
             ))
   )

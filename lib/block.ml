@@ -2,11 +2,13 @@
 
 type t = {
   revision_count : int32;
+  revision_count_crc : Optint.t;
   commits : Commit.t list; (* the structure specified is more complex than this, but `list` will do for now *)
 }
 
 let empty = {
-  revision_count = 0l;
+  revision_count = 0xc0ffeel;
+  revision_count_crc = Optint.of_int 0xffffffff;
   commits = [];
 }
 
@@ -22,12 +24,11 @@ let commit block_size block entries =
     let revision_cs = Cstruct.create sizeof_revision_count in
     Cstruct.LE.set_uint32 revision_cs 0 block.revision_count;
 
-    let start_crc = Checkseum.Crc32.digest_bigstring
+    let revision_crc = Checkseum.Crc32.digest_bigstring
       (Cstruct.to_bigarray revision_cs) 0 sizeof_crc Checkseum.Crc32.default in
+    let full_crc = crc_entries revision_crc entries in
 
-    let full_crc = crc_entries start_crc entries in
-
-    let unpadded_size = sizeof_revision_count + (Entry.lenv entries) + sizeof_crc in
+    let unpadded_size = sizeof_revision_count + sizeof_crc + (Entry.lenv entries) + sizeof_crc in
     let padding = match Int32.(rem (of_int unpadded_size) block_size) with
       | 0l -> 0
       | n -> Int32.(sub block_size n |> to_int)
@@ -42,10 +43,11 @@ let commit block_size block entries =
 
 let into_cstruct cs block =
   Cstruct.LE.set_uint32 cs 0 block.revision_count;
+  Cstruct.LE.set_uint32 cs 4 @@ Optint.to_int32 block.revision_count_crc;
   let _ = List.fold_left (fun pointer commit ->
       Commit.into_cstruct (Cstruct.shift cs pointer) commit;
       pointer + Commit.sizeof commit
-    ) 4 block.commits in
+    ) (4 * 2) block.commits in
   ()
 
 let to_cstruct ~block_size block =
