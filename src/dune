@@ -1,0 +1,13 @@
+(executables
+  (public_names format)
+  (libraries cmdliner littlefs.fs mirage-block-unix lwt)
+)
+
+(rule
+  (alias runtest)
+  (action (progn
+            (run dd if=/dev/zero of=test.img bs=4M count=1)
+            (run %{exe:format.exe} test.img)
+            (run grep littlefs test.img)
+            ))
+  )

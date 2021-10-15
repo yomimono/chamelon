@@ -28,9 +28,9 @@ let commit block_size block entries =
     let full_crc = crc_entries start_crc entries in
 
     let unpadded_size = sizeof_revision_count + (Entry.lenv entries) + sizeof_crc in
-    let padding = match unpadded_size mod block_size with
-      | 0 -> 0
-      | n -> block_size - n
+    let padding = match Int32.(rem (of_int unpadded_size) block_size) with
+      | 0l -> 0
+      | n -> Int32.(sub block_size n |> to_int)
     in
 
     { block with commits = [{ entries;
@@ -49,6 +49,6 @@ let into_cstruct cs block =
   ()
 
 let to_cstruct ~block_size block =
-  let cs = Cstruct.create block_size in
+  let cs = Cstruct.create (Int32.to_int block_size) in
   into_cstruct cs block;
   cs

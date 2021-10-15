@@ -33,7 +33,7 @@ let parse cs =
     file_attribute_size_max = get_superblock_file_attribute_size_max cs;
   }
 
-let print_to cs sb =
+let into_cstruct cs sb =
   set_superblock_version cs sb.version;
   set_superblock_block_size cs sb.block_size;
   set_superblock_block_count cs sb.block_count;
@@ -41,7 +41,34 @@ let print_to cs sb =
   set_superblock_file_size_max cs sb.file_size_max;
   set_superblock_file_attribute_size_max cs sb.file_attribute_size_max
 
-let print sb =
+let to_cstruct sb =
   let cs = Cstruct.create sizeof_superblock in
-  print_to cs sb;
+  into_cstruct cs sb;
   cs
+
+let name =
+  let tag = Tag.({
+      valid = true;
+      type3 = LFS_TYPE_NAME, 0xff;
+      id = 0;
+      length = 8; })
+  in
+  (tag, Cstruct.of_string magic)
+
+let inline_struct block_size block_count =
+  let entry = {
+      version;
+      block_size;
+      block_count;
+      name_length_max;
+      file_size_max;
+      file_attribute_size_max;
+    } 
+  and tag = Tag.({
+      valid = true;
+      type3 = LFS_TYPE_STRUCT, 0x01;
+      id = 0;
+      length = sizeof_superblock;
+    })
+  in
+  (tag, to_cstruct entry)

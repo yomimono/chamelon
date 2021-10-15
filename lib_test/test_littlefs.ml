@@ -68,7 +68,7 @@ module Block = struct
   module Block = Littlefs.Block
 
   (* what's a reasonable block size? let's assume 4Kib *)
-  let block_size = 4096
+  let block_size = 4096l
 
   let commit_empty_list () =
     let block = Block.empty in
