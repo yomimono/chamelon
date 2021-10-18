@@ -1,5 +1,5 @@
 (library
   (public_name littlefs.fs)
   (name fs)
-  (libraries littlefs mirage-block lwt)
+  (libraries littlefs mirage-block mirage-kv lwt)
 )
