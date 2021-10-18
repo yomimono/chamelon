@@ -1,8 +1,8 @@
 let magic = "littlefs"
-let version = (2, 0) (* major = 2, minor = 0 . Spec says minor 0 but the implementation says minor 4 as of this writing :/ *)
-let name_length_max = 1024l
-let file_size_max = Int32.max_int
-let file_attribute_size_max = Int32.max_int
+let version = (2, 0) (* major = 2, minor = 0 *)
+let name_length_max = 1022l (* apparently this is limited to 1022 *)
+let file_size_max = 2147483647 (* according to lfs.h in littlefs reference implementation, this is the largest value that will not cause problems with functions that take signed 32-bit integers *)
+let file_attribute_size_max = 1022l (* reference implementation comments on this limit *)
 
 type superblock = {
   version_major : Cstruct.uint16;
