@@ -45,7 +45,9 @@ module Tag = struct
     in
     let t = Littlefs.Tag.{ valid; type3 = (abstract_type, chunk); id; length } in
     let cs = Cstruct.create 4 in
-    Cstruct.BE.set_uint32 cs 0 Int32.minus_one;
+    (* It may be surprising that the expected case here is zero. The tag itself is set to all 1s, but it needs
+     * to be XOR'd with the default value, which is also all 1s, so we end up with all 0s. *)
+    Cstruct.BE.set_uint32 cs 0 Int32.zero;
     Alcotest.(check @@ of_pp Cstruct.hexdump_pp) "tag writing: maxint" cs (Littlefs.Tag.to_cstruct ~xor_tag_with:0xffffffffl t)
 
 end
