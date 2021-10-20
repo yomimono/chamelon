@@ -78,7 +78,6 @@ module Block = struct
     let entries = [] in
     let block = Block.commit block_size block entries in
     let commit = List.hd block.commits in
-    Alcotest.(check int) "padding should be the whole block less revision count and crc" (4096 - 8) commit.padding;
     Alcotest.(check int) "crc should be CRC of 0xffffffff and 0x00000000" 558161692 (Optint.to_int commit.crc)
 end
 
