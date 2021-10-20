@@ -31,7 +31,7 @@ module Make(This_Block: Mirage_block.S) = struct
      * than the available disk, nonsensical block sizes, etc; we should return error variants for those *)
     let block_count =
       let size_in_bytes = Int64.(mul size_sectors @@ of_int sector_size) in
-      Int64.(div size_in_bytes @@ of_int32 block_size) |> Int64.to_int32
+      Int64.(div size_in_bytes @@ of_int32 block_size |> to_int32)
     in
 
     let name = Littlefs.Superblock.name in
