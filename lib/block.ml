@@ -12,8 +12,7 @@ let empty = {
   commits = [];
 }
 
-let crc_entries start_crc entries =
-    List.fold_left Entry.crc start_crc entries
+let crc_entries start_crc entries = List.fold_left Entry.crc start_crc entries
 
 let commit _block_size block entries =
   match block.commits with
@@ -29,7 +28,8 @@ let commit _block_size block entries =
 
     let full_crc = crc_entries start_crc entries in
 
-    let unpadded_size = sizeof_revision_count + (Entry.lenv entries) + Tag.size + sizeof_crc in
+    let unpadded_size = sizeof_revision_count + (Entry.lenv entries) +
+                        Tag.size + sizeof_crc in
     let overhang = Int32.(rem (of_int @@ unpadded_size) program_block_size) in
     let padding = match overhang with
       | 0l -> 0

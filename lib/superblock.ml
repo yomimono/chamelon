@@ -16,8 +16,8 @@ type superblock = {
 
 [%%cstruct
   type superblock = {
-    version_major : uint16_t;
     version_minor : uint16_t;
+    version_major : uint16_t;
     block_size : uint32_t;
     block_count : uint32_t;
     name_length_max : uint32_t;
