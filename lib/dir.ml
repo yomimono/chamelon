@@ -25,18 +25,26 @@ let dirstruct = Tag.({
     length = 32 * 2 ;(* content is pointers to the metadata pair, two 32-bit values *)
   })
 
+let soft_tail = Tag.({
+    valid = true;
+    type3 = Tag.LFS_TYPE_TAIL, 0x00;
+    id = 0x3ff;
+    length = 32 * 2;
+  })
+
 let blocks (block1, block2) =
   let cs = Cstruct.create @@ 32 * 2 in
   Cstruct.LE.set_uint32 cs 0 block1;
   Cstruct.LE.set_uint32 cs 4 block2;
   cs
 
-let create_dir path bs =
+let create_root_dir path bs =
   if String.length path > Limits.max_filename_length then Error `Too_long
   else begin
     let start_create = (create, Cstruct.empty)
     and directory = dir (String.length path), Cstruct.of_string path
     and structure = dirstruct, (blocks bs)
+    and soft_tail = soft_tail, (blocks bs)
     in
-    Ok (start_create, directory, structure)
+    Ok (start_create, directory, structure, soft_tail)
   end

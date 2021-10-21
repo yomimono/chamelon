@@ -13,6 +13,7 @@ let format block_size file =
   let aux () =
     let open Lwt.Infix in
     Mirage_block.connect file >>= fun block ->
+    Printf.printf "Formatting %s as a littlefs filesystem with block size %d\n%!" file block_size;
     Littlefs.format block ~block_size:(Int32.of_int block_size) >|= function
     | Error (`Block_write e) as orig -> Format.eprintf "%a" Mirage_block.pp_write_error e; orig
     | r -> r

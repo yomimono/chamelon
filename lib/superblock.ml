@@ -1,12 +1,17 @@
 let magic = "littlefs"
+(* for whatever bonkers reason, the major/minor versions
+ * are big-endian, not little-endian like everything else,
+ * even though they're not part of a tag and the functions writing
+ * them in the reference implementations are little-endian functions --
+ * they're defined as full hex values and then written nibble-by-nibble *)
 let version = (2, 0) (* major = 2, minor = 0 *)
 let name_length_max = 1022l (* apparently this is limited to 1022 *)
 let file_size_max = 2147483647l (* according to lfs.h in littlefs reference implementation, this is the largest value that will not cause problems with functions that take signed 32-bit integers *)
 let file_attribute_size_max = 1022l (* reference implementation comments on this limit *)
 
 type superblock = {
-  version_major : Cstruct.uint16;
   version_minor : Cstruct.uint16;
+  version_major : Cstruct.uint16;
   block_size : Cstruct.uint32;
   block_count : Cstruct.uint32;
   name_length_max : Cstruct.uint32;
@@ -27,8 +32,8 @@ type superblock = {
 
 let parse cs =
   {
-    version_major = get_superblock_version_major cs;
     version_minor = get_superblock_version_minor cs;
+    version_major = get_superblock_version_major cs;
     block_size = get_superblock_block_size cs;
     block_count = get_superblock_block_count cs;
     name_length_max = get_superblock_name_length_max cs;
@@ -37,8 +42,8 @@ let parse cs =
   }
 
 let into_cstruct cs sb =
-  set_superblock_version_major cs sb.version_major;
   set_superblock_version_minor cs sb.version_minor;
+  set_superblock_version_major cs sb.version_major;
   set_superblock_block_size cs sb.block_size;
   set_superblock_block_count cs sb.block_count;
   set_superblock_name_length_max cs sb.name_length_max;

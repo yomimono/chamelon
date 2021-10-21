@@ -43,12 +43,27 @@ let commit _block_size block entries =
     }
   | _ -> block (* lol TODO *)
 
+(* TODO: ugh, what if we need >1 block for the entries :( *)
 let into_cstruct cs block =
   Cstruct.LE.set_uint32 cs 0 block.revision_count;
-  let _ = List.fold_left (fun pointer commit ->
+  let pointer = List.fold_left (fun pointer commit ->
       Commit.into_cstruct (Cstruct.shift cs pointer) commit;
       pointer + Commit.sizeof commit
     ) 4 block.commits in
+  (* the chunk here has only 1 meaningful bit: the least significant bit,
+   * which represents "valid state" - the expected value
+   * of the "valid" bit for the next commit. Since we're hardcoding
+   * all the "valid" bits to 1 for the moment, we'll always want this to be 1. *)
+  (* this is part of a much larger TODO, but may as well mark it... *)
+  let chunk = 1 lsl 8 in
+  let crc_tag = Tag.({
+      valid = true;
+      type3 = Tag.LFS_TYPE_CRC, chunk;
+      id = 0x3ff;
+      length = block.padding - 4;
+    }) in
+  Tag.into_cstruct ~xor_tag_with:Int32.zero (Cstruct.shift cs pointer) crc_tag;
+  Cstruct.LE.set_uint32 (Cstruct.shift cs @@ pointer + 4) block.crc;
   ()
 
 let to_cstruct ~block_size block =
