@@ -24,8 +24,6 @@ let into_cstructv l cs =
       (pointer + (sizeof t), tag)
     ) (0, 0xffffffffl) l
 
-(* TODO: it's unclear to my tired mind whether we're supposed
- * to CRC the whole entry, or just the tag *)
 let crc start_crc (tag, data) =
   let tag = Tag.to_cstruct ~xor_tag_with:0l tag in
   let tag_crc = Checkseum.Crc32.digest_bigstring (Cstruct.to_bigarray tag) 0 (Cstruct.length tag) start_crc in
