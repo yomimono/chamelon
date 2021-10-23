@@ -33,7 +33,7 @@ let commit ~program_block_size block entries =
       unpadded_size (Int32.to_int overhang) padding;
 
     { block with commits = [{ entries;
-                              crc = revision_count_crc;
+                              preceding_crc = revision_count_crc;
                               padding;
                             }]
     }
