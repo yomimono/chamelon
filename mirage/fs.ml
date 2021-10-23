@@ -1,3 +1,5 @@
+let program_block_size = 16l (* fairly arbitrary. probably should be specifiable in keys, but y'know *)
+
 type error = [
   | `Block of Mirage_block.error
   | `KV of Mirage_kv.error
@@ -45,7 +47,7 @@ module Make(This_Block: Mirage_block.S) = struct
     | Error e -> Lwt.return @@ Error (`Littlefs_write e)
     | Ok (_create, _dir, _structure, _soft_tail) ->
       let start_block = {Littlefs.Block.empty with revision_count = 1l} in
-      let write_me = Littlefs.Block.commit block_size start_block
+      let write_me = Littlefs.Block.commit ~program_block_size start_block
           [name;
            superblock_inline_struct; (*
            create;

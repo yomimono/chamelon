@@ -76,7 +76,7 @@ module Block = struct
   let commit_empty_list () =
     let block = Block.empty in
     let entries = [] in
-    let block = Block.commit block_size block entries in
+    let block = Block.commit ~program_block_size:block_size block entries in
     let commit = List.hd block.commits in
     Alcotest.(check int) "crc should be CRC of 0xffffffff and 0x00000000" 558161692 (Optint.to_int commit.crc)
 end

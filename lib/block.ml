@@ -1,7 +1,5 @@
 (* a block is, physically, a revision count and series of commits *)
 
-let program_block_size = 32l
-
 type t = {
   revision_count : int32;
   commits : Commit.t list; (* the structure specified is more complex than this, but `list` will do for now *)
@@ -14,7 +12,7 @@ let empty = {
 
 let crc_entries start_crc entries = List.fold_left Entry.crc start_crc entries
 
-let commit _block_size block entries =
+let commit ~program_block_size block entries =
   match block.commits with
   | [] ->
     let sizeof_revision_count = 4
@@ -30,7 +28,7 @@ let commit _block_size block entries =
 
     let unpadded_size = sizeof_revision_count + (Entry.lenv entries) +
                         Tag.size + sizeof_crc in
-    let overhang = Int32.(rem (of_int @@ unpadded_size) program_block_size) in
+    let overhang = Int32.(rem (of_int unpadded_size) program_block_size) in
     let padding = match overhang with
       | 0l -> 0
       | n -> Int32.(sub program_block_size n |> to_int)

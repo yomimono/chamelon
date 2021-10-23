@@ -6,7 +6,7 @@ type t = {
 }
 
 let sizeof t =
-  (Entry.lenv t.entries) + 4 + t.padding
+  (Entry.lenv t.entries) + Tag.size + 4 + t.padding
 
 let into_cstruct cs t =
   let crc_tag_pointer, last_tag = Entry.into_cstructv t.entries cs in
