@@ -24,7 +24,15 @@ let into_cstructv l cs =
       (pointer + (sizeof t), tag)
     ) (0, 0xffffffffl) l
 
-let crc start_crc (tag, data) =
-  let tag = Tag.to_cstruct ~xor_tag_with:0l tag in
+let to_cstructv l =
+  let cs = Cstruct.create @@ lenv l in
+  let _ = into_cstructv l cs in
+  cs
+
+(* TODO: this approach feels wrong. We should just CRC the data
+ * as it's going to be written, rather than trying to reconstruct
+ * how the data *would* be written *)
+let crc ~prev_tag start_crc (tag, data) =
+  let tag = Tag.to_cstruct ~xor_tag_with:prev_tag tag in
   let tag_crc = Checkseum.Crc32.digest_bigstring (Cstruct.to_bigarray tag) 0 (Cstruct.length tag) start_crc in
   Checkseum.Crc32.digest_bigstring (Cstruct.to_bigarray data) 0 (Cstruct.length data) tag_crc

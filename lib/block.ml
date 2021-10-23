@@ -10,8 +10,6 @@ let empty = {
   commits = [];
 }
 
-let crc_entries start_crc entries = List.fold_left Entry.crc start_crc entries
-
 let commit ~program_block_size block entries =
   match block.commits with
   | [] ->
@@ -21,10 +19,8 @@ let commit ~program_block_size block entries =
     let revision_cs = Cstruct.create sizeof_revision_count in
     Cstruct.LE.set_uint32 revision_cs 0 block.revision_count;
 
-    let start_crc = Checkseum.Crc32.digest_bigstring
+    let revision_count_crc = Checkseum.Crc32.digest_bigstring
       (Cstruct.to_bigarray revision_cs) 0 sizeof_crc Checkseum.Crc32.default in
-
-    let full_crc = crc_entries start_crc entries in
 
     let unpadded_size = sizeof_revision_count + (Entry.lenv entries) +
                         Tag.size + sizeof_crc in
@@ -33,9 +29,11 @@ let commit ~program_block_size block entries =
       | 0l -> 0
       | n -> Int32.(sub program_block_size n |> to_int)
     in
+    Printf.printf "commit of size %d overhangs program block size by %d; padding with %d bytes\n%!"
+      unpadded_size (Int32.to_int overhang) padding;
 
     { block with commits = [{ entries;
-                              crc = full_crc;
+                              crc = revision_count_crc;
                               padding;
                             }]
     }
@@ -44,7 +42,7 @@ let commit ~program_block_size block entries =
 (* TODO: ugh, what if we need >1 block for the entries :( *)
 let into_cstruct cs block =
   Cstruct.LE.set_uint32 cs 0 block.revision_count;
-  let _pointer = List.fold_left (fun pointer commit ->
+  let _after_last_crc = List.fold_left (fun pointer commit ->
       Commit.into_cstruct (Cstruct.shift cs pointer) commit;
       pointer + Commit.sizeof commit
     ) 4 block.commits in
