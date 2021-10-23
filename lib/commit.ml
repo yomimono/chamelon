@@ -23,11 +23,12 @@ let into_cstruct cs t =
 
   (* TODO: pointer manipulation code smell here; find a nicer way to do this *)
   let tag_region = Cstruct.sub cs crc_tag_pointer Tag.size in
+  let crc_region = Cstruct.sub cs crc_pointer sizeof_crc in
   let padding_region = Cstruct.sub cs (crc_pointer + sizeof_crc) t.padding in
 
   Tag.into_cstruct ~xor_tag_with:last_tag tag_region crc_tag;
 
   let crc_with_tag = Checkseum.Crc32.digest_bigstring (Cstruct.to_bigarray cs) 0 crc_pointer t.crc in
-  Cstruct.LE.set_uint32 (Cstruct.shift cs crc_pointer) 0 (Optint.to_int32 crc_with_tag);
+  Cstruct.LE.set_uint32 crc_region 0 (Optint.to_int32 crc_with_tag);
   (* set the padding bytes to an obvious value *)
   if t.padding <= 0 then () else Cstruct.memset padding_region 0xff
