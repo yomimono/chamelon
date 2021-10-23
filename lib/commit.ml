@@ -28,7 +28,7 @@ let into_cstruct cs t =
 
   Tag.into_cstruct ~xor_tag_with:last_tag tag_region crc_tag;
 
-  let crc_with_tag = Checkseum.Crc32.digest_bigstring (Cstruct.to_bigarray cs) 0 crc_pointer t.crc in
-  Cstruct.LE.set_uint32 crc_region 0 (Optint.to_int32 crc_with_tag);
+  let crc_with_tag = Checkseum.Crc32.digest_bigstring (Cstruct.to_bigarray cs) 0 crc_pointer t.crc |> Optint.to_int32 |> Int32.lognot in
+  Cstruct.LE.set_uint32 crc_region 0 crc_with_tag;
   (* set the padding bytes to an obvious value *)
   if t.padding <= 0 then () else Cstruct.memset padding_region 0xff
