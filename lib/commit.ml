@@ -16,7 +16,7 @@ let into_cstruct cs t =
       valid = false;
       type3 = Tag.LFS_TYPE_CRC, crc_chunk;
       id = 0x3ff;
-      length = t.padding - 4;
+      length = t.padding + Tag.size;
     }) in
   (* TODO: pointer manipulation code smell here; find a nicer way to do this *)
   let tag_region = Cstruct.sub cs crc_tag_pointer Tag.size in
