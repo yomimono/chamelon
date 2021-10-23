@@ -6,9 +6,10 @@
 (rule
   (alias runtest)
   (action (progn
-            (run dd if=/dev/zero of=test.img bs=4M count=1)
+            (run dd if=/dev/zero of=test.img bs=64K count=1)
             (run %{exe:format.exe} test.img)
             (run grep littlefs test.img)
-            (run readmdir.py -a --log test.img 4096 0 1)
+            (run readmdir.py -a --log -T test.img 4096 0 1)
+            (run readtree.py -a --log -T test.img 4096 0 1)
             ))
   )

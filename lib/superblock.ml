@@ -5,7 +5,7 @@ let magic = "littlefs"
  * them in the reference implementations are little-endian functions --
  * they're defined as full hex values and then written nibble-by-nibble *)
 let version = (2, 0) (* major = 2, minor = 0 *)
-let name_length_max = 1022l (* apparently this is limited to 1022 *)
+let name_length_max = 32l (* apparently this is limited to 1022 *)
 let file_size_max = 2147483647l (* according to lfs.h in littlefs reference implementation, this is the largest value that will not cause problems with functions that take signed 32-bit integers *)
 let file_attribute_size_max = 1022l (* reference implementation comments on this limit *)
 
@@ -57,7 +57,7 @@ let to_cstruct sb =
 
 let name =
   let tag = Tag.({
-      valid = true;
+      valid = false;
       type3 = LFS_TYPE_NAME, 0xff;
       id = 0;
       length = 8; })
@@ -75,7 +75,7 @@ let inline_struct block_size block_count =
       file_attribute_size_max;
     } 
   and tag = Tag.({
-      valid = true;
+      valid = false;
       type3 = LFS_TYPE_STRUCT, 0x01;
       id = 0;
       length = sizeof_superblock;
