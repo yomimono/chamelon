@@ -29,9 +29,6 @@ let commit ~program_block_size block entries =
       | 0l -> 0
       | n -> Int32.(sub program_block_size n |> to_int)
     in
-    Printf.printf "commit of size %d overhangs program block size by %d; padding with %d bytes\n%!"
-      unpadded_size (Int32.to_int overhang) padding;
-
     { block with commits = [{ entries;
                               preceding_crc = revision_count_crc;
                               padding;
