@@ -1,3 +1,5 @@
+let cstruct = Alcotest.testable Cstruct.hexdump_pp Cstruct.equal
+
 module Tag = struct
   let test_zero () =
     let n = 0 in
@@ -48,7 +50,7 @@ module Tag = struct
     (* It may be surprising that the expected case here is zero. The tag itself is set to all 1s, but it needs
      * to be XOR'd with the default value, which is also all 1s, so we end up with all 0s. *)
     Cstruct.BE.set_uint32 cs 0 Int32.zero;
-    Alcotest.(check @@ of_pp Cstruct.hexdump_pp) "tag writing: maxint" cs (Littlefs.Tag.to_cstruct ~xor_tag_with:0xffffffffl t)
+    Alcotest.(check cstruct) "tag writing: maxint" cs (Littlefs.Tag.to_cstruct ~xor_tag_with:0xffffffffl t)
 
 end
 
@@ -78,7 +80,47 @@ module Block = struct
     let entries = [] in
     let block = Block.commit ~program_block_size:block_size block entries in
     let commit = List.hd block.commits in
-    Alcotest.(check int) "crc should be CRC of 0xffffffff and 0x00000000" 558161692 (Optint.to_int commit.crc)
+    Alcotest.(check int) "crc should be CRC of 0xffffffff and 0x00000000" 558161692 (Optint.to_int commit.preceding_crc)
+
+  (* mimic the minimal superblock commit made by `mklittlefs` when run on an empty directory, and assert that they match what's expected *)
+  let commit_superblock () =
+    let revision_count = 1l in
+    let block_count = 16 in
+    let name = Littlefs.Superblock.name in
+    let superblock_inline_struct = Littlefs.Superblock.inline_struct block_size @@ Int32.of_int block_count in
+    let start_block = {Littlefs.Block.empty with revision_count;} in
+    let block = Littlefs.Block.commit ~program_block_size:16l start_block [
+        name;
+        superblock_inline_struct;
+      ] in
+    let cs = Littlefs.Block.to_cstruct ~block_size block in
+    let expected_length = 
+        4 (* revision count *)
+      + 4 (* superblock name tag *)
+      + 8 (* "littlefs" *)
+      + 4 (* inlinestruct tag *)
+      + 24 (* six 4-byte-long int32s *)
+      + 4 (* crc tag *)
+      + 4 (* crc *)
+      + 12 (* padding if the block size is 16l *)
+    in
+    let not_data_length = (Int32.to_int block_size) - expected_length in
+    let data, not_data = Cstruct.split cs expected_length in
+
+    let expected_inline_struct_tag = Cstruct.of_string "\x2f\xe0\x00" in
+    let expected_crc = Cstruct.of_string "\x20\x5c\x2b\x6e" in
+    (* Cstruct promises that buffers made with `create` are zeroed, so a new one
+     * of the right length should be good to test against *)
+    let zilch = Cstruct.create not_data_length in
+    (* the hard, important bits: the correct XORing of the tags, the CRC *)
+    (* there should be *one* commit here, meaning one CRC tag *)
+    (* but the cstruct should be block-sized *)
+    Alcotest.(check int) "block to_cstruct returns a block-size cstruct" (Int32.to_int block_size) (Cstruct.length cs);
+    Alcotest.(check int) "zilch buffer and not_data have the same length" (Cstruct.length zilch) (Cstruct.length not_data);
+    Alcotest.(check cstruct) "all zeroes in the non-data zone" zilch not_data;
+    Alcotest.(check cstruct) "second tag got xor'd" expected_inline_struct_tag (Cstruct.sub data 0x10 3);
+    Alcotest.(check cstruct) "crc matches what's expected" expected_crc (Cstruct.sub data 0x30 4)
+
 end
 
 let () =
@@ -95,5 +137,6 @@ let () =
       ]);
     ( "block", [
           tc "we can construct a block" `Quick Block.commit_empty_list;
+          tc "write one commit to a block" `Quick Block.commit_superblock;
       ]);
   ]
