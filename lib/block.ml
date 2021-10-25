@@ -10,27 +10,35 @@ let empty = {
   commits = [];
 }
 
+let get_padding is_first program_block_size entries =
+  let sizeof_revision_count = 4
+  and sizeof_crc = 4 in
+
+  let unpadded_size = 
+    (if is_first then sizeof_revision_count else 0)
+                                                + (Entry.lenv entries)
+                                                + Tag.size
+                                                + sizeof_crc
+  in
+  let overhang = Int32.(rem (of_int unpadded_size) program_block_size) in
+  match overhang with
+  | 0l -> 0
+  | n -> Int32.(sub program_block_size n |> to_int)
+
 let commit ~program_block_size block entries =
+  let () = () in
   match block.commits with
   | [] ->
-    let sizeof_revision_count = 4
-    and sizeof_crc = 4 in
-
-    let revision_cs = Cstruct.create sizeof_revision_count in
-    Cstruct.LE.set_uint32 revision_cs 0 block.revision_count;
-
-    let unpadded_size = sizeof_revision_count + (Entry.lenv entries) +
-                        Tag.size + sizeof_crc in
-    let overhang = Int32.(rem (of_int unpadded_size) program_block_size) in
-    let padding = match overhang with
-      | 0l -> 0
-      | n -> Int32.(sub program_block_size n |> to_int)
-    in
+    let padding = get_padding true program_block_size entries in
     { block with commits = [{ entries;
                               padding;
                             }]
     }
-  | _ -> block (* lol TODO *)
+  | l ->
+    let padding = get_padding false program_block_size entries in
+    let commit = Commit.{entries; padding} in
+    let commits = List.(rev @@ (commit :: (rev l))) in
+    {block with commits; }
 
 (* TODO: ugh, what if we need >1 block for the entries :( *)
 let into_cstruct cs block =
