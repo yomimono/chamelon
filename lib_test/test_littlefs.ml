@@ -93,7 +93,7 @@ module Block = struct
         name;
         superblock_inline_struct;
       ] in
-    let cs = Littlefs.Block.to_cstruct ~block_size block in
+    let (cs, _crc) = Littlefs.Block.to_cstruct ~block_size block in
     let expected_length = 
         4 (* revision count *)
       + 4 (* superblock name tag *)

@@ -39,13 +39,13 @@ let commit ~program_block_size block entries =
 (* TODO: ugh, what if we need >1 block for the entries :( *)
 let into_cstruct cs block =
   Cstruct.LE.set_uint32 cs 0 block.revision_count;
-  let _after_last_crc = List.fold_left (fun pointer commit ->
-      Commit.into_cstruct (Cstruct.shift cs pointer) commit;
-      pointer + Commit.sizeof commit
-    ) 4 block.commits in
-  ()
+  let _after_last_crc, last_crc = List.fold_left (fun (pointer, _) commit ->
+      let crc = Commit.into_cstruct (Cstruct.shift cs pointer) commit in
+      (pointer + Commit.sizeof commit, crc)
+    ) (4, Int32.zero) block.commits in
+  last_crc
 
 let to_cstruct ~block_size block =
   let cs = Cstruct.create (Int32.to_int block_size) in
-  into_cstruct cs block;
-  cs
+  let crc = into_cstruct cs block in
+  cs, crc
