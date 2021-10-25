@@ -26,6 +26,20 @@ module Make(This_Block: Mirage_block.S) = struct
     | Error e -> Error (`Block_write e)
     | Ok _ as o -> o
 
+  let sector_of_block ~block_size ~sector_size n =
+    let byte_of_n = Int64.(mul n @@ of_int32 block_size) in
+    Int64.(div byte_of_n @@ of_int sector_size)
+
+  (* a and b are *block* counts *)
+  let write_blocks ~block_size ~sector_size ~next_rev_count device a b write_me =
+    let open Lwt.Infix in
+    let sector_of_block = sector_of_block ~sector_size ~block_size in
+    let (a, b) = sector_of_block a, sector_of_block b in
+    This_Block.write device a [(fst @@ Littlefs.Block.to_cstruct ~block_size write_me)] >|= block_write_wrap >>= function
+    | Ok () ->
+      This_Block.write device b [(fst @@ Littlefs.Block.to_cstruct ~block_size @@ {write_me with revision_count = next_rev_count})] >|= block_write_wrap
+    | e -> Lwt.return e
+
   let format device ~block_size : (unit, write_error) result Lwt.t =
     let open Lwt.Infix in
     This_Block.get_info device >>= fun {sector_size; size_sectors; _} ->
@@ -35,29 +49,23 @@ module Make(This_Block: Mirage_block.S) = struct
       let size_in_bytes = Int64.(mul size_sectors @@ of_int sector_size) in
       Int64.(div size_in_bytes @@ of_int32 block_size |> to_int32)
     in
-    let sector_of_block n =
-      let byte_of_n = Int64.(mul n @@ of_int32 block_size) in
-      Int64.(div byte_of_n @@ of_int sector_size)
-    in
     let name = Littlefs.Superblock.name in
     let superblock_inline_struct = Littlefs.Superblock.inline_struct block_size block_count in
     let rootdir_metadata_blocks = Allocator.next device in
 
+    let block = {Littlefs.Block.empty with revision_count = 1l} in
+    let block = Littlefs.Block.commit ~program_block_size block [name; superblock_inline_struct] in
+    write_blocks ~block_size ~sector_size ~next_rev_count:2l device 0L 1L block >>= fun _ ->
+
     match Littlefs.Dir.create_root_dir "/" rootdir_metadata_blocks with
     | Error e -> Lwt.return @@ Error (`Littlefs_write e)
     | Ok (create, dir, structure, soft_tail) ->
-      let start_block = {Littlefs.Block.empty with revision_count = 1l} in
-      let write_me = Littlefs.Block.commit ~program_block_size start_block
-          [name;
-           superblock_inline_struct;
-           create;
+      let write_me = Littlefs.Block.commit ~program_block_size block
+          [create;
            dir;
            structure;
            soft_tail ]
       in
       let next_rev_count = Int32.(add write_me.revision_count one) in
-      This_Block.write device 0L [(fst @@ Littlefs.Block.to_cstruct ~block_size write_me)] >|= block_write_wrap >>= function
-      | Ok () ->
-        This_Block.write device (sector_of_block 1L) [(fst @@ Littlefs.Block.to_cstruct ~block_size @@ {write_me with revision_count = next_rev_count})] >|= block_write_wrap
-      | e -> Lwt.return e
+      write_blocks ~block_size ~sector_size ~next_rev_count device 0L 1L write_me
 end
