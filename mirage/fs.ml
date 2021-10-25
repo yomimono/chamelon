@@ -56,8 +56,8 @@ module Make(This_Block: Mirage_block.S) = struct
            soft_tail ]
       in
       let next_rev_count = Int32.(add write_me.revision_count one) in
-      This_Block.write device 0L [(Littlefs.Block.to_cstruct ~block_size write_me)] >|= block_write_wrap >>= function
+      This_Block.write device 0L [(fst @@ Littlefs.Block.to_cstruct ~block_size write_me)] >|= block_write_wrap >>= function
       | Ok () ->
-        This_Block.write device (sector_of_block 1L) [(Littlefs.Block.to_cstruct ~block_size @@ {write_me with revision_count = next_rev_count})] >|= block_write_wrap
+        This_Block.write device (sector_of_block 1L) [(fst @@ Littlefs.Block.to_cstruct ~block_size @@ {write_me with revision_count = next_rev_count})] >|= block_write_wrap
       | e -> Lwt.return e
 end

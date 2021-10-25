@@ -76,11 +76,19 @@ module Block = struct
   let block_size = 4096l
 
   let commit_empty_list () =
-    let block = Block.empty in
+    let block = {Block.empty with revision_count = 1l } in
     let entries = [] in
-    let block = Block.commit ~program_block_size:block_size block entries in
-    let commit = List.hd block.commits in
-    Alcotest.(check int) "crc should be CRC of 0xffffffff and 0x00000000" 558161692 (Optint.to_int commit.preceding_crc)
+    let block = Block.commit ~program_block_size:16l block entries in
+    let output = fst @@ Block.to_cstruct ~block_size block in
+    (* we expect to see revision count, tag for crc, and crc *)
+    let data_length =
+          4 (* revision count *)
+        + 4 (* crc tag *)
+        + 4 (* crc *)
+    in
+    let data, _empty = Cstruct.split output data_length in
+    Alcotest.(check cstruct) "revision count" (Cstruct.of_string "\x01\x00\x00\x00") (Cstruct.sub data 0 4);
+    Alcotest.(check cstruct) "crc tag" (Cstruct.of_string "\xaf\xe0\x03\xf7") (Cstruct.sub data 4 4)
 
   (* mimic the minimal superblock commit made by `mklittlefs` when run on an empty directory, and assert that they match what's expected *)
   let commit_superblock () =
