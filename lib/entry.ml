@@ -15,18 +15,18 @@ let to_cstruct ~xor_tag_with t =
 let lenv l =
   List.fold_left (fun sum t -> sum + sizeof t) 0 l
 
-let into_cstructv l cs =
+let into_cstructv ~starting_xor_tag cs l =
   (* currently this takes a `t list`, and therefore is pretty straightforward.
    * This function exists so we can do better once `t list` is replaced with more complicated *)
   List.fold_left (fun (pointer, prev_tag) t ->
       into_cstruct ~xor_tag_with:prev_tag (Cstruct.shift cs pointer) t;
       let tag = Tag.to_int32 (fst t) in
       (pointer + (sizeof t), tag)
-    ) (0, 0xffffffffl) l
+    ) (0, starting_xor_tag) l
 
-let to_cstructv l =
+let to_cstructv ~starting_xor_tag l =
   let cs = Cstruct.create @@ lenv l in
-  let _ = into_cstructv l cs in
+  let _ = into_cstructv ~starting_xor_tag cs l in
   cs
 
 (* TODO: this approach feels wrong. We should just CRC the data

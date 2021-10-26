@@ -47,10 +47,14 @@ let into_cstruct cs block =
   let revision_count_crc = Checkseum.Crc32.(digest_bigstring
               (Cstruct.to_bigarray cs) 0 sizeof_crc default)
   in
-  let _after_last_crc, last_crc = List.fold_left (fun (pointer, preceding_crc) commit ->
-      let crc = Commit.into_cstruct ~preceding_crc (Cstruct.shift cs pointer) commit in
-      (pointer + Commit.sizeof commit, crc)
-    ) (4, revision_count_crc) block.commits in
+  let _after_last_crc, _last_tag, last_crc = List.fold_left
+      (fun (pointer, starting_xor_tag, preceding_crc) commit ->
+         let crc, last_tag =
+           Commit.into_cstruct ~starting_xor_tag ~preceding_crc
+             (Cstruct.shift cs pointer) commit
+         in
+         (pointer + Commit.sizeof commit, last_tag, crc)
+      ) (4, 0xffffffffl, revision_count_crc) block.commits in
   last_crc
 
 let to_cstruct ~block_size block =
