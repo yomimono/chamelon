@@ -87,7 +87,7 @@ module Block = struct
     in
     let data, _empty = Cstruct.split output data_length in
     Alcotest.(check cstruct) "revision count" (Cstruct.of_string "\x01\x00\x00\x00") (Cstruct.sub data 0 4);
-    Alcotest.(check cstruct) "crc tag" (Cstruct.of_string "\x2f\xf0\x03\xf7") (Cstruct.sub data 4 4)
+    Alcotest.(check cstruct) "crc tag" (Cstruct.of_string "\x2f\xe0\x03\xf7") (Cstruct.sub data 4 4)
 
   (* mimic the minimal superblock commit made by `mklittlefs` when run on an empty directory, and assert that they match what's expected *)
   let commit_superblock () =
@@ -115,7 +115,7 @@ module Block = struct
     let data, not_data = Cstruct.split cs expected_length in
 
     let expected_inline_struct_tag = Cstruct.of_string "\x2f\xe0\x00" in
-    let expected_crc = Cstruct.of_string "\x0d\x87\x3c\xbc" in
+    let expected_crc = Cstruct.of_string "\x7d\x24\x1a\xa0" in
     (* Cstruct promises that buffers made with `create` are zeroed, so a new one
      * of the right length should be good to test against *)
     let zilch = Cstruct.create not_data_length in
