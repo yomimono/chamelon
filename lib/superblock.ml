@@ -57,7 +57,7 @@ let to_cstruct sb =
 
 let name =
   let tag = Tag.({
-      valid = false;
+      valid = true;
       type3 = LFS_TYPE_NAME, 0xff;
       id = 0;
       length = 8; })
@@ -75,7 +75,7 @@ let inline_struct block_size block_count =
       file_attribute_size_max;
     } 
   and tag = Tag.({
-      valid = false;
+      valid = true;
       type3 = LFS_TYPE_STRUCT, 0x01;
       id = 0;
       length = sizeof_superblock;

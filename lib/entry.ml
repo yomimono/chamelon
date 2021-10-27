@@ -4,7 +4,7 @@ let sizeof t =
   Cstruct.length (snd t) + Tag.size
 
 let into_cstruct ~xor_tag_with cs t =
-  Tag.into_cstruct ~xor_tag_with cs (fst t);
+  Tag.into_cstruct ~xor_tag_with cs @@ fst t;
   Cstruct.blit (snd t) 0 cs Tag.size (Cstruct.length @@ snd t)
 
 let to_cstruct ~xor_tag_with t =
@@ -20,7 +20,7 @@ let into_cstructv ~starting_xor_tag cs l =
    * This function exists so we can do better once `t list` is replaced with more complicated *)
   List.fold_left (fun (pointer, prev_tag) t ->
       into_cstruct ~xor_tag_with:prev_tag (Cstruct.shift cs pointer) t;
-      let tag = Tag.to_int32 (fst t) in
+      let tag = Tag.to_cstruct_raw (fst t) in
       (pointer + (sizeof t), tag)
     ) (0, starting_xor_tag) l
 

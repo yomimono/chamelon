@@ -43,6 +43,7 @@ let commit ~program_block_size block entries =
 (* TODO: ugh, what if we need >1 block for the entries :( *)
 let into_cstruct cs block =
   let sizeof_crc = 4 in
+  let ffffffff = Cstruct.of_string "\xff\xff\xff\xff" in
   Cstruct.LE.set_uint32 cs 0 block.revision_count;
   let revision_count_crc = Checkseum.Crc32.(digest_bigstring
               (Cstruct.to_bigarray cs) 0 sizeof_crc default)
@@ -51,13 +52,13 @@ let into_cstruct cs block =
   let _after_last_crc, _last_tag, last_crc = List.fold_left
       (fun (pointer, starting_xor_tag, preceding_crc) commit ->
          let crc, last_tag_of_commit =
-           Commit.into_cstruct ~starting_xor_tag ~preceding_crc
+           Commit.into_cstruct ~next_commit_valid:false ~starting_xor_tag ~preceding_crc
              (Cstruct.shift cs pointer) commit
          in
-         Printf.printf "the last tag of this commit was %lx . Last tag of previous commit, with which the first tag of this one was XOR'd, is %lx . Preceding CRC was %lx . This commit has %d entries\n%!"
-           last_tag_of_commit starting_xor_tag (Optint.to_int32 preceding_crc) (List.length commit.Commit.entries);
+         Format.printf "the last tag of this commit was %a . Last tag of previous commit, with which the first tag of this one was XOR'd, is %a . Preceding CRC was %lx . This commit has %d entries\n%!"
+           Cstruct.hexdump_pp last_tag_of_commit Cstruct.hexdump_pp starting_xor_tag (Optint.to_int32 preceding_crc) (List.length commit.Commit.entries);
          (pointer + Commit.sizeof commit, last_tag_of_commit, crc)
-      ) (4, 0xffffffffl, revision_count_crc) block.commits in
+      ) (4, ffffffff, revision_count_crc) block.commits in
   last_crc
 
 let to_cstruct ~block_size block =

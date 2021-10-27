@@ -46,11 +46,10 @@ module Tag = struct
     and length = 0x3ff
     in
     let t = Littlefs.Tag.{ valid; type3 = (abstract_type, chunk); id; length } in
-    let cs = Cstruct.create 4 in
     (* It may be surprising that the expected case here is zero. The tag itself is set to all 1s, but it needs
      * to be XOR'd with the default value, which is also all 1s, so we end up with all 0s. *)
-    Cstruct.BE.set_uint32 cs 0 Int32.zero;
-    Alcotest.(check cstruct) "tag writing: maxint" cs (Littlefs.Tag.to_cstruct ~xor_tag_with:0xffffffffl t)
+    let cs = Cstruct.of_string "\x00\x00\x00\x00" in
+    Alcotest.(check cstruct) "tag writing: 0xffffffff" cs (Littlefs.Tag.to_cstruct ~xor_tag_with:(Cstruct.of_string "\xff\xff\xff\xff") t)
 
 end
 
@@ -88,7 +87,7 @@ module Block = struct
     in
     let data, _empty = Cstruct.split output data_length in
     Alcotest.(check cstruct) "revision count" (Cstruct.of_string "\x01\x00\x00\x00") (Cstruct.sub data 0 4);
-    Alcotest.(check cstruct) "crc tag" (Cstruct.of_string "\xaf\xe0\x03\xf7") (Cstruct.sub data 4 4)
+    Alcotest.(check cstruct) "crc tag" (Cstruct.of_string "\x2f\xf0\x03\xf7") (Cstruct.sub data 4 4)
 
   (* mimic the minimal superblock commit made by `mklittlefs` when run on an empty directory, and assert that they match what's expected *)
   let commit_superblock () =
@@ -116,7 +115,7 @@ module Block = struct
     let data, not_data = Cstruct.split cs expected_length in
 
     let expected_inline_struct_tag = Cstruct.of_string "\x2f\xe0\x00" in
-    let expected_crc = Cstruct.of_string "\x20\x5c\x2b\x6e" in
+    let expected_crc = Cstruct.of_string "\x0d\x87\x3c\xbc" in
     (* Cstruct promises that buffers made with `create` are zeroed, so a new one
      * of the right length should be good to test against *)
     let zilch = Cstruct.create not_data_length in

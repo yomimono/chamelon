@@ -1,8 +1,6 @@
 (* tags are the only thing in littlefs stored in big-endian. *)
 (* be careful when editing to remember this :) *)
 
-type tag_repr = Cstruct.uint32
-
 [%%cenum
 type abstract_type =
   | LFS_TYPE_NAME [@id 0x0] (* associates IDs with file names and file types OR initializes them as files, directories, or superblocks *)
@@ -32,7 +30,7 @@ let size = 4 (* tags are always 32 bits, with internal
                 numerical representations big-endian *)
 
 let parse r =
-  let valid = (1 = r lsr 31)
+  let valid = (1 = (r lsr 31))
   and abstract_type = (r lsr 28) land 0x7 |> int_to_abstract_type
   and chunk = (r lsr 20) land 0xff
   and id = (r lsr 10) land 0x3ff
@@ -44,16 +42,54 @@ let parse r =
     let type3 = abstract_type, chunk in
     Ok {valid; type3; id; length}
 
-let to_int32 t =
-  let bit_1 = if t.valid then 1 lsl 31 else 0
-  and abstract_type = (abstract_type_to_int @@ fst t.type3) lsl 28
-  and chunk = (snd t.type3) lsl 20
-  and id = t.id lsl 10
+let into_cstruct_raw cs t =
+  let abstract_type, chunk = t.type3 in
+  let id = t.id land 0x3ff
+  and length = t.length land 0x3ff
   in
-  bit_1 + abstract_type + chunk + id + t.length |> Int32.of_int
+  (* most significant bit (31): valid or no? *)
+  let byte0 = if t.valid then 0x80 else 0x00 in
+  (* bits 30, 29, and 28: abstract type *)
+  let shifted_type = (0x7 land (abstract_type_to_int abstract_type)) lsl 4 in
+  let byte0 = byte0 lor shifted_type in
+  (* bits 27, 26, 25, 24 : first nibble of chunk *)
+  let chunk_msb = (0xf0 land chunk) lsr 4 in
+  let byte0 = byte0 lor chunk_msb in
+  Cstruct.set_uint8 cs 0 byte0;
+
+  (* bits 23, 22, 21, 20 : second nibble of chunk *)
+  let byte1 = (0x0f land chunk) lsl 4 in
+  (* bits 19, 18, 17, 16 : most significant 4 bits of id *)
+  let id_4_msb = (0x3c0 land id) lsr 6 in
+  let byte1 = byte1 lor id_4_msb in
+  Cstruct.set_uint8 cs 1 byte1;
+
+  (* bits 15, 14, 13, 12, 11, 10 : least significant 6 bits of id *)
+  let byte2 = (0x03f land id) lsl 2 in
+  (* bits 9, 8 : most significant 2 bits of length *)
+  let length_2_msb = (0x300 land length) lsr 8 in
+  let byte2 = byte2 lor length_2_msb in
+  Cstruct.set_uint8 cs 2 byte2;
+
+  (* bits 7, 6, 5, 4, 3, 2, 1, 0 : least significant 8 bits of length *)
+  let byte3 = length land 0xff in
+  Cstruct.set_uint8 cs 3 byte3
+
+let to_cstruct_raw t =
+  let cs = Cstruct.create 4 in
+  into_cstruct_raw cs t;
+  cs
+
+let xor ~into arg =
+  (* it doesn't really need to be tags, it could be any 4-byte cstruct *)
+  for i = 0 to 3 do
+    let new_byte = (Cstruct.get_uint8 into i) lxor (Cstruct.get_uint8 arg i) in
+    Cstruct.set_uint8 into i new_byte
+  done
 
 let into_cstruct ~xor_tag_with cs t =
-  Cstruct.BE.set_uint32 cs 0 @@ Int32.(logxor (to_int32 t) xor_tag_with)
+  into_cstruct_raw cs t;
+  xor ~into:cs xor_tag_with
 
 let to_cstruct ~xor_tag_with t =
   let cs = Cstruct.create 4 in
