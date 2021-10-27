@@ -52,7 +52,7 @@ let into_cstruct cs block =
   let _after_last_crc, _last_tag, last_crc = List.fold_left
       (fun (pointer, starting_xor_tag, preceding_crc) commit ->
          let crc, last_tag_of_commit =
-           Commit.into_cstruct ~next_commit_valid:false ~starting_xor_tag ~preceding_crc
+           Commit.into_cstruct ~next_commit_valid:true ~starting_xor_tag ~preceding_crc
              (Cstruct.shift cs pointer) commit
          in
          Format.printf "the last tag of this commit was %a . Last tag of previous commit, with which the first tag of this one was XOR'd, is %a . Preceding CRC was %lx . This commit has %d entries\n%!"

@@ -23,14 +23,14 @@ let into_cstruct ~next_commit_valid ~starting_xor_tag ~preceding_crc cs t =
   let tag_region = Cstruct.sub cs crc_tag_pointer Tag.size in
   let crc_region = Cstruct.sub cs crc_pointer sizeof_crc in
   let padding_region = Cstruct.sub cs (crc_pointer + sizeof_crc) t.padding in
+  let raw_tag = Tag.to_cstruct_raw crc_tag in
+  Format.printf "raw CRC tag for this commit: %a\n%!" Cstruct.hexdump_pp raw_tag;
 
   Tag.into_cstruct ~xor_tag_with:last_tag tag_region crc_tag;
-  let tag = Cstruct.create 4 in
-  Cstruct.blit tag_region 0 tag 0 4;
 
   let crc_with_tag = Checkseum.Crc32.digest_bigstring (Cstruct.to_bigarray cs) 0 crc_pointer preceding_crc in
-  Cstruct.LE.set_uint32 crc_region 0 (Optint.(to_int32 crc_with_tag |> Int32.lognot));
+  Cstruct.LE.set_uint32 crc_region 0 (Optint.(to_unsigned_int32 crc_with_tag |> Int32.lognot));
   (* set the padding bytes to an obvious value *)
   if t.padding <= 0 then () else Cstruct.memset padding_region 0xff;
-  (crc_with_tag, tag)
+  (crc_with_tag, raw_tag)
 
