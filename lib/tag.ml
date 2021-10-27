@@ -53,7 +53,7 @@ let to_int32 t =
   bit_1 + abstract_type + chunk + id + t.length |> Int32.of_int
 
 let into_cstruct ~xor_tag_with cs t =
-  Cstruct.BE.set_uint32 cs 0 @@ Int32.logxor (to_int32 t) xor_tag_with
+  Cstruct.BE.set_uint32 cs 0 @@ Int32.(logxor (to_int32 t) xor_tag_with)
 
 let to_cstruct ~xor_tag_with t =
   let cs = Cstruct.create 4 in

@@ -47,10 +47,17 @@ let into_cstruct cs block =
   let revision_count_crc = Checkseum.Crc32.(digest_bigstring
               (Cstruct.to_bigarray cs) 0 sizeof_crc default)
   in
-  let _after_last_crc, last_crc = List.fold_left (fun (pointer, preceding_crc) commit ->
-      let crc = Commit.into_cstruct ~preceding_crc (Cstruct.shift cs pointer) commit in
-      (pointer + Commit.sizeof commit, crc)
-    ) (4, revision_count_crc) block.commits in
+  Printf.printf "welcome to the cool block writing zone\n%!";
+  let _after_last_crc, _last_tag, last_crc = List.fold_left
+      (fun (pointer, starting_xor_tag, preceding_crc) commit ->
+         let crc, last_tag_of_commit =
+           Commit.into_cstruct ~starting_xor_tag ~preceding_crc
+             (Cstruct.shift cs pointer) commit
+         in
+         Printf.printf "the last tag of this commit was %lx . Last tag of previous commit, with which the first tag of this one was XOR'd, is %lx . Preceding CRC was %lx . This commit has %d entries\n%!"
+           last_tag_of_commit starting_xor_tag (Optint.to_int32 preceding_crc) (List.length commit.Commit.entries);
+         (pointer + Commit.sizeof commit, last_tag_of_commit, crc)
+      ) (4, 0xffffffffl, revision_count_crc) block.commits in
   last_crc
 
 let to_cstruct ~block_size block =
