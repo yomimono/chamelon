@@ -18,7 +18,7 @@ let sizeof t =
 let into_cstruct ~next_commit_valid ~starting_xor_tag ~preceding_crc cs t =
   let crc_tag_pointer, last_tag = Entry.into_cstructv ~starting_xor_tag cs t.entries in
   let crc_pointer = crc_tag_pointer + Tag.size in
-  let crc_chunk = if next_commit_valid then 0x01 else 0x00 in
+  let crc_chunk = if next_commit_valid then 0x00 else 0x01 in
   let crc_tag = Tag.({
       valid = true;
       type3 = Tag.LFS_TYPE_CRC, crc_chunk;
@@ -30,13 +30,17 @@ let into_cstruct ~next_commit_valid ~starting_xor_tag ~preceding_crc cs t =
   let tag_region = Cstruct.sub cs crc_tag_pointer Tag.size in
   let crc_region = Cstruct.sub cs crc_pointer sizeof_crc in
   let padding_region = Cstruct.sub cs (crc_pointer + sizeof_crc) t.padding in
-  let raw_tag = Tag.to_cstruct_raw crc_tag in
-
   Tag.into_cstruct ~xor_tag_with:last_tag tag_region crc_tag;
+  Format.printf "CRC tag after XOR: %a\n%!" Cstruct.hexdump_pp tag_region;
 
   let crc_with_tag = Checkseum.Crc32.digest_bigstring (Cstruct.to_bigarray cs) 0 crc_pointer preceding_crc |> Optint.((logand) (of_unsigned_int32 0xffffffffl)) in
   let crc_with_tag = Optint.lognot crc_with_tag in
-  Cstruct.LE.set_uint32 crc_region 0 (Optint.(to_int32 crc_with_tag));
+  Cstruct.LE.set_uint32 crc_region 0
+    (Optint.(to_unsigned_int crc_with_tag) |> Int32.of_int);
   (* set the padding bytes to an obvious value *)
   if t.padding <= 0 then () else Cstruct.memset padding_region 0xff;
+
+  (* this needs to be a separate cstruct entirely,
+   * because we'll overwrite the raw value in `cs` with its xor'd value *)
+  let raw_tag = Tag.to_cstruct_raw crc_tag in
   raw_tag

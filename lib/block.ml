@@ -49,6 +49,9 @@ let into_cstruct cs block =
   let revision_count_crc = Checkseum.Crc32.(digest_bigstring
               (Cstruct.to_bigarray cs) 0 sizeof_crc start_crc)
   in
+  (* hey hey, ho ho, we don't want no overflow *)
+  let revision_count_crc = Optint.((logand) revision_count_crc
+                                     (of_int32 0xffffffffl)) in
   match block.commits with
   | [] -> (* this is a somewhat degenerate case, but
              not pathological enough to throw an error IMO.
@@ -62,7 +65,7 @@ let into_cstruct cs block =
                (Cstruct.shift cs pointer) commit
            in
            (* we never want to pass a CRC *forward* into the next commit. *)
-           Format.printf "last tag of the commit (the crc tag) was %a\n%!" Cstruct.hexdump_pp last_tag_of_commit;
+           Format.printf "last tag of the commit (the crc tag) was %a raw\n%!" Cstruct.hexdump_pp last_tag_of_commit;
            (pointer + Commit.sizeof commit, last_tag_of_commit, Checkseum.Crc32.default)
         ) (4, ffffffff, revision_count_crc) block.commits in
     ()
