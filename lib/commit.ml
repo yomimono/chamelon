@@ -34,7 +34,7 @@ let into_cstruct ~next_commit_valid ~starting_xor_tag ~preceding_crc cs t =
 
   Tag.into_cstruct ~xor_tag_with:last_tag tag_region crc_tag;
 
-  let crc_with_tag = Checkseum.Crc32.digest_bigstring (Cstruct.to_bigarray cs) 0 crc_pointer preceding_crc |> Optint.((logand) (of_int32 0xffffffffl)) in
+  let crc_with_tag = Checkseum.Crc32.digest_bigstring (Cstruct.to_bigarray cs) 0 crc_pointer preceding_crc |> Optint.((logand) (of_unsigned_int32 0xffffffffl)) in
   let crc_with_tag = Optint.lognot crc_with_tag in
   Cstruct.LE.set_uint32 crc_region 0 (Optint.(to_int32 crc_with_tag));
   (* set the padding bytes to an obvious value *)

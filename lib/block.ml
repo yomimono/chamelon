@@ -49,16 +49,22 @@ let into_cstruct cs block =
   let revision_count_crc = Checkseum.Crc32.(digest_bigstring
               (Cstruct.to_bigarray cs) 0 sizeof_crc start_crc)
   in
-  let _after_last_crc, _last_tag, _last_crc = List.fold_left
-      (fun (pointer, starting_xor_tag, preceding_crc) commit ->
-         let last_tag_of_commit =
-           Commit.into_cstruct ~next_commit_valid:true ~starting_xor_tag ~preceding_crc
-             (Cstruct.shift cs pointer) commit
-         in
-         (* we never want to pass a CRC *forward* into the next commit. *)
-         (pointer + Commit.sizeof commit, last_tag_of_commit, Checkseum.Crc32.default)
-      ) (4, ffffffff, revision_count_crc) block.commits in
-  ()
+  match block.commits with
+  | [] -> (* this is a somewhat degenerate case, but
+             not pathological enough to throw an error IMO.
+             Since there's nothing to write, write nothing *)
+    ()
+  | _ ->
+    let _after_last_crc, _last_tag, _last_crc = List.fold_left
+        (fun (pointer, starting_xor_tag, preceding_crc) commit ->
+           let last_tag_of_commit =
+             Commit.into_cstruct ~next_commit_valid:true ~starting_xor_tag ~preceding_crc
+               (Cstruct.shift cs pointer) commit
+           in
+           (* we never want to pass a CRC *forward* into the next commit. *)
+           (pointer + Commit.sizeof commit, last_tag_of_commit, Checkseum.Crc32.default)
+        ) (4, ffffffff, revision_count_crc) block.commits in
+    ()
 
 let to_cstruct ~block_size block =
   let cs = Cstruct.create (Int32.to_int block_size) in
