@@ -8,12 +8,13 @@ let sizeof_crc = 4
 let sizeof t =
   (Entry.lenv t.entries) + Tag.size + sizeof_crc + t.padding
 
-let pp_hexdump_le fmt n =
-  let uint32 = Optint.to_int32 n in
-  let b = Cstruct.create 4 in
-  Cstruct.LE.set_uint32 b 0 uint32;
-  Format.fprintf fmt "%a" Cstruct.hexdump_pp b
-
+(** [into_cstruct cs t] writes [t] to [cs] starting at offset 0.
+ * It returns the raw (i.e., not XOR'd with the tag before it) value
+ * of the last tag of the commit, for use in writing later commits.
+ * Unlike other modules the corresponding `to_cstruct` function is
+ * not provided, because the caller is expected to be writing into
+ * a larger buffer as part of a block write of a set of commits.
+ * *)
 let into_cstruct ~next_commit_valid ~starting_xor_tag ~preceding_crc cs t =
   let crc_tag_pointer, last_tag = Entry.into_cstructv ~starting_xor_tag cs t.entries in
   let crc_pointer = crc_tag_pointer + Tag.size in
@@ -33,10 +34,9 @@ let into_cstruct ~next_commit_valid ~starting_xor_tag ~preceding_crc cs t =
 
   Tag.into_cstruct ~xor_tag_with:last_tag tag_region crc_tag;
 
-  let crc_with_tag = Checkseum.Crc32.digest_bigstring (Cstruct.to_bigarray cs) 0 crc_pointer preceding_crc in
-  Format.printf "preceding CRC: %a. CRC with tag for this commit: %a\n%!" pp_hexdump_le preceding_crc pp_hexdump_le crc_with_tag;
+  let crc_with_tag = Checkseum.Crc32.digest_bigstring (Cstruct.to_bigarray cs) 0 crc_pointer preceding_crc |> Optint.((logand) (of_int32 0xffffffffl)) in
+  let crc_with_tag = Optint.lognot crc_with_tag in
   Cstruct.LE.set_uint32 crc_region 0 (Optint.(to_int32 crc_with_tag));
   (* set the padding bytes to an obvious value *)
   if t.padding <= 0 then () else Cstruct.memset padding_region 0xff;
-  (crc_with_tag, raw_tag)
-
+  raw_tag
