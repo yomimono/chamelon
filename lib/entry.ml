@@ -21,6 +21,9 @@ let into_cstructv ~starting_xor_tag cs l =
   List.fold_left (fun (pointer, prev_tag) t ->
       into_cstruct ~xor_tag_with:prev_tag (Cstruct.shift cs pointer) t;
       let tag = Tag.to_cstruct_raw (fst t) in
+      Format.printf "raw tag %a , xor'd with %a tag is %a\n%!" Cstruct.hexdump_pp tag
+        Cstruct.hexdump_pp prev_tag
+        Cstruct.hexdump_pp (Cstruct.sub cs pointer 4);
       (pointer + (sizeof t), tag)
     ) (0, starting_xor_tag) l
 

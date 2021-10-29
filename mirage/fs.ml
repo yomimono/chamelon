@@ -35,6 +35,7 @@ module Make(This_Block: Mirage_block.S) = struct
     let open Lwt.Infix in
     let sector_of_block = sector_of_block ~sector_size ~block_size in
     let (a, b) = sector_of_block a, sector_of_block b in
+
     This_Block.write device a [(fst @@ Littlefs.Block.to_cstruct ~block_size write_me)] >|= block_write_wrap >>= function
     | Ok () ->
       This_Block.write device b [(fst @@ Littlefs.Block.to_cstruct ~block_size @@ {write_me with revision_count = next_rev_count})] >|= block_write_wrap
