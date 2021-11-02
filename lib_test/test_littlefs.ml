@@ -4,7 +4,7 @@ module Tag = struct
   let test_zero () =
     let n = 0 in
     let t = Littlefs.Tag.parse n |> Result.get_ok in
-    Alcotest.(check bool) "valid bit" false t.valid
+    Alcotest.(check bool) "valid bit" true t.valid
   
   let test_ones () =
     (* each field is 1, but abstract_type 1 is invalid *)
@@ -19,7 +19,7 @@ module Tag = struct
     | Error _ -> ()
   
   let read_maxint () =
-    let valid = true
+    let valid = false
     and abstract_type = Littlefs.Tag.LFS_TYPE_GSTATE
     and chunk = 0xff
     and id = 0x3ff
@@ -39,7 +39,7 @@ module Tag = struct
     ()
 
   let write_maxint () =
-    let valid = true
+    let valid = false
     and abstract_type = Littlefs.Tag.LFS_TYPE_GSTATE
     and chunk = 0xff
     and id = 0x3ff
@@ -100,7 +100,7 @@ module Block = struct
     let data, not_data = Cstruct.split cs expected_length in
 
     let expected_inline_struct_tag = Cstruct.of_string "\x2f\xe0\x00" in
-    let expected_crc = Cstruct.of_string "\x7d\x24\x1a\xa0" in
+    let expected_crc = Cstruct.of_string "\x50\xff\x0d\x72" in
     (* Cstruct promises that buffers made with `create` are zeroed, so a new one
      * of the right length should be good to test against *)
     let zilch = Cstruct.create not_data_length in

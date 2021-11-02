@@ -65,7 +65,6 @@ let into_cstruct cs block =
                (Cstruct.shift cs pointer) commit
            in
            (* we never want to pass a CRC *forward* into the next commit. *)
-           Format.printf "last tag of the commit (the crc tag) was %a raw\n%!" Cstruct.hexdump_pp last_tag_of_commit;
            (pointer + Commit.sizeof commit, last_tag_of_commit, Checkseum.Crc32.default)
         ) (4, ffffffff, revision_count_crc) block.commits in
     ()

@@ -31,7 +31,6 @@ let into_cstruct ~next_commit_valid ~starting_xor_tag ~preceding_crc cs t =
   let crc_region = Cstruct.sub cs crc_pointer sizeof_crc in
   let padding_region = Cstruct.sub cs (crc_pointer + sizeof_crc) t.padding in
   Tag.into_cstruct ~xor_tag_with:last_tag tag_region crc_tag;
-  Format.printf "CRC tag after XOR: %a\n%!" Cstruct.hexdump_pp tag_region;
 
   let crc_with_tag = Checkseum.Crc32.digest_bigstring (Cstruct.to_bigarray cs) 0 crc_pointer preceding_crc |> Optint.((logand) (of_unsigned_int32 0xffffffffl)) in
   let crc_with_tag = Optint.lognot crc_with_tag in

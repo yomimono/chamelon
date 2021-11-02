@@ -3,6 +3,12 @@ debug:
 	dd if=/dev/zero of=_build/default/src/test.img bs=64K count=1
 	gdb --args _build/default/src/format.exe _build/default/src/test.img
 
+readmdir:
+	dune build @default
+	dd if=/dev/zero of=_build/default/src/test.img bs=64K count=1
+	_build/default/src/format.exe _build/default/src/test.img
+	readmdir.py -a --log _build/default/src/test.img 4096 0 1
+
 mount:
 	dd if=/dev/zero of=_build/default/src/test.img bs=64K count=1
 	_build/default/src/format.exe _build/default/src/test.img

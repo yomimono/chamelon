@@ -30,7 +30,10 @@ let size = 4 (* tags are always 32 bits, with internal
                 numerical representations big-endian *)
 
 let parse r =
-  let valid = (0x01 land (r lsr 31)) = 0x01
+  (* CAUTION: this valid-bit read contradicts the spec,
+   * but matches the implementation of lfs_isvalid in the reference implementation.
+   * Seems like a strange choice to me, if I've understood it right. *)
+  let valid = (0x01 land (r lsr 31)) = 0x00
   and abstract_type = (r lsr 28) land 0x7 |> int_to_abstract_type
   and chunk = (r lsr 20) land 0xff
   and id = (r lsr 10) land 0x3ff
@@ -51,7 +54,7 @@ let into_cstruct_raw cs t =
   (* CAUTION: this write contradicts the spec,
    * but matches the implementation of lfs_isvalid in the reference implementation.
    * Seems like a strange choice to me, if I've understood it right. *)
-  let byte0 = if t.valid then 0x00 else 0x01 in
+  let byte0 = if t.valid then 0x00 else 0x80 in
   (* bits 30, 29, and 28: abstract type *)
   let shifted_type = (0x7 land (abstract_type_to_int abstract_type)) lsl 4 in
   let byte0 = byte0 lor shifted_type in
