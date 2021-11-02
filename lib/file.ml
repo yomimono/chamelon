@@ -11,7 +11,7 @@ let name n id = Tag.({
 
 let create_inline id contents = Tag.({
     valid = true;
-    type3 = (Tag.LFS_TYPE_FILE, 0x01);
+    type3 = (Tag.LFS_TYPE_STRUCT, 0x01);
     id;
     length = (Cstruct.length contents);
   })

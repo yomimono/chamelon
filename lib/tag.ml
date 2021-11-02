@@ -30,6 +30,7 @@ let size = 4 (* tags are always 32 bits, with internal
                 numerical representations big-endian *)
 
 let parse r =
+  let r = Int32.to_int r in
   (* CAUTION: this valid-bit read contradicts the spec,
    * but matches the implementation of lfs_isvalid in the reference implementation.
    * Seems like a strange choice to me, if I've understood it right. *)
@@ -39,11 +40,15 @@ let parse r =
   and id = (r lsr 10) land 0x3ff
   and length = r land 0x3ff
   in
-  match abstract_type with
-  | None -> Error (`Msg "invalid abstract type in metadata tag")
-  | Some abstract_type ->
-    let type3 = abstract_type, chunk in
-    Ok {valid; type3; id; length}
+  (* all 1s and all 0s are explicitly invalid *)
+  if (r land 0xffffffff = 0xffffffff || r land 0xffffffff = 0x0) then Error (`Msg "invalid tag")
+  else begin
+    match abstract_type with
+    | None -> Error (`Msg "invalid abstract type in metadata tag")
+    | Some abstract_type ->
+      let type3 = abstract_type, chunk in
+      Ok {valid; type3; id; length}
+  end
 
 let into_cstruct_raw cs t =
   let abstract_type, chunk = t.type3 in

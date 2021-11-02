@@ -28,3 +28,24 @@ let to_cstructv ~starting_xor_tag l =
   let cs = Cstruct.create @@ lenv l in
   let _ = into_cstructv ~starting_xor_tag cs l in
   cs
+
+let of_cstructv cs =
+  let length_function cs =
+    if Cstruct.length cs < Tag.size then None
+    else begin
+      match Tag.parse (Cstruct.BE.get_uint32 cs 0) with
+      | Error _ -> None
+      | Ok tag -> Some (Tag.size + tag.length)
+    end
+  and parse_function cs =
+    match Tag.parse (Cstruct.BE.get_uint32 cs 0) with
+    | Error _ -> None
+    | Ok tag ->
+      Some (tag, Cstruct.sub cs Tag.size tag.length)
+  in
+  let iter_function = Cstruct.iter length_function parse_function in
+  let gather l = function
+    | None -> l
+    | Some n -> n :: l
+  in
+  Cstruct.fold gather (iter_function cs) []

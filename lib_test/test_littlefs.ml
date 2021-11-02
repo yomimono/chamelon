@@ -2,30 +2,33 @@ let cstruct = Alcotest.testable Cstruct.hexdump_pp Cstruct.equal
 
 module Tag = struct
   let test_zero () =
-    let n = 0 in
+    (* set the least significant bit because 0x0l is
+     * explicitly an invalid tag *)
+    let n = 0x01l in
     let t = Littlefs.Tag.parse n |> Result.get_ok in
     Alcotest.(check bool) "valid bit" true t.valid
   
   let test_ones () =
     (* each field is 1, but abstract_type 1 is invalid *)
-    let repr = 0x8000_0000 +
-               0x1000_0000 +
-               0x0010_0000 +
-               0x0000_0400 +
-               0x0000_0001
+    let repr = Int32.(
+        add 0x8000_0000l @@
+        add 0x1000_0000l @@
+        add 0x0010_0000l @@
+        add 0x0000_0400l @@
+            0x0000_0001l)
     in
     match Littlefs.Tag.parse repr with
     | Ok _ -> Alcotest.fail "abstract type 1 was accepted"
     | Error _ -> ()
   
-  let read_maxint () =
+  let read_almost_maxint () =
     let valid = false
     and abstract_type = Littlefs.Tag.LFS_TYPE_GSTATE
     and chunk = 0xff
     and id = 0x3ff
-    and length = 0x3ff
+    and length = 0x3ef
     in
-    let repr = 0xffffffff in
+    let repr = 0xffffffefl in
     let is_gstate t = 
       Littlefs.Tag.(compare_abstract_type abstract_type t)
     in
@@ -72,14 +75,15 @@ module Block = struct
   module Block = Littlefs.Block
 
   (* what's a reasonable block size? let's assume 4Kib *)
-  let block_size = 4096l
+  let block_size = 4096
 
   (* mimic the minimal superblock commit made by `mklittlefs` when run on an empty directory, and assert that they match what's expected *)
   let commit_superblock () =
     let revision_count = 1l in
     let block_count = 16 in
     let name = Littlefs.Superblock.name in
-    let superblock_inline_struct = Littlefs.Superblock.inline_struct block_size @@ Int32.of_int block_count in
+    let bs = Int32.of_int block_size in
+    let superblock_inline_struct = Littlefs.Superblock.inline_struct bs @@ Int32.of_int block_count in
     let start_block = {Littlefs.Block.empty with revision_count;} in
     let block = Littlefs.Block.commit ~program_block_size:16l start_block [
         name;
@@ -96,7 +100,7 @@ module Block = struct
       + 4 (* crc *)
       + 12 (* padding if the block size is 16l *)
     in
-    let not_data_length = (Int32.to_int block_size) - expected_length in
+    let not_data_length = block_size - expected_length in
     let data, not_data = Cstruct.split cs expected_length in
 
     let expected_inline_struct_tag = Cstruct.of_string "\x2f\xe0\x00" in
@@ -107,11 +111,15 @@ module Block = struct
     (* the hard, important bits: the correct XORing of the tags, the CRC *)
     (* there should be *one* commit here, meaning one CRC tag *)
     (* but the cstruct should be block-sized *)
-    Alcotest.(check int) "block to_cstruct returns a block-size cstruct" (Int32.to_int block_size) (Cstruct.length cs);
+    Alcotest.(check int) "block to_cstruct returns a block-size cstruct" block_size (Cstruct.length cs);
     Alcotest.(check int) "zilch buffer and not_data have the same length" (Cstruct.length zilch) (Cstruct.length not_data);
     Alcotest.(check cstruct) "all zeroes in the non-data zone" zilch not_data;
     Alcotest.(check cstruct) "second tag got xor'd" expected_inline_struct_tag (Cstruct.sub data 0x10 3);
     Alcotest.(check cstruct) "crc matches what's expected" expected_crc (Cstruct.sub data 0x30 4)
+
+  let roundtrip () =
+    ()
+
 
 end
 
@@ -119,9 +127,9 @@ let () =
   let tc = Alcotest.test_case in
   Alcotest.run "littlefs" [
     ( "tags", [
-          tc "read: all bits are zero" `Quick Tag.test_zero;
+          tc "read: valid bit" `Quick Tag.test_zero;
           tc "read: all fields are 1" `Quick Tag.test_ones;
-          tc "read: all bits are 1" `Quick Tag.read_maxint;
+          tc "read: almost all bits are 1" `Quick Tag.read_almost_maxint;
           tc "write: all bits are 1" `Quick Tag.write_maxint;
         ]);
     ( "superblock", [
@@ -130,4 +138,7 @@ let () =
     ( "block", [
           tc "write one commit to a block" `Quick Block.commit_superblock;
       ]);
+    ( "roundtrip", [
+          tc "you got a parser and printer, you know what to do" `Quick Block.roundtrip;
+        ]);
   ]

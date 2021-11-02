@@ -26,7 +26,6 @@ let get_padding is_first program_block_size entries =
   | n -> Int32.(sub program_block_size n |> to_int)
 
 let commit ~program_block_size block entries =
-  let () = () in
   match block.commits with
   | [] ->
     let padding = get_padding true program_block_size entries in
@@ -70,6 +69,12 @@ let into_cstruct cs block =
     ()
 
 let to_cstruct ~block_size block =
-  let cs = Cstruct.create (Int32.to_int block_size) in
+  let cs = Cstruct.create block_size in
   let crc = into_cstruct cs block in
   cs, crc
+
+let of_cstruct ~program_block_size block =
+  let pbs_int = Int32.to_int program_block_size in
+  let revision_count = Cstruct.LE.get_uint32 block 0 in
+  let commits = Commit.of_cstructv ~program_block_size:pbs_int (Cstruct.shift block 4) in
+  {revision_count; commits}
