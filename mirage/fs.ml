@@ -58,14 +58,14 @@ module Make(This_Block: Mirage_block.S) = struct
     let block = Littlefs.Block.commit ~program_block_size block [name; superblock_inline_struct] in
     write_blocks ~block_size ~sector_size ~next_rev_count:2l device 0L 1L block >>= fun _ ->
 
-    match Littlefs.Dir.create_root_dir "/" rootdir_metadata_blocks with
+    match Littlefs.Dir.create_root_dir 0x01 "/" rootdir_metadata_blocks with
     | Error e -> Lwt.return @@ Error (`Littlefs_write e)
-    | Ok (create, dir, structure, soft_tail) ->
+    | Ok (create, dir, structure, _soft_tail) ->
       let write_me = Littlefs.Block.commit ~program_block_size block
           [create;
            dir;
            structure;
-           soft_tail ]
+           (* soft_tail *)]
       in
       let next_rev_count = Int32.(add write_me.revision_count one) in
       write_blocks ~block_size ~sector_size ~next_rev_count device 0L 1L write_me
