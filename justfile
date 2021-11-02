@@ -1,19 +1,27 @@
+image := "_build/default/src/test.img"
+
+test_img:
+	dune build @default
+	dd if=/dev/zero of={{image}} bs=64K count=1
+	_build/default/src/format.exe {{image}}
+
 debug:
 	dune build @default
-	dd if=/dev/zero of=_build/default/src/test.img bs=64K count=1
-	gdb --args _build/default/src/format.exe _build/default/src/test.img
+	dd if=/dev/zero of={{image}} bs=64K count=1
+	gdb --args _build/default/src/format.exe {{image}}
 
-readmdir:
-	dune build @default
-	dd if=/dev/zero of=_build/default/src/test.img bs=64K count=1
-	_build/default/src/format.exe _build/default/src/test.img
-	readmdir.py -a --log _build/default/src/test.img 4096 0 1
+readmdir: test_img
+	readmdir.py -a --log {{image}} 4096 0 1
 
-mount:
-	dd if=/dev/zero of=_build/default/src/test.img bs=64K count=1
-	_build/default/src/format.exe _build/default/src/test.img
+readtree: test_img
+	readtree.py -a --log {{image}} 4096 0 1
+
+mklittlefs-read: test_img
+	mklittlefs -d 5 -b 4096 -l {{image}}
+
+mount: test_img
 	sudo umount -q /mnt || true
 	sudo losetup -d /dev/loop0 || true
-	sudo losetup /dev/loop0 _build/default/src/test.img
-	/home/yomimono/fuse-littlefs/lfs /dev/loop0 /mnt
+	sudo losetup /dev/loop0 {{image}}
+	/home/yomimono/fuse-littlefs/lfs -d /dev/loop0 /mnt
 	ls /mnt
