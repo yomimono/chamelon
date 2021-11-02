@@ -1,5 +1,5 @@
 (executables
-  (public_names format)
+  (public_names format lfs_write)
   (libraries cmdliner littlefs.fs mirage-block-unix lwt)
 )
 
