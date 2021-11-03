@@ -44,17 +44,22 @@ let into_cstruct ~next_commit_valid ~starting_xor_tag ~preceding_crc cs t =
   let raw_tag = Tag.to_cstruct_raw crc_tag in
   raw_tag
 
-let rec of_cstructv ~program_block_size cs =
+let rec of_cstructv ~starting_offset ~starting_xor_tag ~program_block_size cs =
   (* we don't have a good way to know how many valid
    * entries there are, so we have to keep trying
    * for the whole block :/ *)
-  let entries = Entry.of_cstructv cs in
+  let entries, last_tag = Entry.of_cstructv ~starting_xor_tag cs in
   match entries with
   | [] -> []
   | entries ->
-    let written = Entry.lenv entries in
-    let padding =
-      program_block_size - (written mod program_block_size)
+    let read = Entry.lenv_less_padding entries in
+    let overhang = starting_offset + read mod program_block_size in
+    let padding = program_block_size - overhang
     in
-    let next_commit = Cstruct.shift cs (written + padding) in
-    { entries; padding; } :: of_cstructv ~program_block_size next_commit
+    if read + padding >= Cstruct.length cs then
+      {entries; padding} :: []
+    else begin
+      let next_commit = Cstruct.shift cs (read + padding) in
+      (* only the first commit ever has a nonzero starting offset, so all our recursive calls should set it to 0 *)
+      { entries; padding; } :: of_cstructv ~starting_offset:0 ~starting_xor_tag:last_tag ~program_block_size next_commit
+    end

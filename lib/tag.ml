@@ -29,25 +29,51 @@ let deleted_tag = 0x3ff (* special value for "length" field *)
 let size = 4 (* tags are always 32 bits, with internal
                 numerical representations big-endian *)
 
-let parse r =
-  let r = Int32.to_int r in
-  (* CAUTION: this valid-bit read contradicts the spec,
-   * but matches the implementation of lfs_isvalid in the reference implementation.
-   * Seems like a strange choice to me, if I've understood it right. *)
-  let valid = (0x01 land (r lsr 31)) = 0x00
-  and abstract_type = (r lsr 28) land 0x7 |> int_to_abstract_type
-  and chunk = (r lsr 20) land 0xff
-  and id = (r lsr 10) land 0x3ff
-  and length = r land 0x3ff
-  in
-  (* all 1s and all 0s are explicitly invalid *)
-  if (r land 0xffffffff = 0xffffffff || r land 0xffffffff = 0x0) then Error (`Msg "invalid tag")
+let invalid_tags = [
+  Cstruct.of_string "\x00\x00\x00\x00";
+  Cstruct.of_string "\xff\xff\xff\xff";
+]
+
+let pp fmt tag =
+  Format.fprintf fmt "id %d (%x), length %d (%x), valid %b, type is %x with chunk %x" tag.id tag.id
+    tag.length tag.length tag.valid
+    (abstract_type_to_int (fst tag.type3))
+    (snd tag.type3)
+
+let xor ~into arg =
+  (* it doesn't really need to be tags, it could be any 4-byte cstruct *)
+  for i = 0 to 3 do
+    let new_byte = (Cstruct.get_uint8 into i) lxor (Cstruct.get_uint8 arg i) in
+    Cstruct.set_uint8 into i new_byte
+  done
+
+(* TODO: verify whether all-0/all-1 check is for raw tags or XOR'd tags - currently we check both, but that will probably give us false negatives for select tags *)
+let of_cstruct ~xor_tag_with cs =
+  let tag_region = Cstruct.sub cs 0 size in
+  let any_invalid = List.exists (Cstruct.equal tag_region) invalid_tags in
+  if any_invalid then Error (`Msg "invalid tag")
   else begin
-    match abstract_type with
-    | None -> Error (`Msg "invalid abstract type in metadata tag")
-    | Some abstract_type ->
-      let type3 = abstract_type, chunk in
-      Ok {valid; type3; id; length}
+    xor ~into:cs xor_tag_with;
+    let r32 = Cstruct.BE.get_uint32 cs 0 in
+    let r = Int32.to_int r32 in
+    (* CAUTION: this valid-bit read contradicts the spec,
+     * but matches the implementation of lfs_isvalid in the reference implementation.
+     * Seems like a strange choice to me, if I've understood it right. *)
+    let valid = (0x01 land (r lsr 31)) = 0x00
+    and abstract_type = (r lsr 28) land 0x7 |> int_to_abstract_type
+    and chunk = (r lsr 20) land 0xff
+    and id = (r lsr 10) land 0x3ff
+    and length = r land 0x3ff
+    in
+    (* all 1s and all 0s are explicitly invalid *)
+    if (r land 0xffffffff = 0xffffffff || r land 0xffffffff = 0x0) then Error (`Msg "invalid tag")
+    else begin
+      match abstract_type with
+      | None -> Error (`Msg "invalid abstract type in metadata tag")
+      | Some abstract_type ->
+        let type3 = abstract_type, chunk in
+        Ok {valid; type3; id; length}
+    end
   end
 
 let into_cstruct_raw cs t =
@@ -90,13 +116,6 @@ let to_cstruct_raw t =
   let cs = Cstruct.create 4 in
   into_cstruct_raw cs t;
   cs
-
-let xor ~into arg =
-  (* it doesn't really need to be tags, it could be any 4-byte cstruct *)
-  for i = 0 to 3 do
-    let new_byte = (Cstruct.get_uint8 into i) lxor (Cstruct.get_uint8 arg i) in
-    Cstruct.set_uint8 into i new_byte
-  done
 
 let into_cstruct ~xor_tag_with cs t =
   into_cstruct_raw cs t;

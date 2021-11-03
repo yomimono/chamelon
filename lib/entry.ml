@@ -15,6 +15,13 @@ let to_cstruct ~xor_tag_with t =
 let lenv l =
   List.fold_left (fun sum t -> sum + sizeof t) 0 l
 
+let lenv_less_padding l =
+  List.fold_left (fun sum t ->
+      match (fst t).Tag.type3 |> fst with
+      | Tag.LFS_TYPE_CRC -> sum + Tag.size + 4
+      | _ -> sum + sizeof t)
+    0 l
+
 let into_cstructv ~starting_xor_tag cs l =
   (* currently this takes a `t list`, and therefore is pretty straightforward.
    * This function exists so we can do better once `t list` is replaced with more complicated *)
@@ -29,23 +36,32 @@ let to_cstructv ~starting_xor_tag l =
   let _ = into_cstructv ~starting_xor_tag cs l in
   cs
 
-let of_cstructv cs =
-  let length_function cs =
+(** [of_cstructv cs] returns [(l, t)] where [l] is a list of (tag, entry) pairs discovered, and [t] the last tag (un-xor'd) for use in seeding future reads or writes. *)
+let of_cstructv ~starting_xor_tag cs =
+  let tag ~xor_tag_with cs =
     if Cstruct.length cs < Tag.size then None
     else begin
-      match Tag.parse (Cstruct.BE.get_uint32 cs 0) with
+      match Tag.of_cstruct ~xor_tag_with (Cstruct.sub cs 0 Tag.size) with
       | Error _ -> None
-      | Ok tag -> Some (Tag.size + tag.length)
+      | Ok tag ->
+        let unpadded_length =
+          match tag.Tag.type3 |> fst with
+          (* special case here: the tag will
+           * have the padding included in its length.
+           * luckily the real length of the CRC is constant *)
+          | Tag.LFS_TYPE_CRC -> 4
+          | _ -> tag.length
+        in
+        if unpadded_length + Tag.size <= Cstruct.length cs
+        then Some (tag, Cstruct.sub cs Tag.size unpadded_length)
+        else None
     end
-  and parse_function cs =
-    match Tag.parse (Cstruct.BE.get_uint32 cs 0) with
-    | Error _ -> None
-    | Ok tag ->
-      Some (tag, Cstruct.sub cs Tag.size tag.length)
   in
-  let iter_function = Cstruct.iter length_function parse_function in
-  let gather l = function
-    | None -> l
-    | Some n -> n :: l
+  let rec gather (l, last_tag) cs =
+    match tag ~xor_tag_with:last_tag cs with
+    | None -> (List.rev l, last_tag)
+    | Some (tag, data) ->
+      gather ((tag, data) :: l, Cstruct.sub cs 0 Tag.size)
+      (Cstruct.shift cs (Tag.size + tag.Tag.length ))
   in
-  Cstruct.fold gather (iter_function cs) []
+  gather ([], starting_xor_tag) cs

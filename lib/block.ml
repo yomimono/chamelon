@@ -76,5 +76,8 @@ let to_cstruct ~block_size block =
 let of_cstruct ~program_block_size block =
   let pbs_int = Int32.to_int program_block_size in
   let revision_count = Cstruct.LE.get_uint32 block 0 in
-  let commits = Commit.of_cstructv ~program_block_size:pbs_int (Cstruct.shift block 4) in
+  let commit_list = Cstruct.shift block 4 in
+  let starting_xor_tag = Cstruct.of_string "\xff\xff\xff\xff" in
+  (* the first commit is at an offset of 4, because the revision count is hanging out at the front of the block *)
+  let commits = Commit.of_cstructv ~starting_offset:4 ~starting_xor_tag ~program_block_size:pbs_int commit_list in
   {revision_count; commits}
