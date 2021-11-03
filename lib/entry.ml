@@ -44,16 +44,9 @@ let of_cstructv ~starting_xor_tag cs =
       match Tag.of_cstruct ~xor_tag_with (Cstruct.sub cs 0 Tag.size) with
       | Error _ -> None
       | Ok tag ->
-        let unpadded_length =
-          match tag.Tag.type3 |> fst with
-          (* special case here: the tag will
-           * have the padding included in its length.
-           * luckily the real length of the CRC is constant *)
-          | Tag.LFS_TYPE_CRC -> 4
-          | _ -> tag.length
-        in
-        if unpadded_length + Tag.size <= Cstruct.length cs
-        then Some (tag, Cstruct.sub cs Tag.size unpadded_length)
+        let total_length = Tag.size + tag.length in
+        if total_length <= Cstruct.length cs
+        then Some (tag, Cstruct.sub cs Tag.size tag.length)
         else None
     end
   in

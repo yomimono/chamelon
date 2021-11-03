@@ -148,7 +148,7 @@ module Block = struct
     let padding = commit.Littlefs.Commit.padding in
     Alcotest.(check int) "padding length" (16 - 4) padding;
     Alcotest.(check int) "last tag length" 16 crc_tag.Littlefs.Tag.length;
-    Alcotest.(check int) "actual crc length" 4 (Cstruct.length crc) 
+    Alcotest.(check int) "actual crc length" 16 (Cstruct.length crc) 
 
 end
 
