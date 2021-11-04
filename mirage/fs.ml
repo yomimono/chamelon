@@ -47,14 +47,15 @@ module Make(This_Block: Mirage_block.S) = struct
     let sector_of_block = sector_of_block ~sector_size ~block_size in
     let (a, b) = sector_of_block a, sector_of_block b in
     let block_cs = Littlefs.Block.to_cstruct ~program_block_size ~block_size write_me in
-    let revd_block_cs = Littlefs.Block.to_cstruct ~program_block_size ~block_size {write_me with revision_count = next_rev_count} in
+    let revd_block = Littlefs.Block.(of_commits ~revision_count:next_rev_count (commits write_me)) in
+    let revd_block_cs = Littlefs.Block.to_cstruct ~program_block_size ~block_size revd_block in
 
     This_Block.write device a [block_cs] >|= block_write_wrap >>= function
     | Ok () ->
       This_Block.write device b [revd_block_cs] >|= block_write_wrap
     | e -> Lwt.return e
 
-  let add_commits {block_size; program_block_size; block; sector_size} block_number commits =
+  let add_entries {block_size; program_block_size; block; sector_size} block_number entries =
     let open Lwt.Infix in
     let raw_block = Cstruct.create block_size in
     let sector_number = sector_of_block ~block_size ~sector_size block_number in
@@ -63,12 +64,20 @@ module Make(This_Block: Mirage_block.S) = struct
                     we'd like to return an Error (`Block_write e) *)
       exit 1
     | Ok () ->
-      let old_block = Littlefs.Block.of_cstruct ~program_block_size raw_block in
-      let new_block = Littlefs.Block.commit old_block commits in
-      Littlefs.Block.into_cstruct ~program_block_size raw_block new_block;
-      This_Block.write block block_number [raw_block] >>= function
-      | Error e -> Lwt.return @@ Error (`Block_write e)
-      | Ok () -> Lwt.return @@ Ok ()
+      match Littlefs.Block.of_cstruct ~program_block_size raw_block with
+      | Error _ -> exit 1
+      | Ok old_block ->
+        let old_commits = Littlefs.Block.commits old_block in
+        let last_commit = List.hd @@ List.rev old_commits in
+        let old_revision_count = Littlefs.Block.revision_count old_block in
+        let commit = Littlefs.Commit.commit_after last_commit entries in
+        let new_block = Littlefs.Block.of_commits ~revision_count:(old_revision_count + 1)
+            (old_commits @ [commit])
+        in
+        Littlefs.Block.into_cstruct ~program_block_size raw_block new_block;
+        This_Block.write block block_number [raw_block] >>= function
+        | Error e -> Lwt.return @@ Error (`Block_write e)
+        | Ok () -> Lwt.return @@ Ok ()
 
   (* this is *very* deficient -- at the very least,
    * we need to see whether there are existing entries
@@ -80,8 +89,8 @@ module Make(This_Block: Mirage_block.S) = struct
     let data = Cstruct.concat data in
     last_id := !last_id + 1;
     let file = Littlefs.File.write path !last_id data in
-    add_commits t 1L file >>= fun _ ->
-    add_commits t 0L file
+    add_entries t 1L file >>= fun _ ->
+    add_entries t 0L file
 
   let connect device ~program_block_size ~block_size : (t, error) result Lwt.t =
     let open Lwt.Infix in
@@ -115,24 +124,8 @@ module Make(This_Block: Mirage_block.S) = struct
     in
     let name = Littlefs.Superblock.name in
     let superblock_inline_struct = Littlefs.Superblock.inline_struct (Int32.of_int block_size) block_count in
-    let rootdir_metadata_blocks = Allocator.next device in
 
-    let block = {Littlefs.Block.empty with revision_count = 1l} in
-    let block = Littlefs.Block.commit block [name; superblock_inline_struct] in
-    write_blocks ~block_size ~sector_size ~next_rev_count:2l device 0L 1L block >>= fun _ ->
-
-    last_id := !last_id + 1;
-    match Littlefs.Dir.create_root_dir !last_id "/" rootdir_metadata_blocks with
-    | Error e -> Lwt.return @@ Error (`Littlefs_write e)
-    | Ok (_create, _dir, structure, _soft_tail) ->
-      last_id := !last_id + 1;
-      (* the FUSE littlefs driver can't handle a completely
-       * empty root directory. Write an empty file in its
-       * "don't show this" list, so that `ls /mnt` works as expected
-       * after format *)
-      let file = Littlefs.File.write ".DS_Store" !last_id (Cstruct.empty) in
-      let write_me = Littlefs.Block.commit block (structure :: file) in
-      let _next_rev_count = Int32.(add write_me.revision_count one) in
-      write_blocks ~block_size ~sector_size ~next_rev_count:1l device 0L 1L write_me
+    let block = Littlefs.Block.of_entries ~revision_count:2 [name; superblock_inline_struct] in
+    write_blocks ~block_size ~sector_size ~next_rev_count:3 device 0L 1L block
 
 end

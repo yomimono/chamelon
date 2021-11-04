@@ -27,6 +27,16 @@ let addv t entries =
     crc_just_entries = crc;
   }
 
+let commit_after t entries =
+  let new_last_tag, cs = Entry.to_cstructv ~starting_xor_tag:t.last_tag entries in
+  (* TODO: I suspect this is wrong and we need to throw some extra crap in the crc calculator *)
+  let crc = Checkseum.Crc32.digest_bigstring (Cstruct.to_bigarray cs) 0 (Cstruct.length cs) (Checkseum.Crc32.default) in
+  let crc = Optint.((logand) crc @@ of_unsigned_int32 0xffffffffl) in
+  { entries;
+    last_tag = new_last_tag;
+    crc_just_entries = crc;
+  }
+
 let of_entries starting_xor_tag preceding_crc entries =
   let entries = List.filter (fun (entry : Entry.t) ->
       (* we don't want to include the CRC tag in the read-back entry list,'

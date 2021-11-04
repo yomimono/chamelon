@@ -92,23 +92,18 @@ module Block = struct
   let program_block_size = 16
 
   let superblock =
-    let revision_count = 1l in
+    let revision_count = 1 in
     let block_count = 16 in
     let name = Littlefs.Superblock.name in
     let bs = Int32.of_int block_size in
     let superblock_inline_struct = Littlefs.Superblock.inline_struct bs @@ Int32.of_int block_count in
-    let start_block = {Littlefs.Block.empty with revision_count; } in
-    let block = Littlefs.Block.commit start_block [
-        name;
-        superblock_inline_struct;
-      ] in
-    block
+    Littlefs.Block.of_entries ~revision_count [name; superblock_inline_struct]
 
   (* mimic the minimal superblock commit made by `mklittlefs` when run on an empty directory, and assert that they match what's expected *)
   let commit_superblock () =
     let block = superblock in
     Alcotest.(check int) "in-memory block structure has 1 commit with 2 entries" 2
-      (List.length @@ Littlefs.Commit.entries @@ List.hd block.commits);
+      (List.length @@ Littlefs.Commit.entries @@ List.hd @@ Littlefs.Block.commits block);
     let cs = Littlefs.Block.to_cstruct ~program_block_size ~block_size block in
     let expected_length = 
         4 (* revision count *)
@@ -145,9 +140,10 @@ module Block = struct
   let roundtrip () =
     let block = superblock in
     let written_block = Block.to_cstruct ~program_block_size ~block_size block in
-    let read_block = Block.of_cstruct ~program_block_size written_block in
-    Alcotest.(check int) "read-back block has a commit" 1 (List.length read_block.Block.commits);
-    let commit = List.hd read_block.Block.commits in
+    let read_block = Block.of_cstruct ~program_block_size written_block |> Result.get_ok in
+    let commits = Littlefs.Block.commits read_block in
+    Alcotest.(check int) "read-back block has a commit" 1 (List.length commits);
+    let commit = List.hd commits in
     (* read-back block should have 1 commit with 3 entries in it: the original 2 entries from the superblock, and the CRC tag from the commit *)
     let entries = Littlefs.Commit.entries commit in
     Alcotest.(check int) "read-back commit has 2 entries" 2 (List.length entries);
@@ -157,7 +153,7 @@ end
 module Entry = struct
   let roundtrip () =
     let block = Block.superblock in
-    let commit = List.hd block.Littlefs.Block.commits in
+    let commit = List.hd @@ Littlefs.Block.commits block in
     let entries = Littlefs.Commit.entries commit in
     let default_tag = Cstruct.of_string "\xff\xff\xff\xff" in
     let (_last_tag, serialized) = Littlefs.Entry.to_cstructv ~starting_xor_tag:default_tag entries in
