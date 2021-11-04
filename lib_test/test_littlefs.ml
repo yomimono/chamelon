@@ -89,7 +89,7 @@ module Block = struct
 
   (* what's a reasonable block size? let's assume 4Kib *)
   let block_size = 4096
-  let program_block_size = 16l
+  let program_block_size = 16
 
   let superblock =
     let revision_count = 1l in
@@ -97,8 +97,8 @@ module Block = struct
     let name = Littlefs.Superblock.name in
     let bs = Int32.of_int block_size in
     let superblock_inline_struct = Littlefs.Superblock.inline_struct bs @@ Int32.of_int block_count in
-    let start_block = {Littlefs.Block.empty with revision_count;} in
-    let block = Littlefs.Block.commit ~program_block_size start_block [
+    let start_block = {Littlefs.Block.empty with revision_count; } in
+    let block = Littlefs.Block.commit start_block [
         name;
         superblock_inline_struct;
       ] in
@@ -107,7 +107,9 @@ module Block = struct
   (* mimic the minimal superblock commit made by `mklittlefs` when run on an empty directory, and assert that they match what's expected *)
   let commit_superblock () =
     let block = superblock in
-    let (cs, _crc) = Littlefs.Block.to_cstruct ~block_size block in
+    Alcotest.(check int) "in-memory block structure has 1 commit with 2 entries" 2
+      (List.length @@ Littlefs.Commit.entries @@ List.hd block.commits);
+    let cs = Littlefs.Block.to_cstruct ~program_block_size ~block_size block in
     let expected_length = 
         4 (* revision count *)
       + 4 (* superblock name tag *)
@@ -120,6 +122,11 @@ module Block = struct
     in
     let not_data_length = block_size - expected_length in
     let data, not_data = Cstruct.split cs expected_length in
+
+    Format.printf "data region: %a\n%!" Cstruct.hexdump_pp data;
+    let nondata_limit = 32 in
+    Format.printf "first %d bytes of non-data region: %a\n%!" nondata_limit
+      Cstruct.hexdump_pp (Cstruct.sub not_data 0 nondata_limit);
 
     let expected_inline_struct_tag = Cstruct.of_string "\x2f\xe0\x00" in
     let expected_crc = Cstruct.of_string "\x50\xff\x0d\x72" in
@@ -137,18 +144,13 @@ module Block = struct
 
   let roundtrip () =
     let block = superblock in
-    let written_block, _ = Block.to_cstruct ~block_size block in
+    let written_block = Block.to_cstruct ~program_block_size ~block_size block in
     let read_block = Block.of_cstruct ~program_block_size written_block in
     Alcotest.(check int) "read-back block has a commit" 1 (List.length read_block.Block.commits);
     let commit = List.hd read_block.Block.commits in
     (* read-back block should have 1 commit with 3 entries in it: the original 2 entries from the superblock, and the CRC tag from the commit *)
-    Alcotest.(check int) "read-back commit has 3 entries" 3 (List.length commit.Littlefs.Commit.entries);
-    let last_entry = List.nth commit.Littlefs.Commit.entries 2 in
-    let (crc_tag, crc) = last_entry in
-    let padding = commit.Littlefs.Commit.padding in
-    Alcotest.(check int) "padding length" (16 - 4) padding;
-    Alcotest.(check int) "last tag length" 16 crc_tag.Littlefs.Tag.length;
-    Alcotest.(check int) "actual crc length" 16 (Cstruct.length crc) 
+    let entries = Littlefs.Commit.entries commit in
+    Alcotest.(check int) "read-back commit has 2 entries" 2 (List.length entries);
 
 end
 
@@ -156,11 +158,11 @@ module Entry = struct
   let roundtrip () =
     let block = Block.superblock in
     let commit = List.hd block.Littlefs.Block.commits in
-    let entries = commit.Littlefs.Commit.entries in
+    let entries = Littlefs.Commit.entries commit in
     let default_tag = Cstruct.of_string "\xff\xff\xff\xff" in
-    let serialized = Littlefs.Entry.to_cstructv ~starting_xor_tag:default_tag entries in
+    let (_last_tag, serialized) = Littlefs.Entry.to_cstructv ~starting_xor_tag:default_tag entries in
     Stdlib.Format.printf "serialized entry list: %a\n" Cstruct.hexdump_pp serialized;
-    let (parsed, _last_tag) = Littlefs.Entry.of_cstructv ~starting_xor_tag:default_tag serialized in
+    let (parsed, _last_tag, _s) = Littlefs.Entry.of_cstructv ~starting_xor_tag:default_tag serialized in
     Alcotest.(check int) "parsed entry list is same length as original" (List.length entries) (List.length parsed)
 
 end

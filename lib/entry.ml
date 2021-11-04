@@ -15,13 +15,6 @@ let to_cstruct ~xor_tag_with t =
 let lenv l =
   List.fold_left (fun sum t -> sum + sizeof t) 0 l
 
-let lenv_less_padding l =
-  List.fold_left (fun sum t ->
-      match (fst t).Tag.type3 |> fst with
-      | Tag.LFS_TYPE_CRC -> sum + Tag.size + 4
-      | _ -> sum + sizeof t)
-    0 l
-
 let into_cstructv ~starting_xor_tag cs l =
   (* currently this takes a `t list`, and therefore is pretty straightforward.
    * This function exists so we can do better once `t list` is replaced with more complicated *)
@@ -33,10 +26,12 @@ let into_cstructv ~starting_xor_tag cs l =
 
 let to_cstructv ~starting_xor_tag l =
   let cs = Cstruct.create @@ lenv l in
-  let _ = into_cstructv ~starting_xor_tag cs l in
-  cs
+  let (_, last_tag) = into_cstructv ~starting_xor_tag cs l in
+  last_tag, cs
 
-(** [of_cstructv cs] returns [(l, t)] where [l] is a list of (tag, entry) pairs discovered, and [t] the last tag (un-xor'd) for use in seeding future reads or writes. *)
+(** [of_cstructv cs] returns [(l, t, s)] where [l] is a list of (tag, entry) pairs discovered,
+ * [t] the last non-CRC'd tag (un-xor'd) for use in seeding future reads or writes,
+ * [s] the number of bytes read from [cs]. *)
 let of_cstructv ~starting_xor_tag cs =
   let tag ~xor_tag_with cs =
     if Cstruct.length cs < Tag.size then None
@@ -50,11 +45,14 @@ let of_cstructv ~starting_xor_tag cs =
         else None
     end
   in
-  let rec gather (l, last_tag) cs =
+  let rec gather (l, last_tag, s) cs =
     match tag ~xor_tag_with:last_tag cs with
-    | None -> (List.rev l, last_tag)
+    | None -> (List.rev l, last_tag, s)
     | Some (tag, data) ->
-      gather ((tag, data) :: l, Cstruct.sub cs 0 Tag.size)
+      gather ((tag, data) :: l,
+              Cstruct.sub cs 0 Tag.size,
+              s + Tag.size + Cstruct.length data
+             )
       (Cstruct.shift cs (Tag.size + tag.Tag.length ))
   in
-  gather ([], starting_xor_tag) cs
+  gather ([], starting_xor_tag, 0) cs

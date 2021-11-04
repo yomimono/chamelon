@@ -22,7 +22,7 @@ let write image block_size path data =
   let open Lwt.Infix in
   Lwt_main.run @@ (
   Mirage_block.connect image >>= fun block ->
-  Littlefs.connect block ~program_block_size:16l ~block_size >>= function
+  Littlefs.connect block ~program_block_size:16 ~block_size >>= function
   | Error _ -> Stdlib.Format.eprintf "Error doing the initial filesystem read\n%!"; exit 1
   | Ok t ->
     Littlefs.write t path @@ List.map Cstruct.of_string data >>= function

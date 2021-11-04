@@ -1,4 +1,7 @@
-let program_block_size = 16l (* fairly arbitrary. probably should be specifiable in keys, but y'know *)
+let program_block_size = 16
+(* fairly arbitrary. probably should be specifiable in keys, but y'know *)
+
+let pbs_int32 = Int32.of_int program_block_size
 
 type error = [
   | `Block of Mirage_block.error
@@ -13,7 +16,7 @@ module Make(This_Block: Mirage_block.S) = struct
   type t = {
     block : This_Block.t;
     block_size : int;
-    program_block_size : int32;
+    program_block_size : int;
     sector_size : int;
   }
 
@@ -43,10 +46,12 @@ module Make(This_Block: Mirage_block.S) = struct
     let open Lwt.Infix in
     let sector_of_block = sector_of_block ~sector_size ~block_size in
     let (a, b) = sector_of_block a, sector_of_block b in
+    let block_cs = Littlefs.Block.to_cstruct ~program_block_size ~block_size write_me in
+    let revd_block_cs = Littlefs.Block.to_cstruct ~program_block_size ~block_size {write_me with revision_count = next_rev_count} in
 
-    This_Block.write device a [(fst @@ Littlefs.Block.to_cstruct ~block_size write_me)] >|= block_write_wrap >>= function
+    This_Block.write device a [block_cs] >|= block_write_wrap >>= function
     | Ok () ->
-      This_Block.write device b [(fst @@ Littlefs.Block.to_cstruct ~block_size @@ {write_me with revision_count = next_rev_count})] >|= block_write_wrap
+      This_Block.write device b [revd_block_cs] >|= block_write_wrap
     | e -> Lwt.return e
 
   let add_commits {block_size; program_block_size; block; sector_size} block_number commits =
@@ -59,8 +64,8 @@ module Make(This_Block: Mirage_block.S) = struct
       exit 1
     | Ok () ->
       let old_block = Littlefs.Block.of_cstruct ~program_block_size raw_block in
-      let new_block = Littlefs.Block.commit ~program_block_size old_block commits in
-      Littlefs.Block.into_cstruct raw_block new_block;
+      let new_block = Littlefs.Block.commit old_block commits in
+      Littlefs.Block.into_cstruct ~program_block_size raw_block new_block;
       This_Block.write block block_number [raw_block] >>= function
       | Error e -> Lwt.return @@ Error (`Block_write e)
       | Ok () -> Lwt.return @@ Ok ()
@@ -113,7 +118,7 @@ module Make(This_Block: Mirage_block.S) = struct
     let rootdir_metadata_blocks = Allocator.next device in
 
     let block = {Littlefs.Block.empty with revision_count = 1l} in
-    let block = Littlefs.Block.commit ~program_block_size block [name; superblock_inline_struct] in
+    let block = Littlefs.Block.commit block [name; superblock_inline_struct] in
     write_blocks ~block_size ~sector_size ~next_rev_count:2l device 0L 1L block >>= fun _ ->
 
     last_id := !last_id + 1;
@@ -126,10 +131,7 @@ module Make(This_Block: Mirage_block.S) = struct
        * "don't show this" list, so that `ls /mnt` works as expected
        * after format *)
       let file = Littlefs.File.write ".DS_Store" !last_id (Cstruct.empty) in
-      let write_me = Littlefs.Block.commit
-          ~program_block_size block
-          (structure :: file)
-      in
+      let write_me = Littlefs.Block.commit block (structure :: file) in
       let next_rev_count = Int32.(add write_me.revision_count one) in
       write_blocks ~block_size ~sector_size ~next_rev_count device 0L 1L write_me
 
