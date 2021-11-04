@@ -78,11 +78,9 @@ let into_cstruct ~starting_offset ~program_block_size ~starting_xor_tag ~next_co
   Tag.into_cstruct ~xor_tag_with:last_tag tag_region crc_tag;
 
   (* the crc in t is the crc of all the entries, so we can use that input to a crc calculation of the tag *)
-  Format.printf "crc of just the entries so far is %x\n%!" @@ Optint.to_int t.crc_just_entries;
   let crc_with_tag = Checkseum.Crc32.digest_bigstring (Cstruct.to_bigarray tag_region) 0 Tag.size t.crc_just_entries |> Optint.((logand) (of_unsigned_int32 0xffffffffl)) in
 
   let crc_with_tag = Optint.(lognot crc_with_tag |> (logand) (of_unsigned_int32 0xffffffffl)) in
-  Format.printf "crc of entries, the CRC tag, then lognotted is %x\n%!" @@ Optint.to_int crc_with_tag;
 
   Cstruct.LE.set_uint32 crc_region 0
     (Optint.(to_unsigned_int crc_with_tag) |> Int32.of_int);
