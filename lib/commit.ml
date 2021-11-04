@@ -91,7 +91,7 @@ let into_cstruct ~starting_offset ~program_block_size ~starting_xor_tag ~next_co
   (* this needs to be a separate cstruct entirely,
    * because we'll overwrite the raw value in `cs` with its xor'd value *)
   let raw_tag = Tag.to_cstruct_raw crc_tag in
-  (unpadded_length + padding, raw_tag)
+  (unpadded_length + padding - starting_offset, raw_tag)
 
 let rec of_cstructv ~starting_offset ~program_block_size ~starting_xor_tag ~preceding_crc cs =
   (* we don't have a good way to know how many valid

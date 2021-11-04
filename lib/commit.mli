@@ -18,7 +18,7 @@ val running_crc : t -> Optint.t
 (* also need a way to *correctly* add another commit in the structure --
  * making the caller do all the stuff kind of sucks *)
 
-(** [commit_after last_commit entries] makes a new commit contianing [entries]
+(** [commit_after last_commit entries] makes a new commit containing [entries]
  * with its parameters correctly initialized from the information in [last_commit].
  *)
 val commit_after : t -> Entry.t list -> t

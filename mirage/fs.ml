@@ -66,13 +66,19 @@ module Make(This_Block: Mirage_block.S) = struct
     | Ok () ->
       match Littlefs.Block.of_cstruct ~program_block_size raw_block with
       | Error _ -> exit 1
+      (* TODO: need to handle the case where there are no old commits *)
       | Ok old_block ->
         let old_commits = Littlefs.Block.commits old_block in
-        let last_commit = List.hd @@ List.rev old_commits in
         let old_revision_count = Littlefs.Block.revision_count old_block in
-        let commit = Littlefs.Commit.commit_after last_commit entries in
-        let new_block = Littlefs.Block.of_commits ~revision_count:(old_revision_count + 1)
-            (old_commits @ [commit])
+        let new_block =
+          if (List.length old_commits) < 1 then
+            Littlefs.Block.of_entries ~revision_count:(old_revision_count + 1) entries
+          else begin
+            let last_commit = List.hd @@ List.rev old_commits in
+            let commit = Littlefs.Commit.commit_after last_commit entries in
+            Littlefs.Block.of_commits ~revision_count:(old_revision_count + 1)
+                (old_commits @ [commit])
+          end
         in
         Littlefs.Block.into_cstruct ~program_block_size raw_block new_block;
         This_Block.write block block_number [raw_block] >>= function
