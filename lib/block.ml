@@ -36,7 +36,7 @@ let crc_of_revision_count revision_count =
                                (Cstruct.to_bigarray cs) 0 sizeof_crc start_crc)
   in
   (* hey hey, ho ho, we don't want no overflow *)
-  Optint.((logand) revision_count_crc (of_int32 0xffffffffl))
+  Optint.((logand) revision_count_crc (of_unsigned_int32 0xffffffffl))
 
 let commit block entries =
   match block.commits with

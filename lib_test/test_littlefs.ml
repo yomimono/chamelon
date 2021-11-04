@@ -163,7 +163,13 @@ module Entry = struct
     let (_last_tag, serialized) = Littlefs.Entry.to_cstructv ~starting_xor_tag:default_tag entries in
     Stdlib.Format.printf "serialized entry list: %a\n" Cstruct.hexdump_pp serialized;
     let (parsed, _last_tag, _s) = Littlefs.Entry.of_cstructv ~starting_xor_tag:default_tag serialized in
-    Alcotest.(check int) "parsed entry list is same length as original" (List.length entries) (List.length parsed)
+    Alcotest.(check int) "parsed entry list is same length as original" (List.length entries) (List.length parsed);
+    let first_parsed = List.hd parsed in
+    (* look it's, polymorphic eq (polymorphic eq), the fn who found, a way to crash stuff *)
+    Alcotest.(check string) "first parsed entry has 'littlefs' data" "littlefs" (Cstruct.to_string @@ snd first_parsed);
+    let snd_parsed = List.nth parsed 1 in
+    Alcotest.(check string) "first parsed entry has 'littlefs' data" "littlefs" (Cstruct.to_string @@ snd first_parsed);
+    Alcotest.(check string) "second parsed entry has the right version" "\x00\x00\x02\x00" Cstruct.(to_string @@ sub (snd snd_parsed) 0 4)
 
 end
 
@@ -181,7 +187,7 @@ let () =
           tc "all bits are zero" `Quick Superblock.test_zero;
       ]);
     ( "block", [
-          tc "write one commit to a block" `Quick Block.commit_superblock;
+          tc "write a superblock commit to a block" `Quick Block.commit_superblock;
       ]);
     ( "entry", [
           tc "entry roundtrip" `Quick Entry.roundtrip;

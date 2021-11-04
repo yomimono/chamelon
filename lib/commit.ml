@@ -6,7 +6,6 @@ type t = {
 
 let sizeof_crc = 4
 
-let sizeof t = (Entry.lenv t.entries) + Tag.size + sizeof_crc
 let last_tag t = t.last_tag
 let running_crc t = t.crc_just_entries
 let entries t = t.entries
@@ -21,6 +20,7 @@ let addv t entries =
   (* unfortunately we need to serialize all the entries in order to get the crc *)
   let new_last_tag, cs = Entry.to_cstructv ~starting_xor_tag:t.last_tag entries in
   let crc = Checkseum.Crc32.digest_bigstring (Cstruct.to_bigarray cs) 0 (Cstruct.length cs) t.crc_just_entries in
+  let crc = Optint.((logand) crc @@ of_unsigned_int32 0xffffffffl) in
 
   { entries = t.entries @ entries;
     last_tag = new_last_tag;
@@ -40,7 +40,8 @@ let of_entries starting_xor_tag preceding_crc entries =
 
 (** [into_cstruct cs t] writes [t] to [cs] starting at offset 0.
  * It returns the raw (i.e., not XOR'd with the tag before it) value
- * of the last tag of the commit, for use in writing later commits.
+ * of the last tag of the commit as serialized (i.e., the CRC tag),
+ * for use in writing any commits that may follow [t].
  * Unlike other modules the corresponding `to_cstruct` function is
  * not provided, because the caller is expected to be writing into
  * a larger buffer as part of a block write of a set of commits.
@@ -67,9 +68,11 @@ let into_cstruct ~starting_offset ~program_block_size ~starting_xor_tag ~next_co
   Tag.into_cstruct ~xor_tag_with:last_tag tag_region crc_tag;
 
   (* the crc in t is the crc of all the entries, so we can use that input to a crc calculation of the tag *)
+  Format.printf "crc of just the entries so far is %x\n%!" @@ Optint.to_int t.crc_just_entries;
   let crc_with_tag = Checkseum.Crc32.digest_bigstring (Cstruct.to_bigarray tag_region) 0 Tag.size t.crc_just_entries |> Optint.((logand) (of_unsigned_int32 0xffffffffl)) in
 
-  let crc_with_tag = Optint.lognot crc_with_tag in
+  let crc_with_tag = Optint.(lognot crc_with_tag |> (logand) (of_unsigned_int32 0xffffffffl)) in
+  Format.printf "crc of entries, the CRC tag, then lognotted is %x\n%!" @@ Optint.to_int crc_with_tag;
 
   Cstruct.LE.set_uint32 crc_region 0
     (Optint.(to_unsigned_int crc_with_tag) |> Int32.of_int);

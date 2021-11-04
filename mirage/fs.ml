@@ -132,7 +132,7 @@ module Make(This_Block: Mirage_block.S) = struct
        * after format *)
       let file = Littlefs.File.write ".DS_Store" !last_id (Cstruct.empty) in
       let write_me = Littlefs.Block.commit block (structure :: file) in
-      let next_rev_count = Int32.(add write_me.revision_count one) in
-      write_blocks ~block_size ~sector_size ~next_rev_count device 0L 1L write_me
+      let _next_rev_count = Int32.(add write_me.revision_count one) in
+      write_blocks ~block_size ~sector_size ~next_rev_count:1l device 0L 1L write_me
 
 end
