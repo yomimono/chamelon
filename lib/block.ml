@@ -29,12 +29,12 @@ let of_commits ~revision_count commits =
     {commits = [new_commit]; revision_count}
   | commit :: tail_commits ->
     let crc = crc_of_revision_count revision_count in
-    let new_commit = Commit.(addv (create (seed_tag commit) crc) (entries commit)) in
+    let new_first_commit = Commit.(addv (create (seed_tag commit) crc) (entries commit)) in
     let commits, _ =
-      List.fold_left (fun (so_far, last_commit) commit ->
-          let c = Commit.commit_after last_commit (Commit.entries commit) in
+      List.fold_left (fun (so_far, prev_commit) this_commit ->
+          let c = Commit.commit_after prev_commit (Commit.entries this_commit) in
           (c::so_far, c)
-        ) (new_commit::[], new_commit) commits
+        ) (new_first_commit::[], new_first_commit) tail_commits
     in
     {commits = List.rev commits; revision_count}
 

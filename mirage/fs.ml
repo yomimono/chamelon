@@ -73,12 +73,19 @@ module Make(This_Block: Mirage_block.S) = struct
           else begin
             let last_commit = List.hd @@ List.rev old_commits in
             let commit = Littlefs.Commit.commit_after last_commit entries in
-            Littlefs.Block.of_commits ~revision_count:(old_revision_count + 1)
+            Printf.printf "crc for new commit before it's revised by block.of_commits: %lx\n%!" @@ Optint.to_unsigned_int32 (Littlefs.Commit.running_crc commit);
+            let new_block = Littlefs.Block.of_commits ~revision_count:(old_revision_count + 1)
                 (old_commits @ [commit])
+            in
+            let new_commits = Littlefs.Block.commits new_block in
+            let last_new_commit = List.hd @@ List.rev new_commits in
+            Printf.printf "crc for new commit after it's been revised by block.of_commits: %lx\n%!" @@ Optint.to_unsigned_int32 (Littlefs.Commit.running_crc last_new_commit);
+            new_block
           end
         in
-        Littlefs.Block.into_cstruct ~program_block_size raw_block new_block;
-        This_Block.write block sector_number [raw_block] >>= function
+        let new_block_cs = Cstruct.create block_size in
+        Littlefs.Block.into_cstruct ~program_block_size new_block_cs new_block;
+        This_Block.write block sector_number [new_block_cs] >>= function
         | Error e -> Lwt.return @@ Error (`Block_write e)
         | Ok () -> Lwt.return @@ Ok ()
 
