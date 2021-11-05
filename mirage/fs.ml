@@ -1,8 +1,6 @@
 let program_block_size = 16
 (* fairly arbitrary. probably should be specifiable in keys, but y'know *)
 
-let pbs_int32 = Int32.of_int program_block_size
-
 type error = [
   | `Block of Mirage_block.error
   | `KV of Mirage_kv.error
@@ -41,7 +39,7 @@ module Make(This_Block: Mirage_block.S) = struct
     let byte_of_n = Int64.(mul n @@ of_int block_size) in
     Int64.(div byte_of_n @@ of_int sector_size)
 
-  (* a and b are *block* counts *)
+  (* a and b are *block* numbers *)
   let write_blocks ~block_size ~sector_size ~next_rev_count device a b write_me =
     let open Lwt.Infix in
     let sector_of_block = sector_of_block ~sector_size ~block_size in
@@ -81,7 +79,7 @@ module Make(This_Block: Mirage_block.S) = struct
           end
         in
         Littlefs.Block.into_cstruct ~program_block_size raw_block new_block;
-        This_Block.write block block_number [raw_block] >>= function
+        This_Block.write block sector_number [raw_block] >>= function
         | Error e -> Lwt.return @@ Error (`Block_write e)
         | Ok () -> Lwt.return @@ Ok ()
 
@@ -100,22 +98,21 @@ module Make(This_Block: Mirage_block.S) = struct
 
   let connect device ~program_block_size ~block_size : (t, error) result Lwt.t =
     let open Lwt.Infix in
+    This_Block.get_info device >>= fun info ->
+    let sector_size = info.sector_size in
     let block_0, block_1 = Cstruct.(create block_size, create block_size) in
+    let block_1_sector = sector_of_block ~block_size ~sector_size 1L in
     This_Block.read device 0L [block_0] >>= fun _ ->
-    This_Block.read device 1L [block_1] >>= fun _ ->
-    match
-      Littlefs.Block.of_cstruct ~program_block_size block_0,
-      Littlefs.Block.of_cstruct ~program_block_size block_1
-    with
-    | _b1, _b2 -> begin
+    This_Block.read device (block_1_sector) [block_1] >>= fun _ ->
+    (* TODO: we should see which is the more recent write and treat that one as authoritative *)
+    match Littlefs.Block.of_cstruct ~program_block_size block_0 with
+    | _b1 -> begin
         (* TODO: for now, everything we would care about
          * from reading the FS is either hardcoded in
          * the implementation, or needs to be provided
          * in order to read the filesystem. If we can
          * make some meaning out of the blocks, call
          * that good enough. *)
-        This_Block.get_info device >>= fun info ->
-        let sector_size = info.sector_size in
         Lwt.return (Ok {block = device; sector_size; block_size; program_block_size})
       end
 

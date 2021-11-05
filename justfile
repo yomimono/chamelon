@@ -12,8 +12,8 @@ debug_format:
 	dd if=/dev/zero of={{image}} bs=64K count=1
 	gdb --args _build/default/src/format.exe {{image}}
 
-readmdir:
-	readmdir.py -a --log {{image}} {{block_size}} 0 1
+readmdir BLOCK:
+	readmdir.py -a --log {{image}} {{block_size}} {{BLOCK}}
 
 readtree:
 	readtree.py -a --log {{image}} {{block_size}} 0 1
