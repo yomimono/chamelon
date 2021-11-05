@@ -49,8 +49,7 @@ module Make(This_Block: Mirage_block.S) = struct
     let revd_block_cs = Littlefs.Block.to_cstruct ~program_block_size ~block_size revd_block in
 
     This_Block.write device a [block_cs] >|= block_write_wrap >>= function
-    | Ok () ->
-      This_Block.write device b [revd_block_cs] >|= block_write_wrap
+    | Ok () -> This_Block.write device b [revd_block_cs] >|= block_write_wrap
     | e -> Lwt.return e
 
   let add_entries {block_size; program_block_size; block; sector_size} block_number entries =

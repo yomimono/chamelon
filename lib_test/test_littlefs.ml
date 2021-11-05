@@ -147,6 +147,19 @@ module Block = struct
     (* read-back block should have 1 commit with 3 entries in it: the original 2 entries from the superblock, and the CRC tag from the commit *)
     let entries = Littlefs.Commit.entries commit in
     Alcotest.(check int) "read-back commit has 2 entries" 2 (List.length entries);
+    ()
+
+  let revision_count_matters () =
+    let block = superblock in
+    let commits = Littlefs.Block.commits block in
+    let revision_count = Littlefs.Block.revision_count block in
+    let new_rev_count = revision_count + 1 in
+    let revised_block = Littlefs.Block.of_commits ~revision_count:new_rev_count commits in
+    let original_block_serialized = Littlefs.Block.to_cstruct ~program_block_size ~block_size block in
+    let incremented_block_serialized = Littlefs.Block.to_cstruct ~program_block_size ~block_size revised_block in
+    let orig_crc = Cstruct.(to_string @@ sub original_block_serialized 0x30 4) in
+    let incremented_crc = Cstruct.(to_string @@ sub incremented_block_serialized 0x30 4) in
+    Alcotest.(check bool) "crcs shouldn't be equal after revision count change" false (String.equal orig_crc incremented_crc)
 
 end
 
@@ -184,6 +197,7 @@ let () =
       ]);
     ( "block", [
           tc "write a superblock commit to a block" `Quick Block.commit_superblock;
+          tc "writing a block with different revision count gives different CRC" `Quick Block.revision_count_matters;
       ]);
     ( "entry", [
           tc "entry roundtrip" `Quick Entry.roundtrip;

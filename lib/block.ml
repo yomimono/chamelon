@@ -19,7 +19,25 @@ let crc_of_revision_count revision_count =
   (* hey hey, ho ho, we don't want no overflow *)
   Optint.((logand) revision_count_crc (of_unsigned_int32 0xffffffffl))
 
-let of_commits ~revision_count commits = {commits; revision_count}
+let of_commits ~revision_count commits =
+  (* we have to redo the crcs for the commits :( *)
+  match commits with
+  | [] -> { commits; revision_count; }
+  | commit :: [] ->
+    let crc = crc_of_revision_count revision_count in
+    let new_commit = Commit.(addv (create (seed_tag commit) crc) (entries commit)) in
+    {commits = [new_commit]; revision_count}
+  | commit :: tail_commits ->
+    let crc = crc_of_revision_count revision_count in
+    let new_commit = Commit.(addv (create (seed_tag commit) crc) (entries commit)) in
+    let commits, _ =
+      List.fold_left (fun (so_far, last_commit) commit ->
+          let c = Commit.commit_after last_commit (Commit.entries commit) in
+          (c::so_far, c)
+        ) (new_commit::[], new_commit) commits
+    in
+    {commits = List.rev commits; revision_count}
+
 let of_entries ~revision_count entries =
   let crc = crc_of_revision_count revision_count in
   let commit = Commit.create (Cstruct.of_string "\xff\xff\xff\xff") crc in

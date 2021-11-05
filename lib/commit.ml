@@ -1,5 +1,6 @@
 type t = {
   entries : Entry.t list;
+  seed_tag : Cstruct.t;
   last_tag : Cstruct.t;
   crc_just_entries : Optint.t;
 }
@@ -7,12 +8,14 @@ type t = {
 let sizeof_crc = 4
 
 let last_tag t = t.last_tag
+let seed_tag t = t.seed_tag
 let running_crc t = t.crc_just_entries
 let entries t = t.entries
 
 let create starting_xor_tag preceding_crc =
   { entries = [];
     last_tag = starting_xor_tag;
+    seed_tag = starting_xor_tag;
     crc_just_entries = preceding_crc;
   }
 
@@ -23,6 +26,7 @@ let addv t entries =
   let crc = Optint.((logand) crc @@ of_unsigned_int32 0xffffffffl) in
 
   { entries = t.entries @ entries;
+    seed_tag = t.seed_tag;
     last_tag = new_last_tag;
     crc_just_entries = crc;
   }
@@ -33,6 +37,7 @@ let commit_after t entries =
   let crc = Checkseum.Crc32.digest_bigstring (Cstruct.to_bigarray cs) 0 (Cstruct.length cs) (Checkseum.Crc32.default) in
   let crc = Optint.((logand) crc @@ of_unsigned_int32 0xffffffffl) in
   { entries;
+    seed_tag = t.last_tag;
     last_tag = new_last_tag;
     crc_just_entries = crc;
   }

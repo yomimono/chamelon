@@ -1,6 +1,7 @@
 type t
 
 (* information *)
+val seed_tag : t -> Cstruct.t
 val last_tag : t -> Cstruct.t
 val entries : t -> Entry.t list
 
@@ -8,6 +9,7 @@ val entries : t -> Entry.t list
 val create : Cstruct.t -> Optint.t -> t
 (* add the entry list [l] to the commit [t]. *)
 val addv : t -> Entry.t list -> t
+
 (** [running_crc t] gives the CRC of all entries added to the commit so far.
  * It is intended for use in constructing new Commit.t's, and is not the correct
  * value for writing at the end of a commit. TODO reify this in the types with either a phantom
