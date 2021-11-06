@@ -26,7 +26,7 @@ let addv t entries =
   let crc = Optint.((logand) crc @@ of_unsigned_int32 0xffffffffl) in
 
   { entries = t.entries @ entries;
-    seed_tag = t.last_ta;
+    seed_tag = t.last_tag;
     last_tag = new_last_tag;
     crc_just_entries = crc;
   }
