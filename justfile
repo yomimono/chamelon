@@ -1,4 +1,5 @@
 image := "_build/default/src/test.img"
+HOME := env_var("HOME")
 
 block_size := "4096"
 
@@ -26,7 +27,7 @@ mount: test_img
 	sudo losetup -d /dev/loop0 || true
 	sudo losetup /dev/loop0 {{image}}
 	sudo chmod a+rw /dev/loop0
-	sudo /home/yomimono/fuse-littlefs/lfs --block_size={{block_size}} -d /dev/loop0 /mnt &
+	sudo {{HOME}}/fuse-littlefs/lfs --block_size={{block_size}} -d /dev/loop0 /mnt &
 	# nb: `ls /mnt` will fail if there are no files at all in the filesystem.
 
 fuse-format:
@@ -34,7 +35,7 @@ fuse-format:
 	sudo umount -q /mnt || true
 	sudo losetup -d /dev/loop0 || true
 	sudo losetup /dev/loop0 {{image}}
-	/home/yomimono/fuse-littlefs/lfs --block_size={{block_size}} --format /dev/loop0
+	sudo {{HOME}} fuse-littlefs/lfs --block_size={{block_size}} --format /dev/loop0
 
 hexdump:
 	xxd {{image}} | less
