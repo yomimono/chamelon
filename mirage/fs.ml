@@ -63,7 +63,6 @@ module Make(This_Block: Mirage_block.S) = struct
     | Ok () ->
       match Littlefs.Block.of_cstruct ~program_block_size raw_block with
       | Error _ -> exit 1
-      (* TODO: need to handle the case where there are no old commits *)
       | Ok old_block ->
         let old_commits = Littlefs.Block.commits old_block in
         let old_revision_count = Littlefs.Block.revision_count old_block in
