@@ -5,10 +5,8 @@ val seed_tag : t -> Cstruct.t
 val last_tag : t -> Cstruct.t
 val entries : t -> Entry.t list
 
-(* creation and manipulation *)
-val create : Cstruct.t -> Optint.t -> t
-(* add the entry list [l] to the commit [t]. *)
-val addv : t -> Entry.t list -> t
+(** [of_entries xor_first_tag_with crc l] creates a new commit [t] representing the entries [l]. *)
+val of_entries : Cstruct.t -> Optint.t -> Entry.t list -> t
 
 (** [commit_after last_commit entries] makes a new commit containing [entries]
  * with its parameters correctly initialized from the information in [last_commit].

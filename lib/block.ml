@@ -25,11 +25,11 @@ let of_commits ~revision_count commits =
   | [] -> { commits; revision_count; }
   | commit :: [] ->
     let crc = crc_of_revision_count revision_count in
-    let new_commit = Commit.(addv (create (seed_tag commit) crc) (entries commit)) in
+    let new_commit = Commit.(of_entries (seed_tag commit) crc (entries commit)) in
     {commits = [new_commit]; revision_count}
   | commit :: tail_commits ->
     let crc = crc_of_revision_count revision_count in
-    let new_first_commit = Commit.(addv (create (seed_tag commit) crc) (entries commit)) in
+    let new_first_commit = Commit.(of_entries (seed_tag commit) crc (entries commit)) in
     let commits, _ =
       List.fold_left (fun (so_far, prev_commit) this_commit ->
           let c = Commit.commit_after prev_commit (Commit.entries this_commit) in
@@ -40,8 +40,7 @@ let of_commits ~revision_count commits =
 
 let of_entries ~revision_count entries =
   let crc = crc_of_revision_count revision_count in
-  let commit = Commit.create (Cstruct.of_string "\xff\xff\xff\xff") crc in
-  let commit = Commit.addv commit entries in
+  let commit = Commit.of_entries (Cstruct.of_string "\xff\xff\xff\xff") crc entries in
   of_commits ~revision_count (commit::[])
 
 (* TODO: ugh, what if we need >1 block for the entries :( *)
