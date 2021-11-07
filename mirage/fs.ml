@@ -70,7 +70,7 @@ module Make(This_Block: Mirage_block.S) = struct
           if (List.length old_commits) < 1 then
             Littlefs.Block.of_entries ~revision_count:(old_revision_count + 1) entries
           else begin
-            let last_commit = List.hd @@ List.rev old_commits in
+            let last_commit = List.(hd @@ rev old_commits) in
             let commit = Littlefs.Commit.commit_after last_commit entries in
             let new_block = Littlefs.Block.of_commits ~revision_count:(old_revision_count + 1)
                 (old_commits @ [commit])

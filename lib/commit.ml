@@ -31,7 +31,8 @@ let addv t entries =
   }
 
 let commit_after t entries =
-  let new_last_tag, cs = Entry.to_cstructv ~starting_xor_tag:t.last_tag entries in
+  let seed_tag = t.last_tag in
+  let new_last_tag, cs = Entry.to_cstructv ~starting_xor_tag:seed_tag entries in
   (* the crc for any entry that's after another one (any non-first entry on a block)
    * doesn't depend on the revision count, so its calculation is more straightforward *)
   (* initialize the crc with good ol' 0xffffffff *)
@@ -39,7 +40,7 @@ let commit_after t entries =
   let crc = Checkseum.Crc32.digest_bigstring (Cstruct.to_bigarray cs) 0 (Cstruct.length cs) crc in
   let crc = Optint.((logand) crc @@ of_unsigned_int32 0xffffffffl) in
   { entries;
-    seed_tag = t.last_tag;
+    seed_tag;
     last_tag = new_last_tag;
     crc_just_entries = crc;
   }
