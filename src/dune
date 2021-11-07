@@ -20,6 +20,8 @@
             (run dd if=/dev/zero of=test.img bs=64K count=1)
             (setenv OCAMLRUNPARAM b (run %{exe:format.exe} test.img))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_write.exe} test.img 4096 "autoexec.bat" "CLS"))
+            (setenv OCAMLRUNPARAM b (run %{exe:lfs_write.exe} test.img 4096 "config.sys"))
+            (setenv OCAMLRUNPARAM b (run %{exe:lfs_write.exe} test.img 4096 "command.com" "lol nope"))
             (run readtree.py -a --log test.img 4096 0 1)
             (run readmdir.py -a --log test.img 4096 0 1)
             ))
