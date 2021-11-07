@@ -31,12 +31,12 @@ let of_commits ~revision_count commits =
   | [] -> { commits; revision_count; }
   | commit :: l ->
     let crc = crc_of_revision_count revision_count in
-    let new_commit = Commit.(of_entries (seed_tag commit) crc (entries commit)) in
+    let new_commit = Commit.(of_entries_filter_crc (seed_tag commit) crc (entries commit)) in
     {commits = new_commit :: l; revision_count}
 
 let of_entries ~revision_count entries =
   let crc = crc_of_revision_count revision_count in
-  let commit = Commit.of_entries (Cstruct.of_string "\xff\xff\xff\xff") crc entries in
+  let commit = Commit.of_entries_filter_crc (Cstruct.of_string "\xff\xff\xff\xff") crc entries in
   of_commits ~revision_count (commit::[])
 
 (* TODO: ugh, what if we need >1 block for the entries :( *)

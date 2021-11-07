@@ -45,7 +45,7 @@ let commit_after t entries =
     crc_just_entries = crc;
   }
 
-let of_entries starting_xor_tag preceding_crc entries =
+let of_entries_filter_crc starting_xor_tag preceding_crc entries =
   let entries = List.filter (fun (entry : Entry.t) ->
       (* we don't want to include the CRC tag in the read-back entry list,'
        * since we calculate that on write in our own code. *)
@@ -69,6 +69,9 @@ let into_cstruct ~starting_offset ~program_block_size ~starting_xor_tag ~next_co
   let unpadded_length = starting_offset + entries_length + Tag.size + sizeof_crc in
   let overhang = unpadded_length mod program_block_size in
   let padding = program_block_size - overhang in
+  
+  (* for a lot of future calculation, we'll need to know where writing the (non-CRC) entries
+   * into the buffer completed. *)
   let crc_tag_pointer, last_tag = Entry.into_cstructv ~starting_xor_tag cs t.entries in
   let crc_pointer = crc_tag_pointer + Tag.size in
   let crc_chunk = if next_commit_valid then 0x00 else 0x01 in
@@ -79,7 +82,6 @@ let into_cstruct ~starting_offset ~program_block_size ~starting_xor_tag ~next_co
       length = sizeof_crc + padding;
     }) in
 
-  (* TODO: pointer manipulation code smell here; find a nicer way to do this *)
   let tag_region = Cstruct.sub cs crc_tag_pointer Tag.size in
   let crc_region = Cstruct.sub cs crc_pointer sizeof_crc in
   let padding_region = Cstruct.sub cs (crc_pointer + sizeof_crc) padding in
@@ -114,10 +116,10 @@ let rec of_cstructv ~starting_offset:_ ~program_block_size ~starting_xor_tag ~pr
     (* `read` includes padding from CRC tags, so all reads after the first one should
      * be aligned with the program block size *)
     if read >= Cstruct.length cs then
-      (of_entries starting_xor_tag preceding_crc entries) :: []
+      (of_entries_filter_crc starting_xor_tag preceding_crc entries) :: []
     else begin
       let next_commit = Cstruct.shift cs read in
       (* only the first commit ever has a nonzero starting offset, so all our recursive calls should set it to 0 *)
-      let commit = of_entries starting_xor_tag preceding_crc entries in
-      commit :: of_cstructv ~preceding_crc:commit.crc_just_entries ~starting_offset:0 ~starting_xor_tag:last_tag ~program_block_size next_commit
+      let commit = of_entries_filter_crc starting_xor_tag preceding_crc entries in
+      commit :: of_cstructv ~preceding_crc:(Optint.of_unsigned_int32 0xffffffffl) ~starting_offset:0 ~starting_xor_tag:last_tag ~program_block_size next_commit
     end
