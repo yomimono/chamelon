@@ -9,7 +9,6 @@ let sizeof_crc = 4
 
 let last_tag t = t.last_tag
 let seed_tag t = t.seed_tag
-let running_crc t = t.crc_just_entries
 let entries t = t.entries
 
 let create starting_xor_tag preceding_crc =
