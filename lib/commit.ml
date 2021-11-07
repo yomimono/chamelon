@@ -83,6 +83,9 @@ let into_cstruct ~starting_offset ~program_block_size ~starting_xor_tag ~next_co
   let tag_region = Cstruct.sub cs crc_tag_pointer Tag.size in
   let crc_region = Cstruct.sub cs crc_pointer sizeof_crc in
   let padding_region = Cstruct.sub cs (crc_pointer + sizeof_crc) padding in
+
+  (* since the crc includes the tag for the crc itself, we need to write the tag before
+   * we can calculate the crc value for the buffer *)
   Tag.into_cstruct ~xor_tag_with:last_tag tag_region crc_tag;
 
   (* the crc in t is the crc of all the entries, so we can use that input to a crc calculation of the tag *)
@@ -96,12 +99,10 @@ let into_cstruct ~starting_offset ~program_block_size ~starting_xor_tag ~next_co
   (* set the padding bytes to an obvious value *)
   if padding <= 0 then () else Cstruct.memset padding_region 0xff;
 
-  (* this needs to be a separate cstruct entirely,
-   * because we'll overwrite the raw value in `cs` with its xor'd value *)
   let raw_tag = Tag.to_cstruct_raw crc_tag in
   (unpadded_length + padding - starting_offset, raw_tag)
 
-let rec of_cstructv ~starting_offset ~program_block_size ~starting_xor_tag ~preceding_crc cs =
+let rec of_cstructv ~starting_offset:_ ~program_block_size ~starting_xor_tag ~preceding_crc cs =
   (* we don't have a good way to know how many valid
    * entries there are (since we filter out the CRC tags) ,
    * so we have to keep trying for the whole block :/ *)
@@ -109,12 +110,13 @@ let rec of_cstructv ~starting_offset ~program_block_size ~starting_xor_tag ~prec
   match entries with
   | [] -> []
   | entries ->
-    let overhang = starting_offset + read mod program_block_size in
-    let padding = program_block_size - overhang in
-    if read + padding >= Cstruct.length cs then
+    Printf.printf "Entry.of_cstructv found %d entries in %d (0x%x) bytes! I'll now assemble a commit\n%!" (List.length entries) read read;
+    (* `read` includes padding from CRC tags, so all reads after the first one should
+     * be aligned with the program block size *)
+    if read >= Cstruct.length cs then
       (of_entries starting_xor_tag preceding_crc entries) :: []
     else begin
-      let next_commit = Cstruct.shift cs (read + padding) in
+      let next_commit = Cstruct.shift cs read in
       (* only the first commit ever has a nonzero starting offset, so all our recursive calls should set it to 0 *)
       let commit = of_entries starting_xor_tag preceding_crc entries in
       commit :: of_cstructv ~preceding_crc:commit.crc_just_entries ~starting_offset:0 ~starting_xor_tag:last_tag ~program_block_size next_commit

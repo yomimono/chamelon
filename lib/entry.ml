@@ -30,7 +30,7 @@ let to_cstructv ~starting_xor_tag l =
   last_tag, cs
 
 (** [of_cstructv cs] returns [(l, t, s)] where [l] is a list of (tag, entry) pairs discovered,
- * [t] the last non-CRC'd tag (un-xor'd) for use in seeding future reads or writes,
+ * [t] the last tag (un-xor'd) for use in seeding future reads or writes,
  * [s] the number of bytes read from [cs]. *)
 let of_cstructv ~starting_xor_tag cs =
   let tag ~xor_tag_with cs =

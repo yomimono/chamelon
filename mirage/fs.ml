@@ -67,13 +67,14 @@ module Make(This_Block: Mirage_block.S) = struct
         let old_commits = Littlefs.Block.commits old_block in
         let old_revision_count = Littlefs.Block.revision_count old_block in
         let new_block =
-          if (List.length old_commits) < 1 then
+          if (List.length old_commits) < 1 then begin
             Littlefs.Block.of_entries ~revision_count:(old_revision_count + 1) entries
-          else begin
+          end else begin
             let last_commit = List.(hd @@ rev old_commits) in
             let commit = Littlefs.Commit.commit_after last_commit entries in
-            let new_block = Littlefs.Block.of_commits ~revision_count:(old_revision_count + 1)
-                (old_commits @ [commit])
+            let new_commits = old_commits @ [commit] in
+            let new_block = Littlefs.Block.of_commits
+                ~revision_count:(old_revision_count + 1) new_commits
             in
             new_block
           end

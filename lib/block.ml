@@ -21,6 +21,12 @@ let crc_of_revision_count revision_count =
 
 let of_commits ~revision_count commits =
   (* we have to redo the crc for the first commit when the revision count changes :( *)
+  (* we don't have to recalculate CRCs for any subsequent commits because the only data
+   * dependency on a previous commit for later commits in a block
+   * is on the last tag of the previous commit, which is the CRC tag.
+   * The CRC tag's variable fields are its length and chunk value only,
+   * and changes to the revision count are changes to a fixed-width field that
+   * doesn't affect the chunk. *)
   match commits with
   | [] -> { commits; revision_count; }
   | commit :: l ->
@@ -51,6 +57,7 @@ let into_cstruct ~program_block_size cs block =
            let (bytes_written, raw_crc_tag) = Commit.into_cstruct ~next_commit_valid:true
                ~program_block_size ~starting_xor_tag:prev_commit_last_tag ~starting_offset
                this_commit_region commit in
+           Printf.printf "wrote %d (0x%x) bytes representing 1 commit\n%!" bytes_written bytes_written;
            (* we never want to pass a CRC *forward* into the next commit. Similarly,
             * only the first commit has an offset of 8; all subsequent ones have an offset of 0,
             * since each commit is padded to a multiple of the program block size. *)
