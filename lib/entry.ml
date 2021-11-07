@@ -49,10 +49,16 @@ let of_cstructv ~starting_xor_tag cs =
     match tag ~xor_tag_with:last_tag cs with
     | None -> (List.rev l, last_tag, s)
     | Some (tag, data) ->
-      gather ((tag, data) :: l,
-              Cstruct.sub cs 0 Tag.size,
-              s + Tag.size + Cstruct.length data
-             )
-      (Cstruct.shift cs (Tag.size + tag.Tag.length ))
+      match tag.Tag.type3 with
+      | Tag.LFS_TYPE_CRC, _chunk ->
+        (List.rev l, Cstruct.sub cs 0 Tag.size,
+         (s + Tag.size + (Cstruct.length data)))
+      | _ ->
+
+        gather ((tag, data) :: l,
+                Cstruct.sub cs 0 Tag.size,
+                s + Tag.size + Cstruct.length data
+               )
+          (Cstruct.shift cs (Tag.size + tag.Tag.length ))
   in
   gather ([], starting_xor_tag, 0) cs

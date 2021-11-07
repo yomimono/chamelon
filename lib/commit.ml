@@ -68,7 +68,7 @@ let into_cstruct ~starting_offset ~program_block_size ~starting_xor_tag ~next_co
   let entries_length = Entry.lenv t.entries in
   let unpadded_length = starting_offset + entries_length + Tag.size + sizeof_crc in
   let overhang = unpadded_length mod program_block_size in
-  let padding = program_block_size - overhang in
+  let padding = (program_block_size - overhang) mod program_block_size in
   
   (* for a lot of future calculation, we'll need to know where writing the (non-CRC) entries
    * into the buffer completed. *)
@@ -108,6 +108,9 @@ let rec of_cstructv ~starting_offset:_ ~program_block_size ~starting_xor_tag ~pr
   (* we don't have a good way to know how many valid
    * entries there are (since we filter out the CRC tags) ,
    * so we have to keep trying for the whole block :/ *)
+  (* oh fuck, okay, this isn't going to quite work,
+   * because we get a nice long list of *entries* here, which aren't
+   * broken up into commits. Entry.of_cstructv needs to stop when it sees CRCs, I think. *)
   let entries, last_tag, read = Entry.of_cstructv ~starting_xor_tag cs in
   match entries with
   | [] -> []
