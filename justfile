@@ -22,9 +22,11 @@ readtree:
 mklittlefs-read:
 	mklittlefs -d 5 -b {{block_size}} -l {{image}}
 
-mount: test_img
+umount:
 	sudo umount -q /mnt || true
 	sudo losetup -d /dev/loop0 || true
+
+mount: umount
 	sudo losetup /dev/loop0 {{image}}
 	sudo chmod a+rw /dev/loop0
 	sudo {{HOME}}/fuse-littlefs/lfs --block_size={{block_size}} -d /dev/loop0 /mnt &
