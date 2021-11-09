@@ -13,7 +13,9 @@ let to_cstruct ~xor_tag_with t =
   cs
 
 let lenv l =
-  List.fold_left (fun sum t -> sum + sizeof t) 0 l
+  List.fold_left (fun sum t ->
+      Printf.printf "entry of size %d added to the sum\n%!" (sizeof t);
+      sum + sizeof t) 0 l
 
 let into_cstructv ~starting_xor_tag cs l =
   (* currently this takes a `t list`, and therefore is pretty straightforward.
@@ -29,9 +31,11 @@ let to_cstructv ~starting_xor_tag l =
   let (_, last_tag) = into_cstructv ~starting_xor_tag cs l in
   last_tag, cs
 
-(** [of_cstructv cs] returns [(l, t, s)] where [l] is a list of (tag, entry) pairs discovered,
+(** [of_cstructv cs] returns [(l, t, s)] where [l] is the list of (tag, entry) pairs discovered
+ * preceding the next CRC entry.
  * [t] the last tag (un-xor'd) for use in seeding future reads or writes,
- * [s] the number of bytes read from [cs]. *)
+ * [s] the number of bytes read from [cs], including (if present and read) the CRC tag,
+ * data, and any padding. *)
 let of_cstructv ~starting_xor_tag cs =
   let tag ~xor_tag_with cs =
     if Cstruct.length cs < Tag.size then None
@@ -51,6 +55,8 @@ let of_cstructv ~starting_xor_tag cs =
     | Some (tag, data) ->
       match tag.Tag.type3 with
       | Tag.LFS_TYPE_CRC, _chunk ->
+        (* omit the CRC tag from the results, but make sure to return the amount
+         * of data we read including it *)
         (List.rev l, Cstruct.sub cs 0 Tag.size,
          (s + Tag.size + (Cstruct.length data)))
       | _ ->

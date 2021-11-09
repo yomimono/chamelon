@@ -2,7 +2,7 @@ type t = {
   entries : Entry.t list;
   seed_tag : Cstruct.t;
   last_tag : Cstruct.t;
-  crc_just_entries : Optint.t;
+  start_crc : Optint.t; (* either the default CRC or the CRC of the revision count (for the first commit in a block) *)
 }
 
 let sizeof_crc = 4
@@ -15,39 +15,36 @@ let create starting_xor_tag preceding_crc =
   { entries = [];
     last_tag = starting_xor_tag;
     seed_tag = starting_xor_tag;
-    crc_just_entries = preceding_crc;
+    start_crc = preceding_crc;
   }
 
 let addv t entries =
   (* unfortunately we need to serialize all the entries in order to get the crc *)
-  let new_last_tag, cs = Entry.to_cstructv ~starting_xor_tag:t.last_tag entries in
-  let crc = Checkseum.Crc32.digest_bigstring (Cstruct.to_bigarray cs) 0 (Cstruct.length cs) t.crc_just_entries in
-  let crc = Optint.((logand) crc @@ of_unsigned_int32 0xffffffffl) in
+  let new_last_tag,_ = Entry.to_cstructv ~starting_xor_tag:t.last_tag entries in
 
   { entries = t.entries @ entries;
     seed_tag = t.last_tag;
     last_tag = new_last_tag;
-    crc_just_entries = crc;
+    start_crc = t.start_crc;
   }
 
-let commit_after t entries =
-  let seed_tag = t.last_tag in
-  let new_last_tag, cs = Entry.to_cstructv ~starting_xor_tag:seed_tag entries in
+let commit_after {last_tag; _} entries =
+  let seed_tag = last_tag in
+  let new_last_tag, _cs = Entry.to_cstructv ~starting_xor_tag:seed_tag entries in
   (* the crc for any entry that's after another one (any non-first entry on a block)
    * doesn't depend on the revision count, so its calculation is more straightforward *)
-  (* initialize the crc with good ol' 0xffffffff *)
-  let crc = Checkseum.Crc32.digest_bigstring Cstruct.(to_bigarray @@ Cstruct.of_string "\xff\xff\xff\xff") 0 4 (Checkseum.Crc32.default) in
-  let crc = Checkseum.Crc32.digest_bigstring (Cstruct.to_bigarray cs) 0 (Cstruct.length cs) crc in
-  let crc = Optint.((logand) crc @@ of_unsigned_int32 0xffffffffl) in
+  let start_crc = Checkseum.Crc32.default in
+  (* we get the final result whether we do a lognot on this or, uh, not,
+   * which indicates to me that maybe we're not actually using this value *)
   { entries;
     seed_tag;
     last_tag = new_last_tag;
-    crc_just_entries = crc;
+    start_crc;
   }
 
 let of_entries_filter_crc starting_xor_tag preceding_crc entries =
   let entries = List.filter (fun (entry : Entry.t) ->
-      (* we don't want to include the CRC tag in the read-back entry list,'
+      (* we don't want to include the CRC tag in the read-back entry list,
        * since we calculate that on write in our own code. *)
       let (tag, _data) = entry in
       match fst @@ tag.Tag.type3 with
@@ -82,6 +79,7 @@ let into_cstruct ~starting_offset ~program_block_size ~starting_xor_tag ~next_co
       length = sizeof_crc + padding;
     }) in
 
+  let entry_region = Cstruct.sub cs 0 crc_tag_pointer in
   let tag_region = Cstruct.sub cs crc_tag_pointer Tag.size in
   let crc_region = Cstruct.sub cs crc_pointer sizeof_crc in
   let padding_region = Cstruct.sub cs (crc_pointer + sizeof_crc) padding in
@@ -90,13 +88,16 @@ let into_cstruct ~starting_offset ~program_block_size ~starting_xor_tag ~next_co
    * we can calculate the crc value for the buffer *)
   Tag.into_cstruct ~xor_tag_with:last_tag tag_region crc_tag;
 
+  let seed_crc = Checkseum.Crc32.digest_bigstring (Cstruct.to_bigarray entry_region) 0 crc_tag_pointer t.start_crc in
+
   (* the crc in t is the crc of all the entries, so we can use that input to a crc calculation of the tag *)
-  let crc_with_tag = Checkseum.Crc32.digest_bigstring (Cstruct.to_bigarray tag_region) 0 Tag.size t.crc_just_entries |> Optint.((logand) (of_unsigned_int32 0xffffffffl)) in
+  let crc_with_tag = Checkseum.Crc32.digest_bigstring (Cstruct.to_bigarray tag_region) 0 Tag.size seed_crc
+                   |> Optint.(logand @@ of_unsigned_int32 0xffffffffl)
+                   |> Optint.lognot
+                   |> Optint.(logand @@ of_unsigned_int32 0xffffffffl)
+  in
 
-  let crc_with_tag = Optint.(lognot crc_with_tag |> (logand) (of_unsigned_int32 0xffffffffl)) in
-
-  Cstruct.LE.set_uint32 crc_region 0
-    (Optint.(to_unsigned_int crc_with_tag) |> Int32.of_int);
+  Cstruct.LE.set_uint32 crc_region 0 Optint.(to_unsigned_int32 crc_with_tag);
 
   (* set the padding bytes to an obvious value *)
   if padding <= 0 then () else Cstruct.memset padding_region 0xff;
