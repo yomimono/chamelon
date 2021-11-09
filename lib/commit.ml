@@ -54,7 +54,7 @@ let of_entries_filter_crc starting_xor_tag preceding_crc entries =
   addv (create starting_xor_tag preceding_crc) entries
 
 (** [into_cstruct cs t] writes [t] to [cs] starting at offset 0.
- * It returns the raw (i.e., not XOR'd with the tag before it) value
+ * It returns the raw (not XOR'd with the tag before it) value
  * of the last tag of the commit as serialized (i.e., the CRC tag),
  * for use in writing any commits that may follow [t].
  * Unlike other modules the corresponding `to_cstruct` function is
@@ -116,7 +116,6 @@ let rec of_cstructv ~starting_offset:_ ~program_block_size ~starting_xor_tag ~pr
   match entries with
   | [] -> []
   | entries ->
-    Printf.printf "Entry.of_cstructv found %d entries in %d (0x%x) bytes! I'll now assemble a commit\n%!" (List.length entries) read read;
     (* `read` includes padding from CRC tags, so all reads after the first one should
      * be aligned with the program block size *)
     if read >= Cstruct.length cs then
@@ -125,5 +124,5 @@ let rec of_cstructv ~starting_offset:_ ~program_block_size ~starting_xor_tag ~pr
       let next_commit = Cstruct.shift cs read in
       (* only the first commit ever has a nonzero starting offset, so all our recursive calls should set it to 0 *)
       let commit = of_entries_filter_crc starting_xor_tag preceding_crc entries in
-      commit :: of_cstructv ~preceding_crc:(Optint.of_unsigned_int32 0xffffffffl) ~starting_offset:0 ~starting_xor_tag:last_tag ~program_block_size next_commit
+      commit :: of_cstructv ~preceding_crc:Checkseum.Crc32.default ~starting_offset:0 ~starting_xor_tag:last_tag ~program_block_size next_commit
     end
