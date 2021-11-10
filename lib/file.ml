@@ -1,7 +1,3 @@
-type file = {name : string;
-             data : Cstruct.t;
-            }
-
 let name n id = Tag.({
     valid = true;
     type3 = (Tag.LFS_TYPE_NAME, 0x01);
