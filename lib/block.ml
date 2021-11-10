@@ -1,6 +1,6 @@
 (* a block is, physically, a revision count and series of commits *)
 
-module IntSet = Set.Make(Int)
+module IdSet = Set.Make(Int)
 
 type t = {
   revision_count : int;
@@ -41,6 +41,15 @@ let of_entries ~revision_count entries =
   let commit = Commit.of_entries_filter_crc (Cstruct.of_string "\xff\xff\xff\xff") crc entries in
   of_commits ~revision_count (commit::[])
 
+let add_commit {revision_count; commits} entries =
+  let revision_count = revision_count + 1 in
+  match commits with
+  | [] -> of_entries ~revision_count entries
+  | l ->
+    let last = List.(nth l ((length l) - 1)) in
+    let commit = Commit.commit_after last entries in
+    of_commits ~revision_count (l @ [commit])
+
 (* TODO: ugh, what if we need >1 block for the entries :( *)
 let into_cstruct ~program_block_size cs block =
   match block.commits with
@@ -64,6 +73,15 @@ let into_cstruct ~program_block_size cs block =
            (pointer + bytes_written, raw_crc_tag, 0)
         ) (4, (Cstruct.of_string "\xff\xff\xff\xff"), 4) block.commits in
     ()
+
+(* TODO: this is pretty inefficient; do a fold accumulating all these
+ * into a set instead -- actually check the Set documentation, IIRC
+ * there are performance notes in there *)
+let ids t =
+  let id_of_entry e = (fst e).Tag.id in
+  let commit_ids c = List.map id_of_entry (Commit.entries c) in
+  let block_ids = List.(flatten @@ map commit_ids t.commits) in
+  IdSet.of_list block_ids
 
 let to_cstruct ~program_block_size ~block_size block =
   let cs = Cstruct.create block_size in

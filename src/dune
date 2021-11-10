@@ -1,6 +1,6 @@
 (executables
   (public_names format lfs_write)
-  (libraries cmdliner littlefs.fs mirage-block-unix lwt)
+  (libraries cmdliner littlefs.fs mirage-block-unix mirage-kv lwt)
 )
 
 (rule

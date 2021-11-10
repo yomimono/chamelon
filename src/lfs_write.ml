@@ -25,7 +25,7 @@ let write image block_size path data =
   Littlefs.connect block ~program_block_size:16 ~block_size >>= function
   | Error _ -> Stdlib.Format.eprintf "Error doing the initial filesystem read\n%!"; exit 1
   | Ok t ->
-    Littlefs.write t path @@ List.map Cstruct.of_string data >>= function
+    Littlefs.set t (Mirage_kv.Key.v path) @@ String.concat "" data >>= function
     | Ok () -> Stdlib.Format.printf "wrote some bytes\n%!"; Lwt.return_unit
     | Error _ -> Stdlib.Format.eprintf "Filesystem was opened, but write failed\n%!";
       exit 1
