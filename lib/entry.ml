@@ -13,9 +13,7 @@ let to_cstruct ~xor_tag_with t =
   cs
 
 let lenv l =
-  List.fold_left (fun sum t ->
-      Printf.printf "entry of size %d added to the sum\n%!" (sizeof t);
-      sum + sizeof t) 0 l
+  List.fold_left (fun sum t -> sum + sizeof t) 0 l
 
 let into_cstructv ~starting_xor_tag cs l =
   (* currently this takes a `t list`, and therefore is pretty straightforward.

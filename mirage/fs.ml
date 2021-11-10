@@ -71,8 +71,6 @@ module Make(This_Block: Mirage_block.S) = struct
             Littlefs.Block.of_entries ~revision_count:(old_revision_count + 1) entries
           end else begin
             let last_commit = List.(nth old_commits @@ (length old_commits) - 1) in
-            Printf.printf "I found %d previous commits in this block\n%!" (List.length old_commits);
-            Printf.printf "constructing a new commit with %d entries\n%!" (List.length entries);
             let commit = Littlefs.Commit.commit_after last_commit entries in
             let new_commits = old_commits @ [commit] in
             let new_block = Littlefs.Block.of_commits

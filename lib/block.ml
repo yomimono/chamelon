@@ -1,5 +1,7 @@
 (* a block is, physically, a revision count and series of commits *)
 
+module IntSet = Set.Make(Int)
+
 type t = {
   revision_count : int;
   commits : Commit.t list; (* the structure specified is more complex than this, but `list` will do for now *)
@@ -57,7 +59,6 @@ let into_cstruct ~program_block_size cs block =
            let (bytes_written, raw_crc_tag) = Commit.into_cstruct ~next_commit_valid:true
                ~program_block_size ~starting_xor_tag:prev_commit_last_tag ~starting_offset
                this_commit_region commit in
-           Printf.printf "wrote %d (0x%x) bytes representing 1 commit starting at %d (0x%x)\n%!" bytes_written bytes_written pointer pointer;
             (* only the first commit has nonzero offset; all subsequent ones have an offset of 0,
             * since each commit is padded to a multiple of the program block size. *)
            (pointer + bytes_written, raw_crc_tag, 0)
