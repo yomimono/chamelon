@@ -45,6 +45,15 @@ module Make(Sectors: Mirage_block.S) = struct
       | Error _ -> Lwt.return (Error (`Littlefs_read))
       | Ok extant_block -> Lwt.return (Ok extant_block)
 
+  let block_of_block_pair t (l1, l2) =
+    block_of_block_number t l1 >>= function
+    | Error _ as e -> Lwt.return e
+    | Ok b1 -> block_of_block_number t l2 >>= function
+      | Error _ as e -> Lwt.return e
+      | Ok b2 -> if Littlefs.Block.(compare (revision_count b1) (revision_count b2)) < 0
+        then Lwt.return @@ Ok b2
+        else Lwt.return @@ Ok b1
+
   let connect device ~program_block_size ~block_size : (t, error) result Lwt.t =
     (* TODO: for now, everything we would care about
      * from reading the FS is either hardcoded in
@@ -114,8 +123,7 @@ module Make(Sectors: Mirage_block.S) = struct
           match List.filter_map Littlefs.Dir.of_entry l with
           | [] -> Lwt.return `No_structs
           | next_blocks::_ ->
-            (* TODO: yet another place where we'd like a function that returns "best of these blocks" *)
-            block_of_block_number t (fst next_blocks) >>= function
+            block_of_block_pair t next_blocks >>= function
             | Error _ -> Lwt.return `Bad_pointer
             | Ok next_block ->
               find_directory t next_block remaining
@@ -165,13 +173,14 @@ module Make(Sectors: Mirage_block.S) = struct
           ) 
         in
         match inline_files l with
-        (* TODO: we should make sure the dictionary entry is there before returning this error *)
+        (* TODO: we should make sure the dictionary entry is there
+         * before returning this error *)
         | None -> Error (`Value_expected key)
         | Some (_tag, data) -> Ok (Cstruct.to_string data)
 
   let get t key =
     let get_from_block block_location =
-      block_of_block_number t block_location >>= function
+      block_of_block_pair t block_location >>= function
       | Error _ as e -> Lwt.return e
       | Ok extant_block ->
         match Mirage_kv.Key.segments key with
@@ -185,30 +194,28 @@ module Make(Sectors: Mirage_block.S) = struct
             Lwt.return @@ get_value block (Mirage_kv.Key.basename key)
           | _ -> Lwt.return @@ Error (`Not_found key)
     in
-    get_from_block 0L
+    get_from_block (0L, 1L)
 
-  (* TODO: we really need a convenience function for "read me this pair of blocks" *)
 
-  let set {block_size; program_block_size; block} key data =
+  (* TODO: we have a nice convenience function for blockpair reading,
+   * but it would be great to have one for writing too *)
+  let set t key data =
     (* for now, all keys are just their basenames *)
     let filename = Mirage_kv.Key.basename key in
     (* for now, all writes and reads occur in the root blocks *)
     let blockpair = (0L, 1L) in
     (* get the set of already-committed IDs in these blocks *)
-    let block_0, _block_1 = Cstruct.(create block_size, create block_size) in
-    This_Block.read block (fst blockpair) [block_0] >>= function
-    | Error _ as e -> Lwt.return e
-    | Ok () ->
-      match Littlefs.Block.of_cstruct ~program_block_size block_0 with
-      | Error _ -> Lwt.fail_with "couldn't deserialize block 0"
-      | Ok extant_block ->
-        let used_ids = Littlefs.Block.ids extant_block in
-        let next = (Littlefs.Block.IdSet.max_elt used_ids) + 1 in
-        let file = Littlefs.File.write filename next (Cstruct.of_string data) in
-        let new_block = Littlefs.Block.add_commit extant_block file in
-        Littlefs.Block.into_cstruct ~program_block_size block_0 new_block;
-        This_Block.write block (fst blockpair) [block_0] >>= function
-        | Error _ -> Lwt.fail_with "couldn't write back to block 0"
-        | Ok () -> Lwt.return (Ok ())
+    block_of_block_pair t blockpair >>= function
+    | Error e -> Lwt.return (Error (`Littlefs_read e))
+    | Ok extant_block ->
+      let used_ids = Littlefs.Block.ids extant_block in
+      let next = (Littlefs.Block.IdSet.max_elt used_ids) + 1 in
+      let file = Littlefs.File.write filename next (Cstruct.of_string data) in
+      let new_block = Littlefs.Block.add_commit extant_block file in
+      let block_0 = Cstruct.create t.block_size in
+      Littlefs.Block.into_cstruct ~program_block_size block_0 new_block;
+      This_Block.write t.block (fst blockpair) [block_0] >>= function
+      | Error e -> Lwt.return (Error (`Littlefs_write e))
+      | Ok () -> Lwt.return (Ok ())
 
 end

@@ -36,7 +36,7 @@ let invalid_tags = [
 
 let pp fmt tag =
   Format.fprintf fmt "id %d (%x), length %d (%x), valid %b, type is %x with chunk %x" tag.id tag.id
-    tag.length tag.length tag.valid
+    tag.length tag.length (not tag.valid)
     (abstract_type_to_int (fst tag.type3))
     (snd tag.type3)
 
