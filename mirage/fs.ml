@@ -6,10 +6,12 @@ open Lwt.Infix
 type error = [
   | `Block of Mirage_block.error
   | `KV of Mirage_kv.error
+  | `Corrupt
 ]
 
 type littlefs_write_error = [
     `Too_long (* path exceeds the allowable file name size *)
+  | `Corrupt
 ]
 
 module Make(Sectors: Mirage_block.S) = struct
@@ -85,37 +87,13 @@ module Make(Sectors: Mirage_block.S) = struct
     let aux c = List.find_all matches (Littlefs.Commit.entries c) in
     List.(flatten @@ map aux commits)
 
-  (* for now, ignore key -- in the future, we'll look up which metadata
-   * pairs it points to and list those instead of block 0 *)
-  let list t _key =
-    let block_location = 0L in
-    block_of_block_number t block_location >>= function
-    | Error _ as e -> Lwt.return e
-    | Ok extant_block ->
-      (* we want to list all names in all commits in the block,
-       * preserving information about which of them are files and which directories *)
-      let info_of_entry (tag, data) =
-        match tag.Littlefs.Tag.type3 with
-        | (LFS_TYPE_NAME, 0x01) ->
-          Some (Cstruct.to_string data, `Value)
-        | (LFS_TYPE_NAME, 0x02) ->
-          Some (Cstruct.to_string data, `Dictionary)
-        | _ -> None
-      in
-      let commits = Littlefs.Block.commits extant_block in
-      let relevant_entries c = List.filter_map info_of_entry
-          (Littlefs.Commit.entries c)
-      in
-      Lwt.return @@ Ok (List.flatten @@ List.map relevant_entries commits)
-
   (* we take "segments", a string list, rather than a key
    * directly because otherwise we have to keep reassembling
    * and deconstructing to form and execute the recursive call.
    * TODO a function that pulls the outer directory off of a Mirage_kv.Key would be really nice :/ *)
   let rec find t block segments =
     match segments with
-    | [] -> Lwt.return `No_id
-    | _basename::[] -> Lwt.return (`Basename_on block)
+    | [] -> Lwt.return (`Basename_on block)
     | key::remaining ->
       match id_of_key block (Mirage_kv.Key.v key) with
       | None -> Lwt.return `No_id
@@ -135,6 +113,37 @@ module Make(Sectors: Mirage_block.S) = struct
               | Ok next_block ->
                 find t next_block remaining
 
+  let list_block block =
+    (* we want to list all names in all commits in the block,
+     * preserving information about which of them are files and which directories *)
+    let info_of_entry (tag, data) =
+      match tag.Littlefs.Tag.type3 with
+      | (LFS_TYPE_NAME, 0x01) ->
+        Some (Cstruct.to_string data, `Value)
+      | (LFS_TYPE_NAME, 0x02) ->
+        Some (Cstruct.to_string data, `Dictionary)
+      | _ -> None
+    in
+    let commits = Littlefs.Block.commits block in
+    let relevant_entries c = List.filter_map info_of_entry
+        (Littlefs.Commit.entries c)
+    in
+    List.flatten @@ List.map relevant_entries commits
+
+  let list t key =
+    let block_location = 0L in
+    block_of_block_number t block_location >>= function
+    | Error _ as e -> Lwt.return e
+    | Ok start_block ->
+      match (Mirage_kv.Key.segments key) with
+      | [] -> Lwt.return @@ Ok (list_block start_block)
+      | segments ->
+        find t start_block segments >>= function
+        | `No_id | `No_structs | `No_entry | `Bad_pointer ->
+          Lwt.return @@ Error (`Not_found key)
+        | `Basename_on extant_block ->
+          Lwt.return @@ Ok (list_block extant_block)
+
   let get_value block key' =
     let key = Mirage_kv.Key.v key' in
     match id_of_key block key with
@@ -143,10 +152,12 @@ module Make(Sectors: Mirage_block.S) = struct
       match entries_of_id block id with
       | [] -> Error (`Not_found key)
       | l ->
-        match List.find_opt (fun (tag, _data) ->
+        let inline_files = List.find_opt (fun (tag, _data) ->
             Littlefs.Tag.((fst tag.type3) = LFS_TYPE_STRUCT) &&
             Littlefs.Tag.((snd tag.type3) = 0x01)
-          ) l with
+          ) 
+        in
+        match inline_files l with
         (* TODO: we should make sure the dictionary entry is there before returning this error *)
         | None -> Error (`Value_expected key)
         | Some (_tag, data) -> Ok (Cstruct.to_string data)
@@ -158,6 +169,7 @@ module Make(Sectors: Mirage_block.S) = struct
       | Ok extant_block ->
         find t extant_block (Mirage_kv.Key.segments key) >>= function
         | `Basename_on block -> Lwt.return @@ get_value block (Mirage_kv.Key.basename key)
+        | `No_entry | `No_id -> Lwt.return (Error (`Not_found key))
         | _ -> Lwt.return (Error (`Not_found key))
     in
     get_from_block 0L
