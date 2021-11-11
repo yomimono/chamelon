@@ -33,9 +33,6 @@ module Make(Sectors: Mirage_block.S) = struct
     let next _ = (2l, 3l)
   end
 
-  (* TODO: this seems like a good function to change to, like,
-   * "best block" - given a pair, parse 'em both and give me
-   * the better of them *)
   let block_of_block_number {block_size; block; program_block_size; _} block_location =
     let cs = Cstruct.create block_size in
     This_Block.read block block_location [cs] >>= function
@@ -109,18 +106,6 @@ module Make(Sectors: Mirage_block.S) = struct
     let aux c = List.find_all matches (Littlefs.Commit.entries c) in
     List.(flatten @@ map aux commits)
 
-  (* we take "segments", a string list, rather than a key
-   * directly because otherwise we have to keep reassembling
-   * and deconstructing to form and execute the recursive call.
-   * TODO a function that pulls the outer directory off of a Mirage_kv.Key would be really nice :/ *)
-  (* TODO: unfortunately the logic for when a file and when a
-   * directory are "missing" is different enough (at least,
-   * for inline files) that I think we need separate logic
-   * for them. Luckily for us, mirage-kv's API
-   * encourages us to `get` (for values) and `list` (for dictionaries)
-   * rather than expecting to use them interchangeably,
-   * so this isn't as painful as it might be otherwise *)
-
   let rec find_directory t block = function
     | [] -> Lwt.return (`Basename_on block)
     | key::remaining ->
@@ -169,8 +154,7 @@ module Make(Sectors: Mirage_block.S) = struct
         | `Basename_on extant_block ->
           Lwt.return @@ Ok (list_block extant_block)
 
-  let get_value block key' =
-    let key = Mirage_kv.Key.v key' in
+  let get_value block key =
     match id_of_key block key with
     | None -> Error (`Not_found key)
     | Some id ->
@@ -196,12 +180,12 @@ module Make(Sectors: Mirage_block.S) = struct
         match Mirage_kv.Key.segments key with
         | [] -> Lwt.return @@ Error (`Not_found key)
         | basename::[] ->
-          Lwt.return @@ get_value extant_block basename
+          Lwt.return @@ get_value extant_block @@ Mirage_kv.Key.v basename
         | _ ->
           let dirname = Mirage_kv.Key.(parent key |> segments) in
           find_directory t extant_block dirname >>= function
           | `Basename_on block ->
-            Lwt.return @@ get_value block (Mirage_kv.Key.basename key)
+            Lwt.return @@ get_value block Mirage_kv.Key.(v @@ basename key)
           | _ -> Lwt.return @@ Error (`Not_found key)
     in
     get_from_block (0L, 1L)
