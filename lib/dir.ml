@@ -22,14 +22,14 @@ let dirstruct id = Tag.({
     valid = true;
     type3 = (Tag.LFS_TYPE_STRUCT, 0x00);
     id;
-    length = 32 * 2 ;(* content is pointers to the metadata pair, two 32-bit values *)
+    length = 4 * 2 ;(* content is pointers to the metadata pair, two 32-bit values *)
   })
 
 let soft_tail = Tag.({
     valid = true;
     type3 = Tag.LFS_TYPE_TAIL, 0x00;
     id = 0x3ff;
-    length = 32 * 2;
+    length = 4 * 2;
   })
 
 let blocks (block1, block2) =
@@ -37,17 +37,6 @@ let blocks (block1, block2) =
   Cstruct.LE.set_uint32 cs 0 block1;
   Cstruct.LE.set_uint32 cs 4 block2;
   cs
-
-let create_root_dir id path bs =
-  if String.length path > Limits.max_filename_length then Error `Too_long
-  else begin
-    let start_create = (create id, Cstruct.empty)
-    and directory = dir ~id (String.length path), Cstruct.of_string path
-    and structure = (dirstruct id), (blocks bs)
-    and soft_tail = soft_tail, (blocks bs)
-    in
-    Ok (start_create, directory, structure, soft_tail)
-  end
 
 let dirstruct_of_cstruct cs =
   if Cstruct.length cs < (4 + 4) then Error (`Msg "dirstruct too small to contain a metadata pair pointer")
