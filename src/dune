@@ -1,5 +1,5 @@
 (executables
-  (public_names format lfs_write lfs_read)
+  (public_names format lfs_write lfs_read lfs_ls)
   (libraries cmdliner littlefs.fs mirage-block-unix mirage-kv lwt)
 )
 
@@ -12,6 +12,7 @@
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_write.exe} test.img 4096 "autoexec.bat" "CLS"))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_write.exe} test.img 4096 "config.sys" ""))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_write.exe} test.img 4096 "diary.txt" "Dear diary, today I ate cheese. It was great."))
+            (setenv OCAMLRUNPARAM b (run %{exe:lfs_ls.exe} test.img 4096 "/"))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_read.exe} test.img 4096 "diary.txt"))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_read.exe} test.img 4096 "autoexec.bat"))
   ))
