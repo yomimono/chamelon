@@ -61,6 +61,49 @@ module Make(Sectors: Mirage_block.S) = struct
     let block_1 = Littlefs.Block.of_entries ~revision_count:2 [name; superblock_inline_struct] in
     write_whole_block 0L block_0 >>= fun _ ->
     write_whole_block 1L block_1
+  
+  let id_of_key block key =
+    let data_matches c =
+      0 = Mirage_kv.Key.(compare key @@ v @@ Cstruct.to_string c)
+    in
+    let tag_matches t =
+      Littlefs.Tag.(fst t.type3 = LFS_TYPE_NAME && snd t.type3 = 0x01)
+    in
+    List.find_map (fun c ->
+        match List.find_opt (fun (tag, data) ->
+            tag_matches tag && data_matches data
+          ) (Littlefs.Commit.entries c) with
+        | Some (tag, _) -> Some (c, tag.Littlefs.Tag.id)
+        | None -> None
+      ) (Littlefs.Block.commits block)
+
+  let find_inline_file_contents block id =
+    let commits = Littlefs.Block.commits block in
+    (* TODO: we shouldn't keep searching after one result *)
+    let matches (tag, _) =
+      let type3, chunk = tag.Littlefs.Tag.type3 in
+      0 = compare tag.Littlefs.Tag.id id &&
+      type3 = Littlefs.Tag.LFS_TYPE_STRUCT &&
+      chunk = 0x01
+    in
+    let aux c = List.find_opt matches (Littlefs.Commit.entries c) in
+    List.find_map aux commits
+
+  let get {program_block_size; block; block_size; } key =
+    (* TODO: use the filesystem to find the right blocks to search *)
+    let block_location = 0L in
+    let cs = Cstruct.create block_size in
+    This_Block.read block block_location [cs] >>= function
+    | Error b -> Lwt.return (Error (`Block b))
+    | Ok () ->
+      match Littlefs.Block.of_cstruct ~program_block_size cs with
+      | Error _ -> Lwt.fail_with "couldn't read block"
+      | Ok extant_block ->
+        match id_of_key extant_block key with
+        | None -> Lwt.return (Error (`Not_found key))
+        | Some (_commit, id) -> match find_inline_file_contents extant_block id with
+          | None -> Lwt.return (Error (`Not_found key))
+          | Some (_tag, data) -> Lwt.return (Ok (Cstruct.to_string data))
 
   (* TODO: we really need a convenience function for "read me this pair of blocks" *)
 
@@ -85,8 +128,5 @@ module Make(Sectors: Mirage_block.S) = struct
         This_Block.write block (fst blockpair) [block_0] >>= function
         | Error _ -> Lwt.fail_with "couldn't write back to block 0"
         | Ok () -> Lwt.return (Ok ())
-
-
-
 
 end

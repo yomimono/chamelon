@@ -14,23 +14,19 @@ let path =
              and indeed no hierarchy is supported. In effect, this is just a filename." in
   Cmdliner.Arg.(value & pos 2 string "example" & info ~doc ~docv:"PATH" [])
 
-let data =
-  let doc = "data to write to the file. Currently this must be small enough to fit in an inline data structure. Multiple arguments can be given but will be straightforwardly concatenated with no separator." in
-  Cmdliner.Arg.(value & pos_right 2 string [] & info ~doc ~docv:"DATA" [])
-
-let write image block_size path data =
+let read image block_size path =
   let open Lwt.Infix in
   Lwt_main.run @@ (
   Mirage_block.connect image >>= fun block ->
   Littlefs.connect block ~program_block_size:16 ~block_size >>= function
   | Error _ -> Stdlib.Format.eprintf "Error doing the initial filesystem read\n%!"; exit 1
   | Ok t ->
-    Littlefs.set t (Mirage_kv.Key.v path) @@ String.concat "" data >>= function
-    | Ok () -> Lwt.return_unit
-    | Error _ -> Stdlib.Format.eprintf "Filesystem was opened, but write failed\n%!";
-      exit 1
+    Littlefs.get t (Mirage_kv.Key.v path) >>= function
+    | Ok v -> Stdlib.Format.printf "%s%!" v; Lwt.return_unit
+    | Error (`Not_found _key) -> Stdlib.Format.eprintf "key %s not found\n%!" path; exit 1
+    | Error _ -> Stdlib.Format.eprintf "filesystem was opened, but read failed\n%!"; exit 2
 )
 
 let () =
-  let go = Cmdliner.Term.(const write $ image $ block_size $ path $ data) in
-  Cmdliner.Term.(exit @@ eval (go, info "lfs_write"))
+  let go = Cmdliner.Term.(const read $ image $ block_size $ path) in
+  Cmdliner.Term.(exit @@ eval (go, info "lfs_read"))
