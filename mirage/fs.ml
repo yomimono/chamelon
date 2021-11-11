@@ -208,6 +208,11 @@ module Make(Sectors: Mirage_block.S) = struct
 
   let set t key data =
     (* for now, all keys are just their basenames *)
+    (* we could handle adding to extant directories without a block allocator
+     * (for writes small enough to be inline, that is)
+     * but in order to make new directories, we need to be
+     * able to make new metadata pairs,
+     * which means we need a block allocator *)
     let filename = Mirage_kv.Key.basename key in
     (* for now, all writes and reads occur in the root blocks *)
     let blockpair = (0L, 1L) in
