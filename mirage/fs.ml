@@ -63,18 +63,17 @@ module Make(Sectors: Mirage_block.S) = struct
     write_whole_block 0L block_0 >>= fun _ ->
     write_whole_block 1L block_1
   
-  let id_of_key (ty, chunk) block key =
+  let id_of_key block key =
     let data_matches c =
       0 = Mirage_kv.Key.(compare key @@ v @@ Cstruct.to_string c)
     in
-    let tag_matches t =
-      Littlefs.Tag.(fst t.type3 = ty && snd t.type3 = chunk)
+    let tag_matches t = Littlefs.Tag.(fst t.type3 = LFS_TYPE_NAME)
     in
     List.find_map (fun c ->
         match List.find_opt (fun (tag, data) ->
             tag_matches tag && data_matches data
           ) (Littlefs.Commit.entries c) with
-        | Some (tag, _) -> Some (c, tag.Littlefs.Tag.id)
+        | Some (tag, _) -> Some tag.Littlefs.Tag.id
         | None -> None
       ) (Littlefs.Block.commits block)
 
@@ -114,9 +113,9 @@ module Make(Sectors: Mirage_block.S) = struct
       block_of_block_number t block_location >>= function
       | Error _ as e -> Lwt.return e
       | Ok extant_block ->
-        match id_of_key (Littlefs.Tag.LFS_TYPE_NAME, 0x01) extant_block key with
+        match id_of_key extant_block key with
         | None -> Lwt.return (Error (`Not_found key))
-        | Some (_commit, id) ->
+        | Some id ->
           match entries_of_id extant_block id with
           | [] -> Lwt.return (Error (`Not_found key))
           | l ->
