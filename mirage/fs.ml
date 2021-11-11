@@ -45,6 +45,11 @@ module Make(Sectors: Mirage_block.S) = struct
       | Error _ -> Lwt.return (Error (`Littlefs_read))
       | Ok extant_block -> Lwt.return (Ok extant_block)
 
+  let block_to_block_number {block_size; block; program_block_size; _} data block_location =
+    let cs = Cstruct.create block_size in
+    Littlefs.Block.into_cstruct ~program_block_size cs data;
+    This_Block.write block block_location [cs]
+
   let block_of_block_pair t (l1, l2) =
     block_of_block_number t l1 >>= function
     | Error _ as e -> Lwt.return e
@@ -53,6 +58,11 @@ module Make(Sectors: Mirage_block.S) = struct
       | Ok b2 -> if Littlefs.Block.(compare (revision_count b1) (revision_count b2)) < 0
         then Lwt.return @@ Ok b2
         else Lwt.return @@ Ok b1
+
+  let block_to_block_pair t data (b1, b2) =
+    block_to_block_number t data b1 >>= function
+    | Error _ as e -> Lwt.return e
+    | Ok () -> block_to_block_number t data b2
 
   let connect device ~program_block_size ~block_size : (t, error) result Lwt.t =
     (* TODO: for now, everything we would care about
@@ -196,9 +206,6 @@ module Make(Sectors: Mirage_block.S) = struct
     in
     get_from_block (0L, 1L)
 
-
-  (* TODO: we have a nice convenience function for blockpair reading,
-   * but it would be great to have one for writing too *)
   let set t key data =
     (* for now, all keys are just their basenames *)
     let filename = Mirage_kv.Key.basename key in
@@ -212,9 +219,7 @@ module Make(Sectors: Mirage_block.S) = struct
       let next = (Littlefs.Block.IdSet.max_elt used_ids) + 1 in
       let file = Littlefs.File.write filename next (Cstruct.of_string data) in
       let new_block = Littlefs.Block.add_commit extant_block file in
-      let block_0 = Cstruct.create t.block_size in
-      Littlefs.Block.into_cstruct ~program_block_size block_0 new_block;
-      This_Block.write t.block (fst blockpair) [block_0] >>= function
+      block_to_block_pair t new_block blockpair >>= function
       | Error e -> Lwt.return (Error (`Littlefs_write e))
       | Ok () -> Lwt.return (Ok ())
 
