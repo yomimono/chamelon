@@ -3,6 +3,9 @@ type t = Tag.t * Cstruct.t
 let sizeof t =
   Cstruct.length (snd t) + Tag.size
 
+let is_type abstract_type (tag, _data) =
+  (fst tag.Tag.type3) = abstract_type
+
 let into_cstruct ~xor_tag_with cs t =
   Tag.into_cstruct ~xor_tag_with cs @@ fst t;
   Cstruct.blit (snd t) 0 cs Tag.size (Cstruct.length @@ snd t)

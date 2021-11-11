@@ -108,26 +108,58 @@ module Make(Sectors: Mirage_block.S) = struct
       in
       Lwt.return @@ Ok (List.flatten @@ List.map relevant_entries commits)
 
+  (* we take "segments", a string list, rather than a key
+   * directly because otherwise we have to keep reassembling
+   * and deconstructing to form and execute the recursive call.
+   * TODO a function that pulls the outer directory off of a Mirage_kv.Key would be really nice :/ *)
+  let rec find t block segments =
+    match segments with
+    | [] -> Lwt.return `No_id
+    | _basename::[] -> Lwt.return (`Basename_on block)
+    | key::remaining ->
+      match id_of_key block (Mirage_kv.Key.v key) with
+      | None -> Lwt.return `No_id
+      | Some id ->
+        match entries_of_id block id with
+        | [] -> Lwt.return `No_entry
+        | l ->
+          match List.filter (Littlefs.Entry.is_type Littlefs.Tag.LFS_TYPE_STRUCT) l with
+          | [] -> Lwt.return `No_structs
+          | (_tag, dirstruct)::_ ->
+            match Littlefs.Dir.dirstruct_of_cstruct dirstruct with
+            | Error _ -> Lwt.return `No_structs
+            | Ok next_blocks ->
+              (* TODO: yet another place where we'd like a function that returns "best of these blocks" *)
+              block_of_block_number t (fst next_blocks) >>= function
+              | Error _ -> Lwt.return `Bad_pointer
+              | Ok next_block ->
+                find t next_block remaining
+
+  let get_value block key' =
+    let key = Mirage_kv.Key.v key' in
+    match id_of_key block key with
+    | None -> Error (`Not_found key)
+    | Some id ->
+      match entries_of_id block id with
+      | [] -> Error (`Not_found key)
+      | l ->
+        match List.find_opt (fun (tag, _data) ->
+            Littlefs.Tag.((fst tag.type3) = LFS_TYPE_STRUCT) &&
+            Littlefs.Tag.((snd tag.type3) = 0x01)
+          ) l with
+        (* TODO: we should make sure the dictionary entry is there before returning this error *)
+        | None -> Error (`Value_expected key)
+        | Some (_tag, data) -> Ok (Cstruct.to_string data)
+
   let get t key =
     let get_from_block block_location =
       block_of_block_number t block_location >>= function
       | Error _ as e -> Lwt.return e
       | Ok extant_block ->
-        match id_of_key extant_block key with
-        | None -> Lwt.return (Error (`Not_found key))
-        | Some id ->
-          match entries_of_id extant_block id with
-          | [] -> Lwt.return (Error (`Not_found key))
-          | l ->
-            match List.find_opt (fun (tag, _data) ->
-                Littlefs.Tag.((fst tag.type3) = LFS_TYPE_STRUCT) &&
-                Littlefs.Tag.((snd tag.type3) = 0x01)
-              ) l with
-          (* TODO: we should make sure the dictionary entry is there before returning this error *)
-            | None -> Lwt.return (Error (`Value_expected key))
-            | Some (_tag, data) -> Lwt.return (Ok (Cstruct.to_string data))
+        find t extant_block (Mirage_kv.Key.segments key) >>= function
+        | `Basename_on block -> Lwt.return @@ get_value block (Mirage_kv.Key.basename key)
+        | _ -> Lwt.return (Error (`Not_found key))
     in
-    (* TODO: we have a bit more work to do to discover the right block ;) *)
     get_from_block 0L
 
   (* TODO: we really need a convenience function for "read me this pair of blocks" *)

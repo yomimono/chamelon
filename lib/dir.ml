@@ -48,3 +48,8 @@ let create_root_dir id path bs =
     in
     Ok (start_create, directory, structure, soft_tail)
   end
+
+let dirstruct_of_cstruct cs =
+  if Cstruct.length cs < (4 + 4) then Error (`Msg "dirstruct too small to contain a metadata pair pointer")
+  else Ok (Cstruct.LE.(get_uint32 cs 0 |> Int64.of_int32,
+                       get_uint32 cs 4 |> Int64.of_int32))
