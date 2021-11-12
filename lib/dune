@@ -4,6 +4,6 @@
   (preprocess (pps ppx_cstruct))
   (foreign_stubs
     (language c)
-    (names ctz)
+    (names bitwise)
   )
 )

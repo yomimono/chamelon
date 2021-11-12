@@ -10,3 +10,7 @@ CAMLprim value ctz(value a) {
 	return (copy_int32(res));
 }
 
+CAMLprim value popcount(value a) {
+	uint32_t res = __builtin_popcount(Int32_val(a));
+	return (copy_int32(res));
+}

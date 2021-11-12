@@ -159,6 +159,22 @@ module Make(Sectors: Mirage_block.S) = struct
         | `Basename_on extant_block ->
           Lwt.return @@ Ok (list_block extant_block)
 
+  let get_ctz t (pointer, length) =
+    let rec read_block l index pointer =
+      let data = Cstruct.create 4096 in
+      This_Block.read t.block pointer [data] >>= function
+      | Error _ as e -> Lwt.return e
+      | Ok () ->
+        let pointers, file_data = Littlefs.File.of_block index data in
+        match pointers with
+        | [] -> Lwt.return @@ Ok (List.rev (file_data :: l))
+        | next::_ -> read_block (file_data :: l) (index - 1) (Int64.of_int32 next)
+    in
+    read_block [] (Littlefs.File.last_block_index ~file_size:length
+                                ~block_size:t.block_size) pointer >>= function
+    | Ok l -> Lwt.return @@ Ok Cstruct.(concat l |> to_string)
+    | Error e -> Lwt.return @@ Error (`Block e)
+
   let get_value block key =
     match id_of_key block key with
     | None -> Error (`Not_found key)
@@ -174,26 +190,41 @@ module Make(Sectors: Mirage_block.S) = struct
         match inline_files l with
         (* TODO: we should make sure the dictionary entry is there
          * before returning this error *)
-        | None -> Error (`Value_expected key)
-        | Some (_tag, data) -> Ok (Cstruct.to_string data)
+        | Some (_tag, data) -> Ok (`Inline (Cstruct.to_string data))
+        | None ->
+          let ctz_files = List.find_opt (fun (tag, _block) ->
+              Littlefs.Tag.((fst tag.type3 = LFS_TYPE_STRUCT) &&
+              Littlefs.Tag.((snd tag.type3 = 0x02)
+          ))) in
+          match ctz_files l with
+          | None -> Error (`Value_expected key)
+          | Some (_, ctz) -> match Littlefs.File.ctz_of_cstruct ctz with
+            | Some (pointer, length) -> Ok (`Ctz (Int64.of_int32 pointer, Int32.to_int length))
+            | None -> Error (`Value_expected key)
 
   let get t key =
-    let get_from_block block_location =
-      block_of_block_pair t block_location >>= function
-      | Error _ as e -> Lwt.return e
-      | Ok extant_block ->
-        match Mirage_kv.Key.segments key with
-        | [] -> Lwt.return @@ Error (`Not_found key)
-        | basename::[] ->
-          Lwt.return @@ get_value extant_block @@ Mirage_kv.Key.v basename
-        | _ ->
-          let dirname = Mirage_kv.Key.(parent key |> segments) in
-          find_directory t extant_block dirname >>= function
-          | `Basename_on block ->
-            Lwt.return @@ get_value block Mirage_kv.Key.(v @@ basename key)
-          | _ -> Lwt.return @@ Error (`Not_found key)
-    in
-    get_from_block (0L, 1L)
+    let default = (0L, 1L) in
+    block_of_block_pair t default >>= function
+    | Error _ as e -> Lwt.return e
+    | Ok extant_block ->
+      match Mirage_kv.Key.segments key with
+      | [] -> Lwt.return @@ Error (`Not_found key)
+      | basename::[] -> begin
+          match get_value extant_block @@ Mirage_kv.Key.v basename with
+          | Ok (`Inline d) -> Lwt.return (Ok d)
+          | Ok (`Ctz ctz) -> get_ctz t ctz
+          | Error _ as e -> Lwt.return e
+        end
+      | _ ->
+        let dirname = Mirage_kv.Key.(parent key |> segments) in
+        find_directory t extant_block dirname >>= function
+        | `Basename_on block -> begin
+            match get_value block Mirage_kv.Key.(v @@ basename key) with
+            | Ok (`Inline d) -> Lwt.return (Ok d)
+            | Ok (`Ctz ctz) -> get_ctz t ctz
+            | Error _ as e -> Lwt.return e
+          end
+        | _ -> Lwt.return @@ Error (`Not_found key)
 
   let set t key data =
     (* for now, all keys are just their basenames *)
