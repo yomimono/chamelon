@@ -13,7 +13,6 @@ type littlefs_write_error = [
     `Too_long (* path exceeds the allowable file name size *)
   | `Corrupt
 ]
-
 module Make(Sectors: Mirage_block.S) = struct
   module This_Block = Block_ops.Make(Sectors)
   type t = {
@@ -28,11 +27,6 @@ module Make(Sectors: Mirage_block.S) = struct
     | `Littlefs_write of littlefs_write_error
   ]
 
-  module Allocator = struct
-    (* TODO: uh, eventually we'll need a real allocator :sweat_smile: *)
-    let next _ = (2l, 3l)
-  end
-
   let block_of_block_number {block_size; block; program_block_size; _} block_location =
     let cs = Cstruct.create block_size in
     This_Block.read block block_location [cs] >>= function
@@ -42,6 +36,17 @@ module Make(Sectors: Mirage_block.S) = struct
       | Error _ -> Lwt.return (Error (`Littlefs_read))
       | Ok extant_block -> Lwt.return (Ok extant_block)
 
+  (* from the littlefs spec, we should be checking whether
+   * the on-disk data matches what we have in memory after
+   * doing this write. Then if it doesn't, we should rewrite
+   * to a different block, and note the block as bad so we don't
+   * try to write to it in the future.
+   *
+   * I don't think that's necessary in our execution context.
+   * we're not writing directly to a flash controller,
+   * we're probably writing to a file on another filesystem
+   * managed by an OS with its own bad block detection.
+   * That's my excuse for punting on it for now, anyway. *)
   let block_to_block_number {block_size; block; program_block_size; _} data block_location =
     let cs = Cstruct.create block_size in
     Littlefs.Block.into_cstruct ~program_block_size cs data;
