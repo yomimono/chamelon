@@ -34,6 +34,10 @@ let of_block index cs =
       Cstruct.LE.get_uint32 cs (sizeof_pointer * n)
     ) in
   let sizeof_data = (Cstruct.length cs) - (sizeof_pointer * pointer_count) in
+  (* TODO: this is going to be wrong for the head block,
+   * where we only want to return the amount of data that's actually here --
+   * almost always less than the full buffer size.
+   * This is going to be very visible because we'll get big gaps in files *)
   (pointers, Cstruct.sub cs (pointer_count * sizeof_pointer) sizeof_data)
 
 let last_block_index ~file_size ~block_size =
