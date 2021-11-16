@@ -30,11 +30,11 @@ module Make(Sectors: Mirage_block.S) = struct
   let block_of_block_number {block_size; block; program_block_size; _} block_location =
     let cs = Cstruct.create block_size in
     This_Block.read block block_location [cs] >>= function
-    | Error b -> Lwt.return (Error (`Block b))
+    | Error b -> Lwt.return @@ Error (`Block b)
     | Ok () ->
       match Littlefs.Block.of_cstruct ~program_block_size cs with
-      | Error _ -> Lwt.return (Error (`Littlefs_read))
-      | Ok extant_block -> Lwt.return (Ok extant_block)
+      | Error _ -> Lwt.return @@ Error (`Littlefs_read)
+      | Ok extant_block -> Lwt.return @@ Ok extant_block
 
   (* from the littlefs spec, we should be checking whether
    * the on-disk data matches what we have in memory after
@@ -73,7 +73,7 @@ module Make(Sectors: Mirage_block.S) = struct
      * in order to read the filesystem. For now, if we can
      * connect to the underlying device, call that good enough. *)
     This_Block.connect ~block_size device >>= fun block ->
-    Lwt.return (Ok {block; block_size; program_block_size})
+    Lwt.return @@ Ok {block; block_size; program_block_size}
 
   let format t =
     let program_block_size = t.program_block_size in
@@ -123,9 +123,6 @@ module Make(Sectors: Mirage_block.S) = struct
           match List.filter_map Littlefs.Dir.of_entry l with
           | [] -> Lwt.return `No_structs
           | next_blocks::_ ->
-            Printf.printf "found %s at blocks %Lu, %Lu (%Lx, %Lx)\n%!"
-              key (fst next_blocks) (fst next_blocks)
-              (snd next_blocks) (snd next_blocks);
             block_of_block_pair t next_blocks >>= function
             | Error _ -> Lwt.return `Bad_pointer
             | Ok next_block ->
@@ -170,16 +167,20 @@ module Make(Sectors: Mirage_block.S) = struct
       | Ok () ->
         let pointers, data_region = Littlefs.File.of_block index data in
         match pointers with
-        | next::_ -> read_block (data_region :: l) (index - 1) (Int64.of_int32 next)
+        | next::_ ->
+          read_block (data_region :: l) (index - 1) (Int64.of_int32 next)
         | [] ->
-          let first_block_data = length - (Cstruct.lenv l) in
-          let file_data = Cstruct.sub data_region 0 first_block_data in
-          Lwt.return @@ Ok (file_data :: l)
+          Lwt.return @@ Ok (data_region :: l)
     in
-    read_block [] (Littlefs.File.last_block_index ~file_size:length
-                                ~block_size:t.block_size) pointer >>= function
-    | Ok l -> Lwt.return @@ Ok Cstruct.(concat l |> to_string)
+    let index = Littlefs.File.last_block_index ~file_size:length
+                                ~block_size:t.block_size in
+    read_block [] index pointer >>= function
     | Error e -> Lwt.return @@ Error (`Block e)
+    | Ok l ->
+      (* the last block very likely needs to be trimmed *)
+      let cs = Cstruct.sub (Cstruct.concat l) 0 length in
+      let s = Cstruct.(to_string cs) in
+      Lwt.return @@ Ok s
 
   let get_value block key =
     match id_of_key block key with
@@ -224,7 +225,6 @@ module Make(Sectors: Mirage_block.S) = struct
         let dirname = Mirage_kv.Key.(parent key |> segments) in
         find_directory t extant_block dirname >>= function
         | `Basename_on block -> begin
-            Printf.printf "found basename %s\n%!" (Mirage_kv.Key.basename key);
             match get_value block Mirage_kv.Key.(v @@ basename key) with
             | Ok (`Inline d) -> Lwt.return (Ok d)
             | Ok (`Ctz ctz) -> get_ctz t ctz
