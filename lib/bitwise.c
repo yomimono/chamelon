@@ -1,6 +1,5 @@
 #include <stdint.h>
 
-#define CAML_NAME_SPAC
 #include <caml/mlvalues.h>
 #include <caml/memory.h>
 #include <caml/alloc.h>

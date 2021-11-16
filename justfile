@@ -13,6 +13,10 @@ debug_format:
 	dd if=/dev/zero of={{image}} bs=64K count=1
 	gdb --args _build/default/src/format.exe {{image}}
 
+debug_read:
+	dune build @default
+	gdb --args _build/default/src/lfs_read.exe ~/littlefs.img 4096 lib/block.ml
+
 readmdir BLOCK:
 	readmdir.py -a --log {{image}} {{block_size}} {{BLOCK}}
 
