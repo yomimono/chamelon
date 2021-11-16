@@ -187,20 +187,19 @@ module Make(Sectors: Mirage_block.S) = struct
             Littlefs.Tag.((snd tag.type3) = 0x01)
           ) 
         in
-        match inline_files l with
-        (* TODO: we should make sure the dictionary entry is there
+        let ctz_files = List.find_opt (fun (tag, _block) ->
+            Littlefs.Tag.((fst tag.type3 = LFS_TYPE_STRUCT) &&
+                          Littlefs.Tag.((snd tag.type3 = 0x02)
+                                       ))) in
+        match inline_files l, ctz_files l with
+        (* TODO: we should make sure a dictionary entry is there
          * before returning this error *)
-        | Some (_tag, data) -> Ok (`Inline (Cstruct.to_string data))
-        | None ->
-          let ctz_files = List.find_opt (fun (tag, _block) ->
-              Littlefs.Tag.((fst tag.type3 = LFS_TYPE_STRUCT) &&
-              Littlefs.Tag.((snd tag.type3 = 0x02)
-          ))) in
-          match ctz_files l with
+        | None, None -> Error (`Value_expected key)
+        | Some (_tag, data), None -> Ok (`Inline (Cstruct.to_string data))
+        | _, Some (_, ctz) ->
+          match Littlefs.File.ctz_of_cstruct ctz with
+          | Some (pointer, length) -> Ok (`Ctz (Int64.of_int32 pointer, Int32.to_int length))
           | None -> Error (`Value_expected key)
-          | Some (_, ctz) -> match Littlefs.File.ctz_of_cstruct ctz with
-            | Some (pointer, length) -> Ok (`Ctz (Int64.of_int32 pointer, Int32.to_int length))
-            | None -> Error (`Value_expected key)
 
   let get t key =
     let default = (0L, 1L) in
