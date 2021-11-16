@@ -1,7 +1,12 @@
 image := "_build/default/src/test.img"
+bigmage := "/tmp/bigfile.img"
 HOME := env_var("HOME")
 
 block_size := "4096"
+
+big_img:
+	dd if=/dev/zero of={{bigmage}} bs=1M count=64
+	mklittlefs -c . -b 4096 -s $((1024 * 1024 * 64)) {{bigmage}}
 
 test_img:
 	dune build @default
@@ -13,9 +18,9 @@ debug_format:
 	dd if=/dev/zero of={{image}} bs=64K count=1
 	gdb --args _build/default/src/format.exe {{image}}
 
-debug_read:
+read:
 	dune build @default
-	gdb --args _build/default/src/lfs_read.exe ~/littlefs.img 4096 lib/block.ml
+	_build/default/src/lfs_read.exe {{bigmage}} 4096 lib/block.ml
 
 readmdir BLOCK:
 	readmdir.py -a --log {{image}} {{block_size}} {{BLOCK}}

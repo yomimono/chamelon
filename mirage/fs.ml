@@ -123,6 +123,9 @@ module Make(Sectors: Mirage_block.S) = struct
           match List.filter_map Littlefs.Dir.of_entry l with
           | [] -> Lwt.return `No_structs
           | next_blocks::_ ->
+            Printf.printf "found %s at blocks %Lu, %Lu (%Lx, %Lx)\n%!"
+              key (fst next_blocks) (fst next_blocks)
+              (snd next_blocks) (snd next_blocks);
             block_of_block_pair t next_blocks >>= function
             | Error _ -> Lwt.return `Bad_pointer
             | Ok next_block ->
@@ -165,10 +168,13 @@ module Make(Sectors: Mirage_block.S) = struct
       This_Block.read t.block pointer [data] >>= function
       | Error _ as e -> Lwt.return e
       | Ok () ->
-        let pointers, file_data = Littlefs.File.of_block index data in
+        let pointers, data_region = Littlefs.File.of_block index data in
         match pointers with
-        | [] -> Lwt.return @@ Ok (List.rev (file_data :: l))
-        | next::_ -> read_block (file_data :: l) (index - 1) (Int64.of_int32 next)
+        | next::_ -> read_block (data_region :: l) (index - 1) (Int64.of_int32 next)
+        | [] ->
+          let first_block_data = length - (Cstruct.lenv l) in
+          let file_data = Cstruct.sub data_region 0 first_block_data in
+          Lwt.return @@ Ok (file_data :: l)
     in
     read_block [] (Littlefs.File.last_block_index ~file_size:length
                                 ~block_size:t.block_size) pointer >>= function
@@ -218,6 +224,7 @@ module Make(Sectors: Mirage_block.S) = struct
         let dirname = Mirage_kv.Key.(parent key |> segments) in
         find_directory t extant_block dirname >>= function
         | `Basename_on block -> begin
+            Printf.printf "found basename %s\n%!" (Mirage_kv.Key.basename key);
             match get_value block Mirage_kv.Key.(v @@ basename key) with
             | Ok (`Inline d) -> Lwt.return (Ok d)
             | Ok (`Ctz ctz) -> get_ctz t ctz
