@@ -21,7 +21,7 @@ module Make(Sectors: Mirage_block.S) = struct
     block : This_Block.t;
     block_size : int;
     program_block_size : int;
-    lookahead : int64 list;
+    lookahead : (int64 list) ref;
   }
 
   type write_error = [
@@ -36,7 +36,7 @@ module Make(Sectors: Mirage_block.S) = struct
     | Error b -> Lwt.return @@ Error (`Block b)
     | Ok () ->
       match Littlefs.Block.of_cstruct ~program_block_size cs with
-      | Error _ -> Lwt.return @@ Error (`Corrupt)
+      | Error _ -> Lwt.return @@ Error (`Littlefs `Corrupt)
       | Ok extant_block -> Lwt.return @@ Ok extant_block
 
   (* from the littlefs spec, we should be checking whether
@@ -117,8 +117,10 @@ module Make(Sectors: Mirage_block.S) = struct
     [IntSet.min_elt candidates]
 
   let get_block t =
-    match t.lookahead with
-    | block::l -> Lwt.return @@ Ok (block, {t with lookahead = l})
+    match !(t.lookahead) with
+    | block::l ->
+      t.lookahead := l;
+      Lwt.return @@ Ok block
     | [] ->
       (* TODO try to repopulate the lookahead buffer *)
       follow_links t (Littlefs.Entry.Metadata (0L, 1L)) >|= function
@@ -126,7 +128,9 @@ module Make(Sectors: Mirage_block.S) = struct
       | Ok used_blocks ->
         match unused t used_blocks with
         | [] -> Error (`Littlefs_write `Out_of_space)
-        | block::l -> Ok (block, {t with lookahead = l})
+        | block::l ->
+          t.lookahead := l;
+          Ok block
 
   let connect device ~program_block_size ~block_size : (t, error) result Lwt.t =
     This_Block.connect ~block_size device >>= fun block ->
@@ -136,11 +140,11 @@ module Make(Sectors: Mirage_block.S) = struct
      * make the functions that don't need allocable blocks marked
      * in the type system somehow,
      * or have them only take the arguments they need instead of a full `t` *)
-    let t = {block; block_size; program_block_size; lookahead = []} in
+    let t = {block; block_size; program_block_size; lookahead = ref []} in
     follow_links t (Littlefs.Entry.Metadata (0L, 1L)) >>= function
     | Error _e -> Lwt.fail_with "couldn't get list of used blocks"
     | Ok used_blocks ->
-      let lookahead = unused t used_blocks in
+      let lookahead = ref (unused t used_blocks) in
       Lwt.return @@ Ok {lookahead; block; block_size; program_block_size}
 
   let format t =
@@ -179,11 +183,76 @@ module Make(Sectors: Mirage_block.S) = struct
     let aux c = List.find_all matches (Littlefs.Commit.entries c) in
     List.(flatten @@ map aux commits)
 
-  let rec find_directory t block = function
+  let follow_directory_pointers t blockpair = function
+    | [] -> Lwt.return (`Basename_on blockpair)
+    | key::remaining ->
+      block_of_block_pair t blockpair >>= function
+      | Error _ -> Lwt.return `Bad_pointer
+      | Ok block ->
+        match id_of_key block (Mirage_kv.Key.v key) with
+        | None -> Lwt.return (`No_id key)
+        | Some id ->
+          match entries_of_id block id with
+          | [] -> Lwt.return `No_entry
+          | l ->
+            match List.filter_map Littlefs.Dir.of_entry l with
+            | [] -> Lwt.return `No_structs
+            | next_blocks::_ -> Lwt.return (`Continue (remaining, next_blocks))
+
+  let rec find_directory_blockpair t blockpair key =
+    follow_directory_pointers t blockpair key >>= function
+    | `Continue (path, next_blocks) -> find_directory_blockpair t next_blocks path
+                                         (* TODO: unfortunately I think we should
+                                          * wrap No_id so we can return the full
+                                          * path of keys we can't find,
+                                          * so the user knows where the problem was
+                                          * in drafts/drafts/drafts/final/rough/drafts *)
+    | a -> Lwt.return a
+
+  (*
+  let plain_mkdir t rootpair dirname =
+    get_block t >>= function
+    | Error _ as e -> Lwt.return e
+    | Ok dir_block_0 ->
+      get_block t >>= function
+      | Error _ as e -> Lwt.return e
+      | Ok dir_block_1 ->
+        block_of_block_pair t rootpair >>= function
+        | Error _ as e -> Lwt.return e
+        | Ok root_block ->
+          let dir_id = Littlefs.Block.(IdSet.max_elt @@ ids root_block) + 1 in
+          let name = Littlefs.Dir.name dirname dir_id in
+          let dirstruct = Littlefs.Dir.mkdir ~to_pair:(dir_block_0, dir_block_1) dir_id in
+          let new_block = Littlefs.Block.add_commit root_block [name; dirstruct] in
+          block_to_block_pair t new_block rootpair
+
+  let rec mkdir t rootpair key =
+    match key with
+    | [] -> Lwt.return @@ Ok rootpair
+    | dirname::more ->
+      get_block t >>= function
+      | Error _ as e -> Lwt.return e
+      | Ok dir_block_0 ->
+        get_block t >>= function
+        | Error _ as e -> Lwt.return e
+        | Ok dir_block_1 ->
+          block_of_block_pair t rootpair >>= function
+          | Error _ as e -> Lwt.return e
+          | Ok root_block ->
+            let dir_id = Littlefs.Block.(IdSet.max_elt @@ ids root_block) + 1 in
+            let name = Littlefs.Dir.name dirname dir_id in
+            let dirstruct = Littlefs.Dir.mkdir ~to_pair:(dir_block_0, dir_block_1) dir_id in
+            let new_block = Littlefs.Block.add_commit root_block [name; dirstruct] in
+            block_to_block_pair t new_block rootpair >>= function
+            | Error _ as e -> Lwt.return e
+            | Ok () -> mkdir t (dir_block_0, dir_block_1) more
+*)
+  let rec find_directory t block key =
+    match key with
     | [] -> Lwt.return (`Basename_on block)
     | key::remaining ->
       match id_of_key block (Mirage_kv.Key.v key) with
-      | None -> Lwt.return `No_id
+      | None -> Lwt.return @@ `No_id key
       | Some id ->
         match entries_of_id block id with
         | [] -> Lwt.return `No_entry
@@ -222,7 +291,8 @@ module Make(Sectors: Mirage_block.S) = struct
       | [] -> Lwt.return @@ Ok (list_block start_block)
       | segments ->
         find_directory t start_block segments >>= function
-        | `No_id | `No_structs | `No_entry | `Bad_pointer ->
+        | `No_id k -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v k))
+        | `No_structs | `No_entry | `Bad_pointer ->
           Lwt.return @@ Error (`Not_found key)
         | `Basename_on extant_block ->
           Lwt.return @@ Ok (list_block extant_block)
@@ -300,7 +370,7 @@ module Make(Sectors: Mirage_block.S) = struct
           end
         | _ -> Lwt.return @@ Error (`Not_found key)
 
-  let set_value blockpair t key data =
+  let set_in_directory blockpair t key data =
     (* for now, all keys are just their basenames *)
     (* we could handle adding to extant directories without a block allocator
      * (for writes small enough to be inline, that is)
@@ -310,12 +380,14 @@ module Make(Sectors: Mirage_block.S) = struct
     let filename = Mirage_kv.Key.basename key in
     (* get the set of already-committed IDs in these blocks *)
     block_of_block_pair t blockpair >>= function
-    | Error e -> Lwt.return (Error (`Corrupt e))
+    | Error _ as e -> Lwt.return e
     | Ok extant_block ->
       (* TODO: we may need to do more work if the root directory
        * goes on past the first metadata pair *)
       let used_ids = Littlefs.Block.ids extant_block in
       let next = (Littlefs.Block.IdSet.max_elt used_ids) + 1 in
+      (* TODO: this is where we'd branch for making a ctz struct and writing to
+       * separate blocks instead *)
       let file = Littlefs.File.write filename next (Cstruct.of_string data) in
       let new_block = Littlefs.Block.add_commit extant_block file in
       block_to_block_pair t new_block blockpair >>= function
@@ -325,7 +397,12 @@ module Make(Sectors: Mirage_block.S) = struct
   let set t key data =
     (* if `key` is just a basename, write to the root directory *)
     if Mirage_kv.Key.(equal empty @@ parent key) then
-      set_value (0L, 1L) t key data
-    else Lwt.return (Error (`Littlefs `Corrupt))
+      set_in_directory (0L, 1L) t key data
+    else begin
+      find_directory_blockpair t (0L, 1L) (Mirage_kv.Key.segments key) >>= function
+      | `Basename_on blockpair -> set_in_directory blockpair t key data
+      | `No_id _ -> Lwt.return (Error (`KV_write `Dictionary_expected))
+      | _ -> Lwt.return (Error (`Littlefs `Corrupt))
+    end
 
 end
