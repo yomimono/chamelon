@@ -47,6 +47,11 @@ let xor ~into arg =
     Cstruct.set_uint8 into i new_byte
   done
 
+let has_links tag =
+  (fst tag.type3) = LFS_TYPE_STRUCT &&
+  ((snd tag.type3) = 0x00 (* dirstruct *)
+   || snd tag.type3 = 0x02) (* ctz *)
+    
 (* TODO: verify whether all-0/all-1 check is for raw tags or XOR'd tags - currently we check both, but that will probably give us false negatives for select tags *)
 let of_cstruct ~xor_tag_with cs =
   let tag_region = Cstruct.sub cs 0 size in

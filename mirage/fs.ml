@@ -13,6 +13,7 @@ type littlefs_write_error = [
     `Too_long (* path exceeds the allowable file name size *)
   | `Corrupt
 ]
+
 module Make(Sectors: Mirage_block.S) = struct
   module This_Block = Block_ops.Make(Sectors)
   type t = {
@@ -66,14 +67,53 @@ module Make(Sectors: Mirage_block.S) = struct
     | Error _ as e -> Lwt.return e
     | Ok () -> block_to_block_number t data b2
 
+  let linked_blocks root =
+    let entries = Littlefs.Commit.entries in
+    let links_of_commit c = List.filter_map Littlefs.Entry.links @@ entries c in
+    List.(flatten @@ map links_of_commit (Littlefs.Block.commits root))
+
+  let rec get_ctz_pointers t l index pointer =
+    match l with
+    | Error _ as e -> Lwt.return e
+    | Ok l ->
+      let data = Cstruct.create t.block_size in
+      This_Block.read t.block pointer [data] >>= function
+      | Error _ as e -> Lwt.return e
+      | Ok () -> begin
+          let pointers, _data_region = Littlefs.File.of_block index data in
+          match pointers with
+          | [] -> Lwt.return @@ Ok (pointer::l)
+          | next::_ -> get_ctz_pointers t (Ok (pointer::l)) (index - 1) (Int64.of_int32 next)
+        end
+
+  let rec follow_links t = function
+    | Littlefs.Entry.Data (pointer, length) -> begin
+        let file_size = Int32.to_int length in
+        let index = Littlefs.File.last_block_index ~file_size ~block_size:t.block_size in
+        get_ctz_pointers t (Ok []) index (Int64.of_int32 pointer)
+      end
+    | Littlefs.Entry.Metadata (a, b) ->
+      block_of_block_pair t (a, b) >>= function
+      | Error _ ->
+        Lwt.return @@ Ok [a; b]
+      | Ok block ->
+        let links = linked_blocks block in
+        Lwt_list.fold_left_s (fun l link ->
+            follow_links t link >>= function
+            | Error _ ->
+              Lwt.return @@ l
+            | Ok new_links -> Lwt.return @@ (a :: b :: (new_links @ l))
+          ) ([]) links >>= fun list ->
+        Lwt.return (Ok list)
+
   let connect device ~program_block_size ~block_size : (t, error) result Lwt.t =
-    (* TODO: for now, everything we would care about
-     * from reading the FS is either hardcoded in
-     * the implementation, or needs to be provided
-     * in order to read the filesystem. For now, if we can
-     * connect to the underlying device, call that good enough. *)
     This_Block.connect ~block_size device >>= fun block ->
-    Lwt.return @@ Ok {block; block_size; program_block_size}
+    let t = {block; block_size; program_block_size} in
+    follow_links t (Littlefs.Entry.Metadata (0L, 1L)) >>= function
+    | Error _e -> Lwt.fail_with "couldn't get list of used blocks"
+    | Ok used_blocks ->
+      Format.eprintf "blocks in use on this filesystem: %a\n%!" Fmt.(list int64) used_blocks;
+      Lwt.return @@ Ok {block; block_size; program_block_size}
 
   let format t =
     let program_block_size = t.program_block_size in
@@ -126,7 +166,7 @@ module Make(Sectors: Mirage_block.S) = struct
             block_of_block_pair t next_blocks >>= function
             | Error _ -> Lwt.return `Bad_pointer
             | Ok next_block ->
-              find_directory t next_block remaining
+             find_directory t next_block remaining
 
   let list_block block =
     (* we want to list all names in all commits in the block,
@@ -161,7 +201,7 @@ module Make(Sectors: Mirage_block.S) = struct
 
   let get_ctz t (pointer, length) =
     let rec read_block l index pointer =
-      let data = Cstruct.create 4096 in
+      let data = Cstruct.create t.block_size in
       This_Block.read t.block pointer [data] >>= function
       | Error _ as e -> Lwt.return e
       | Ok () ->

@@ -1,4 +1,6 @@
 type t = Tag.t * Cstruct.t
+type link = | Metadata of (int64 * int64)
+            | Data of (int32 * int32)
 
 let sizeof t =
   Cstruct.length (snd t) + Tag.size
@@ -14,6 +16,22 @@ let to_cstruct ~xor_tag_with t =
   let cs = Cstruct.create @@ sizeof t in
   into_cstruct ~xor_tag_with cs t;
   cs
+
+let links (tag, data) =
+  if Tag.has_links tag then begin
+    match (snd tag.Tag.type3) with
+    | 0x00 -> begin
+      match Dir.dirstruct_of_cstruct data with
+      | None -> None 
+      | Some s -> Some (Metadata s)
+    end
+    | 0x02 -> begin
+        match File.ctz_of_cstruct data with
+        | None -> None
+        | Some s -> Some (Data s)
+      end
+    | _ -> None
+  end else None
 
 let lenv l =
   List.fold_left (fun sum t -> sum + sizeof t) 0 l
