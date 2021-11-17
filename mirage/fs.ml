@@ -300,7 +300,7 @@ module Make(Sectors: Mirage_block.S) = struct
           end
         | _ -> Lwt.return @@ Error (`Not_found key)
 
-  let set t key data =
+  let set_value blockpair t key data =
     (* for now, all keys are just their basenames *)
     (* we could handle adding to extant directories without a block allocator
      * (for writes small enough to be inline, that is)
@@ -312,6 +312,8 @@ module Make(Sectors: Mirage_block.S) = struct
     block_of_block_pair t blockpair >>= function
     | Error e -> Lwt.return (Error (`Corrupt e))
     | Ok extant_block ->
+      (* TODO: we may need to do more work if the root directory
+       * goes on past the first metadata pair *)
       let used_ids = Littlefs.Block.ids extant_block in
       let next = (Littlefs.Block.IdSet.max_elt used_ids) + 1 in
       let file = Littlefs.File.write filename next (Cstruct.of_string data) in
@@ -319,5 +321,11 @@ module Make(Sectors: Mirage_block.S) = struct
       block_to_block_pair t new_block blockpair >>= function
       | Error e -> Lwt.return (Error (`Littlefs_write e))
       | Ok () -> Lwt.return (Ok ())
+
+  let set t key data =
+    (* if `key` is just a basename, write to the root directory *)
+    if Mirage_kv.Key.(equal empty @@ parent key) then
+      set_value (0L, 1L) t key data
+    else Lwt.return (Error (`Littlefs `Corrupt))
 
 end
