@@ -16,5 +16,6 @@
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_ls.exe} test.img 4096 "/"))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_read.exe} test.img 4096 "diary.txt"))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_read.exe} test.img 4096 "autoexec.bat"))
+            (setenv OCAMLRUNPARAM b (run %{exe:lfs_read.exe} test.img 4096 "secrets/mom_dont_look"))
   ))
 )

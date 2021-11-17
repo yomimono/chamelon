@@ -12,6 +12,8 @@ module Make(Sectors: Mirage_block.S) = struct
   }
 
   type key = Mirage_kv.Key.t
+
+  (* error type definitions straight outta mirage-kv *)
   type error = [
     | `Not_found           of key (** key not found *)
     | `Dictionary_expected of key (** key does not refer to a dictionary. *)
@@ -109,7 +111,7 @@ module Make(Sectors: Mirage_block.S) = struct
     let candidates = IntSet.diff all_indices set1 in
     (* TODO: c'mon *)
     [IntSet.min_elt candidates]
-(*
+  
   let get_block t =
     match !(t.lookahead) with
     | block::l ->
@@ -125,7 +127,6 @@ module Make(Sectors: Mirage_block.S) = struct
         | block::l ->
           t.lookahead := l;
           Ok block
-   *)
 
   let connect device ~program_block_size ~block_size : (t, error) result Lwt.t =
     This_Block.connect ~block_size device >>= fun block ->
@@ -153,8 +154,8 @@ module Make(Sectors: Mirage_block.S) = struct
     let superblock_inline_struct = Littlefs.Superblock.inline_struct (Int32.of_int block_size) (Int32.of_int block_count) in
     let block_0 = Littlefs.Block.of_entries ~revision_count:1 [name; superblock_inline_struct] in
     let block_1 = Littlefs.Block.of_entries ~revision_count:2 [name; superblock_inline_struct] in
-    write_whole_block 0L block_0 >>= fun b0 ->
-    write_whole_block 1L block_1 >>= fun b1 ->
+    write_whole_block (fst root_pair) block_0 >>= fun b0 ->
+    write_whole_block (snd root_pair) block_1 >>= fun b1 ->
     match b0, b1 with
     | Ok (), Ok () -> Lwt.return @@ Ok ()
     | _, _ -> Lwt.return @@ Error `No_space
@@ -181,10 +182,17 @@ module Make(Sectors: Mirage_block.S) = struct
     let aux c = List.find_all matches (Littlefs.Commit.entries c) in
     List.(flatten @@ map aux commits)
 
-  let follow_directory_pointers t blockpair = function
-    | [] -> Lwt.return (`Basename_on blockpair)
+  (** [follow_directory_pointers t block_pair l] returns:
+   * an error or
+   * `Basename_on block_pair: you have reached the termination of the directory traversal;
+   * items within the path can be found at [block_pair]
+   * `Continue (l, block_pair) : there is more directory structure to be traversed;
+   * the remaining elements [l] can be found starting at [block_pair]
+   * *)
+  let follow_directory_pointers t block_pair = function
+    | [] -> Lwt.return (`Basename_on block_pair)
     | key::remaining ->
-      block_of_block_pair t blockpair >>= function
+      block_of_block_pair t block_pair >>= function
       | Error _ -> Lwt.return `Bad_pointer
       | Ok block ->
         match id_of_key block (Mirage_kv.Key.v key) with
@@ -197,54 +205,49 @@ module Make(Sectors: Mirage_block.S) = struct
             | [] -> Lwt.return `No_structs
             | next_blocks::_ -> Lwt.return (`Continue (remaining, next_blocks))
 
-  let rec find_directory_blockpair t blockpair key =
-    follow_directory_pointers t blockpair key >>= function
-    | `Continue (path, next_blocks) -> find_directory_blockpair t next_blocks path
-                                         (* TODO: unfortunately I think we should
-                                          * wrap No_id so we can return the full
-                                          * path of keys we can't find,
-                                          * so the user knows where the problem was
-                                          * in drafts/drafts/drafts/final/rough/drafts *)
+  let rec find_directory_block_pair t block_pair key =
+    follow_directory_pointers t block_pair key >>= function
+    | `Continue (path, next_blocks) -> find_directory_block_pair t next_blocks path
+    | `No_id child ->
+      let path = String.concat "/" key in
+      let path = Mirage_kv.Key.(to_string @@ v path / child) in
+      Lwt.return (`No_id path)
     | a -> Lwt.return a
 
-  (*
-  let plain_mkdir t rootpair dirname =
-    get_block t >>= function
-    | Error _ as e -> Lwt.return e
-    | Ok dir_block_0 ->
+  (* `dirname` is the name of the directory relative to `rootpair`. It should be
+   * a value that could be returned from `Mirage_kv.Key.basename` - in other words
+   * it should contain no separators. *)
+  let plain_mkdir t rootpair (dirname : string) =
+    follow_directory_pointers t rootpair [dirname] >>= function
+    | `Continue (_path, next_blocks) -> Lwt.return @@ Ok next_blocks
+    | `Basename_on next_blocks -> Lwt.return @@ Ok next_blocks
+    | _ ->
       get_block t >>= function
-      | Error _ as e -> Lwt.return e
-      | Ok dir_block_1 ->
-        block_of_block_pair t rootpair >>= function
-        | Error _ as e -> Lwt.return e
-        | Ok root_block ->
-          let dir_id = Littlefs.Block.(IdSet.max_elt @@ ids root_block) + 1 in
-          let name = Littlefs.Dir.name dirname dir_id in
-          let dirstruct = Littlefs.Dir.mkdir ~to_pair:(dir_block_0, dir_block_1) dir_id in
-          let new_block = Littlefs.Block.add_commit root_block [name; dirstruct] in
-          block_to_block_pair t new_block rootpair
-
-  let rec mkdir t rootpair key =
-    match key with
-    | [] -> Lwt.return @@ Ok rootpair
-    | dirname::more ->
-      get_block t >>= function
-      | Error _ as e -> Lwt.return e
+      | Error _ -> Lwt.return @@ Error (`Not_found dirname)
       | Ok dir_block_0 ->
         get_block t >>= function
-        | Error _ as e -> Lwt.return e
+        | Error _ -> Lwt.return @@ Error (`Not_found dirname)
         | Ok dir_block_1 ->
           block_of_block_pair t rootpair >>= function
-          | Error _ as e -> Lwt.return e
+          | Error _ -> Lwt.return @@ Error (`Not_found dirname)
           | Ok root_block ->
             let dir_id = Littlefs.Block.(IdSet.max_elt @@ ids root_block) + 1 in
             let name = Littlefs.Dir.name dirname dir_id in
             let dirstruct = Littlefs.Dir.mkdir ~to_pair:(dir_block_0, dir_block_1) dir_id in
             let new_block = Littlefs.Block.add_commit root_block [name; dirstruct] in
             block_to_block_pair t new_block rootpair >>= function
-            | Error _ as e -> Lwt.return e
-            | Ok () -> mkdir t (dir_block_0, dir_block_1) more
-*)
+            | Error _ -> Lwt.return @@ Error (`Not_found dirname)
+            | Ok () -> Lwt.return @@ Ok (dir_block_0, dir_block_1)
+
+  let rec mkdir t rootpair key =
+    match key with
+    | [] -> Lwt.return @@ Ok rootpair
+    | dirname::more ->
+      plain_mkdir t rootpair dirname >>= function
+      | Error _ as e -> Lwt.return e
+      | Ok newpair ->
+        mkdir t newpair more
+  
   let rec find_directory t block key =
     match key with
     | [] -> Lwt.return (`Basename_on block)
@@ -366,39 +369,43 @@ module Make(Sectors: Mirage_block.S) = struct
           end
         | _ -> Lwt.return @@ Error (`Not_found key)
 
-  let set_in_directory blockpair t key data =
+  let set_in_directory block_pair t (filename : string) data =
     (* for now, all keys are just their basenames *)
     (* we could handle adding to extant directories without a block allocator
      * (for writes small enough to be inline, that is)
      * but in order to make new directories, we need to be
      * able to make new metadata pairs,
      * which means we need a block allocator *)
-    let filename = Mirage_kv.Key.basename key in
     (* get the set of already-committed IDs in these blocks *)
-    block_of_block_pair t blockpair >>= function
-    | Error _ -> Lwt.return @@ Error (`Not_found key)
+    block_of_block_pair t block_pair >>= function
+    | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v filename))
     | Ok extant_block ->
       (* TODO: we may need to do more work if the root directory
        * goes on past the first metadata pair *)
       let used_ids = Littlefs.Block.ids extant_block in
-      let next = (Littlefs.Block.IdSet.max_elt used_ids) + 1 in
+      let next = match Littlefs.Block.IdSet.max_elt_opt used_ids with
+        | None -> 1
+        | Some n -> n + 1
+      in
       (* TODO: this is where we'd branch for making a ctz struct and writing to
        * separate blocks instead *)
       let file = Littlefs.File.write filename next (Cstruct.of_string data) in
       let new_block = Littlefs.Block.add_commit extant_block file in
-      block_to_block_pair t new_block blockpair >>= function
-      | Error _ -> Lwt.return @@ Error (`Not_found key)
+      block_to_block_pair t new_block block_pair >>= function
+      | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v filename))
       | Ok () -> Lwt.return (Ok ())
 
   let set t key data : (unit, write_error) result Lwt.t =
+    let dir = Mirage_kv.Key.parent key in
     (* if `key` is just a basename, write to the root directory *)
-    if Mirage_kv.Key.(equal empty @@ parent key) then
-      set_in_directory root_pair t key data
-    else begin
-      find_directory_blockpair t root_pair (Mirage_kv.Key.segments key) >>= function
-      | `Basename_on blockpair -> set_in_directory blockpair t key data
-      | `No_id s -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v s))
-      | _ -> Lwt.return @@ Error (`Not_found key)
-    end
+    find_directory_block_pair t root_pair (Mirage_kv.Key.segments dir) >>= function
+    | `Basename_on block_pair -> set_in_directory block_pair t (Mirage_kv.Key.basename key) data
+    | `No_id path -> begin
+        mkdir t root_pair (Mirage_kv.Key.segments dir) >>= function
+        | Error _ -> Lwt.return @@ (Error (`Not_found (Mirage_kv.Key.v path)))
+        | Ok block_pair ->
+          set_in_directory block_pair t (Mirage_kv.Key.basename key) data
+      end
+    | _ -> Lwt.return @@ Error (`Not_found key)
 
 end
