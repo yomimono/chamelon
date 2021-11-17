@@ -20,6 +20,7 @@ module Make(Sectors: Mirage_block.S) = struct
     block : This_Block.t;
     block_size : int;
     program_block_size : int;
+    lookahead : int64 list;
   }
 
   type write_error = [
@@ -94,26 +95,52 @@ module Make(Sectors: Mirage_block.S) = struct
       end
     | Littlefs.Entry.Metadata (a, b) ->
       block_of_block_pair t (a, b) >>= function
-      | Error _ ->
-        Lwt.return @@ Ok [a; b]
+      | Error _ -> Lwt.return @@ Ok []
       | Ok block ->
         let links = linked_blocks block in
         Lwt_list.fold_left_s (fun l link ->
             follow_links t link >>= function
-            | Error _ ->
-              Lwt.return @@ l
-            | Ok new_links -> Lwt.return @@ (a :: b :: (new_links @ l))
-          ) ([]) links >>= fun list ->
-        Lwt.return (Ok list)
+            | Error _ -> Lwt.return @@ l
+            | Ok new_links ->
+              Lwt.return @@ (new_links @ l)
+          ) ([]) links
+        >>= fun list -> Lwt.return @@ Ok (a :: b :: list)
+
+  let unused t l1 =
+    let module IntSet = Set.Make(Int64) in
+    let possible_blocks = This_Block.block_count t.block in
+    let all_indices = IntSet.of_list (List.init possible_blocks (fun a -> Int64.of_int a)) in
+    let set1 = IntSet.of_list l1 in
+    let candidates = IntSet.diff all_indices set1 in
+    (* TODO: c'mon *)
+    [IntSet.min_elt candidates]
+
+  let get_block t =
+    match t.lookahead with
+    | block::l -> Lwt.return @@ Ok (block, {t with lookahead = l})
+    | [] ->
+      (* TODO try to repopulate the lookahead buffer *)
+      follow_links t (Littlefs.Entry.Metadata (0L, 1L)) >|= function
+      | Error _ -> Error `Too_small (* TODO: not quite *)
+      | Ok used_blocks ->
+        match unused t used_blocks with
+        | [] -> Error `Too_small
+        | block::l -> Ok (block, {t with lookahead = l})
 
   let connect device ~program_block_size ~block_size : (t, error) result Lwt.t =
     This_Block.connect ~block_size device >>= fun block ->
-    let t = {block; block_size; program_block_size} in
+    (* TODO: setting an empty lookahead to generate a good-enough `t`
+     * to populate the lookahead buffer
+     * feels very kludgey and error-prone. We should either
+     * make the functions that don't need allocable blocks marked
+     * in the type system somehow,
+     * or have them only take the arguments they need instead of a full `t` *)
+    let t = {block; block_size; program_block_size; lookahead = []} in
     follow_links t (Littlefs.Entry.Metadata (0L, 1L)) >>= function
     | Error _e -> Lwt.fail_with "couldn't get list of used blocks"
     | Ok used_blocks ->
-      Format.eprintf "blocks in use on this filesystem: %a\n%!" Fmt.(list int64) used_blocks;
-      Lwt.return @@ Ok {block; block_size; program_block_size}
+      let lookahead = unused t used_blocks in
+      Lwt.return @@ Ok {lookahead; block; block_size; program_block_size}
 
   let format t =
     let program_block_size = t.program_block_size in
