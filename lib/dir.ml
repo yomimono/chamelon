@@ -12,6 +12,19 @@ let soft_tail = Tag.({
     length = 4 * 2;
   })
 
+let name n id = Tag.({
+    valid = true;
+    type3 = (Tag.LFS_TYPE_NAME, 0x02);
+    id;
+    length = String.length n;
+  }, Cstruct.of_string n)
+
+let mkdir ~to_pair id =
+  let data = Cstruct.create 8 in
+  Cstruct.LE.set_uint32 data 0 (Int64.to_int32 @@ fst to_pair);
+  Cstruct.LE.set_uint32 data 4 (Int64.to_int32 @@ snd to_pair);
+  (dirstruct id, data)
+
 let blocks (block1, block2) =
   let cs = Cstruct.create @@ 32 * 2 in
   Cstruct.LE.set_uint32 cs 0 block1;

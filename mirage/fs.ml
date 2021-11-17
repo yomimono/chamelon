@@ -6,11 +6,12 @@ open Lwt.Infix
 type error = [
   | `Block of Mirage_block.error
   | `KV of Mirage_kv.error
-  | `Corrupt
+  | `Littlefs of [ `Corrupt ]
 ]
 
 type littlefs_write_error = [
     `Too_long (* path exceeds the allowable file name size *)
+  | `Out_of_space (* no more blocks are available *)
   | `Corrupt
 ]
 
@@ -35,7 +36,7 @@ module Make(Sectors: Mirage_block.S) = struct
     | Error b -> Lwt.return @@ Error (`Block b)
     | Ok () ->
       match Littlefs.Block.of_cstruct ~program_block_size cs with
-      | Error _ -> Lwt.return @@ Error (`Littlefs_read)
+      | Error _ -> Lwt.return @@ Error (`Corrupt)
       | Ok extant_block -> Lwt.return @@ Ok extant_block
 
   (* from the littlefs spec, we should be checking whether
@@ -121,10 +122,10 @@ module Make(Sectors: Mirage_block.S) = struct
     | [] ->
       (* TODO try to repopulate the lookahead buffer *)
       follow_links t (Littlefs.Entry.Metadata (0L, 1L)) >|= function
-      | Error _ -> Error `Too_small (* TODO: not quite *)
+      | Error _ -> Error (`Littlefs `Corrupt) (* TODO: not quite *)
       | Ok used_blocks ->
         match unused t used_blocks with
-        | [] -> Error `Too_small
+        | [] -> Error (`Littlefs_write `Out_of_space)
         | block::l -> Ok (block, {t with lookahead = l})
 
   let connect device ~program_block_size ~block_size : (t, error) result Lwt.t =
@@ -307,11 +308,9 @@ module Make(Sectors: Mirage_block.S) = struct
      * able to make new metadata pairs,
      * which means we need a block allocator *)
     let filename = Mirage_kv.Key.basename key in
-    (* for now, all writes and reads occur in the root blocks *)
-    let blockpair = (0L, 1L) in
     (* get the set of already-committed IDs in these blocks *)
     block_of_block_pair t blockpair >>= function
-    | Error e -> Lwt.return (Error (`Littlefs_read e))
+    | Error e -> Lwt.return (Error (`Corrupt e))
     | Ok extant_block ->
       let used_ids = Littlefs.Block.ids extant_block in
       let next = (Littlefs.Block.IdSet.max_elt used_ids) + 1 in
