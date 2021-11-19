@@ -1,6 +1,6 @@
 (executables
   (public_names format lfs_write lfs_read lfs_ls)
-  (libraries cmdliner littlefs.fs mirage-block-unix mirage-kv lwt)
+  (libraries bos cmdliner fpath littlefs.fs mirage-block-unix mirage-kv lwt)
 )
 
 (rule
@@ -17,5 +17,10 @@
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_read.exe} test.img 4096 "diary.txt"))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_read.exe} test.img 4096 "autoexec.bat"))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_read.exe} test.img 4096 "secrets/mom_dont_look"))
+            (run dd if=/dev/urandom of=bigrandom bs=2K count=1)
+            (setenv OCAMLRUNPARAM b (no-infer (with-stdin-from bigrandom (run %{exe:lfs_write.exe} test.img 4096 "important_stuff" -))))
+            (setenv OCAMLRUNPARAM b (with-stdout-to important_stuff (run %{exe:lfs_read.exe} test.img 4096 "important_stuff")))
+            (no-infer (diff bigrandom important_stuff))
+
   ))
 )
