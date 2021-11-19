@@ -18,8 +18,7 @@ let ctz_of_cstruct cs =
   if Cstruct.length cs < 8 then None
   else Some Cstruct.LE.(get_uint32 cs 0, get_uint32 cs 4)
 
-(* TODO: inline structure should only be used for stuff that's smaller than 1/4 the block size according to DESIGN.md *)
-let write n id contents =
+let write_inline n id contents =
   [name n id; (create_inline id contents), contents; ]
 
 let n_pointers = function
