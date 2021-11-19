@@ -389,11 +389,14 @@ module Make(Sectors: Mirage_block.S) = struct
       in
       (* TODO: this is where we'd branch for making a ctz struct and writing to
        * separate blocks instead *)
-      let file = Littlefs.File.write filename next (Cstruct.of_string data) in
-      let new_block = Littlefs.Block.add_commit extant_block file in
-      block_to_block_pair t new_block block_pair >>= function
-      | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v filename))
-      | Ok () -> Lwt.return (Ok ())
+      if (String.length data) > (t.block_size / 4) then begin
+        let file = Littlefs.File.write_inline filename next (Cstruct.of_string data) in
+        let new_block = Littlefs.Block.add_commit extant_block file in
+        block_to_block_pair t new_block block_pair >>= function
+        | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v filename))
+        | Ok () -> Lwt.return @@ Ok ()
+      end else
+        Lwt.return @@ Error (`No_space)
 
   let set t key data : (unit, write_error) result Lwt.t =
     let dir = Mirage_kv.Key.parent key in
