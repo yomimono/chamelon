@@ -9,15 +9,10 @@ test_img:
 	dd if=/dev/zero of={{image}} bs=64K count=1
 	_build/default/src/format.exe {{image}}
 
-debug_format:
-	dune build @default
-	dd if=/dev/zero of={{image}} bs=64K count=1
-	gdb --args _build/default/src/format.exe {{image}}
-
 read: test_img mount
 	sudo mkdir /mnt/lib
 	sudo cp lib/block.ml /mnt/lib
-	_build/default/src/lfs_read.exe {{image}} 4096 lib/block.ml
+	_build/default/src/lfs_read.exe {{image}} {{block_size}} lib/block.ml
 
 readmdir BLOCK:
 	readmdir.py -a --log {{image}} {{block_size}} {{BLOCK}}
@@ -46,5 +41,5 @@ fuse-format:
 	sudo losetup /dev/loop0 {{image}}
 	sudo {{HOME}} fuse-littlefs/lfs --block_size={{block_size}} --format /dev/loop0
 
-hexdump block:
+hexdump:
 	xxd {{image}} | less
