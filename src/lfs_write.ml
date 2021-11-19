@@ -15,25 +15,23 @@ let path =
   Cmdliner.Arg.(value & pos 2 string "example" & info ~doc ~docv:"PATH" [])
 
 let data =
-  let doc = "data to write to the file. Currently this must be small enough to fit in an inline data structure. Multiple arguments can be given but will be straightforwardly concatenated with no separator." in
-  Cmdliner.Arg.(value & pos_right 2 string [] & info ~doc ~docv:"DATA" [])
+  let doc = "data to write to the file. Provide - for stdin." in
+  Cmdliner.Arg.(value & pos 3 string "-" & info ~doc ~docv:"DATA" [])
 
-let write image block_size path (data : string list) =
+let write image block_size path data =
   let open Lwt.Infix in
   Lwt_main.run @@ (
   Mirage_block.connect image >>= fun block ->
   Littlefs.connect block ~program_block_size:16 ~block_size >>= function
   | Error _ -> Stdlib.Format.eprintf "Error doing the initial filesystem read\n%!"; exit 1
   | Ok t -> let data =
-    match data with
-    | s::[] when String.equal s "-" -> begin
+    if String.equal data "-" then begin
         match Bos.OS.File.(read dash) with
         | Error _ -> Stdlib.Format.eprintf "couldn't understand what I should write\n%!"; exit 1
-        | Ok data -> data::[]
-      end
-    | l -> l
+        | Ok data -> data
+      end else data
     in
-    Littlefs.set t (Mirage_kv.Key.v path) @@ String.concat "" data >>= function
+    Littlefs.set t (Mirage_kv.Key.v path) data >>= function
     | Ok () -> Lwt.return_unit
     | Error _ -> Stdlib.Format.eprintf "Filesystem was opened, but write failed\n%!";
       exit 1

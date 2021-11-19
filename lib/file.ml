@@ -14,6 +14,17 @@ let create_inline id contents = Tag.({
     length = (Cstruct.length contents);
   })
 
+let create_ctz id pointer file_size =
+  let cs = Cstruct.create (4 * 2) in
+  Cstruct.LE.set_uint32 cs 0 pointer;
+  Cstruct.LE.set_uint32 cs 4 file_size;
+  Tag.({
+    valid = true;
+    type3 = (Tag.LFS_TYPE_STRUCT, 0x02);
+    id;
+    length = (Cstruct.length cs);
+  }, cs)
+
 let ctz_of_cstruct cs =
   if Cstruct.length cs < 8 then None
   else Some Cstruct.LE.(get_uint32 cs 0, get_uint32 cs 4)

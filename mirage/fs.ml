@@ -369,14 +369,59 @@ module Make(Sectors: Mirage_block.S) = struct
           end
         | _ -> Lwt.return @@ Error (`Not_found key)
 
-  let set_in_directory block_pair t (filename : string) data =
-    (* for now, all keys are just their basenames *)
-    (* we could handle adding to extant directories without a block allocator
-     * (for writes small enough to be inline, that is)
-     * but in order to make new directories, we need to be
-     * able to make new metadata pairs,
-     * which means we need a block allocator *)
-    (* get the set of already-committed IDs in these blocks *)
+  let rec write_block t l index so_far data =
+    if so_far >= String.length data then
+      (* we purposely don't reverse the list because we're going to want
+       * the *last* block for inclusion in the ctz structure *)
+      Lwt.return @@ Ok l
+    else begin
+      get_block t >>= function
+      | Error _ -> Lwt.return @@ Error `No_space
+      | Ok block_number ->
+        let pointer = Int64.to_int32 block_number in
+        let block_cs = Cstruct.create t.block_size in
+        let skip_list_size = Littlefs.File.n_pointers index in
+        let skip_list_length = skip_list_size * 4 in
+        let data_length = min (t.block_size - skip_list_length) (String.length data) in
+        Cstruct.blit_from_string data so_far block_cs skip_list_length data_length;
+        let skip_list = List.init skip_list_size (fun n ->
+            if n = 0 then List.assoc (index - 1) l
+            else List.assoc (index / (n * 2)) l
+          )
+        in
+        List.iteri (fun n p ->
+            Cstruct.LE.set_uint32 block_cs (4 * n) p
+          ) skip_list;
+        This_Block.write t.block (Int64.of_int32 pointer) [block_cs] >>= function
+        | Error _ -> Lwt.return @@ Error `No_space
+        | Ok () ->
+          write_block t ((index, pointer)::l) (index + 1) (so_far + data_length) data
+    end
+
+  let write_in_ctz root_block_pair t filename data =
+    block_of_block_pair t root_block_pair >>= function
+    | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v filename))
+    | Ok root ->
+      let file_size = String.length data in
+      write_block t [] 0 0 data >>= function
+      | Error _ as e -> Lwt.return e
+      | Ok [] -> Lwt.return @@ Error `No_space
+      | Ok ((_last_index, last_pointer)::_) ->
+        let used_ids = Littlefs.Block.ids root in
+        let next = match Littlefs.Block.IdSet.max_elt_opt used_ids with
+          | None -> 1
+          | Some n -> n + 1
+        in
+        let name = Littlefs.File.name filename next in
+        let ctz = Littlefs.File.create_ctz next
+            last_pointer (Int32.of_int file_size)
+        in
+        let new_block = Littlefs.Block.add_commit root [name; ctz] in
+        block_to_block_pair t new_block root_block_pair >>= function
+        | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v filename))
+        | Ok () -> Lwt.return @@ Ok ()
+
+  let write_inline block_pair t filename data =
     block_of_block_pair t block_pair >>= function
     | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v filename))
     | Ok extant_block ->
@@ -387,27 +432,27 @@ module Make(Sectors: Mirage_block.S) = struct
         | None -> 1
         | Some n -> n + 1
       in
-      (* TODO: this is where we'd branch for making a ctz struct and writing to
-       * separate blocks instead *)
-      if (String.length data) > (t.block_size / 4) then begin
-        let file = Littlefs.File.write_inline filename next (Cstruct.of_string data) in
-        let new_block = Littlefs.Block.add_commit extant_block file in
-        block_to_block_pair t new_block block_pair >>= function
-        | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v filename))
-        | Ok () -> Lwt.return @@ Ok ()
-      end else
-        Lwt.return @@ Error (`No_space)
+      let file = Littlefs.File.write_inline filename next (Cstruct.of_string data) in
+      let new_block = Littlefs.Block.add_commit extant_block file in
+      block_to_block_pair t new_block block_pair >>= function
+      | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v filename))
+      | Ok () -> Lwt.return @@ Ok ()
+
+  let set_in_directory block_pair t (filename : string) data =
+    if (String.length data) > (t.block_size / 4) then
+      write_in_ctz block_pair t filename data
+    else
+      write_inline block_pair t filename data
 
   let set t key data : (unit, write_error) result Lwt.t =
     let dir = Mirage_kv.Key.parent key in
-    (* if `key` is just a basename, write to the root directory *)
     find_directory_block_pair t root_pair (Mirage_kv.Key.segments dir) >>= function
     | `Basename_on block_pair -> set_in_directory block_pair t (Mirage_kv.Key.basename key) data
     | `No_id path -> begin
-        mkdir t root_pair (Mirage_kv.Key.segments dir) >>= function
-        | Error _ -> Lwt.return @@ (Error (`Not_found (Mirage_kv.Key.v path)))
-        | Ok block_pair ->
-          set_in_directory block_pair t (Mirage_kv.Key.basename key) data
+      mkdir t root_pair (Mirage_kv.Key.segments dir) >>= function
+      | Error _ -> Lwt.return @@ (Error (`Not_found (Mirage_kv.Key.v path)))
+      | Ok block_pair ->
+        set_in_directory block_pair t (Mirage_kv.Key.basename key) data
       end
     | _ -> Lwt.return @@ Error (`Not_found key)
 
