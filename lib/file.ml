@@ -14,7 +14,7 @@ let create_inline id contents = Tag.({
     length = (Cstruct.length contents);
   })
 
-let create_ctz id pointer file_size =
+let create_ctz id ~pointer ~file_size =
   let cs = Cstruct.create (4 * 2) in
   Cstruct.LE.set_uint32 cs 0 pointer;
   Cstruct.LE.set_uint32 cs 4 file_size;

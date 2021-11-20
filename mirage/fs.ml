@@ -8,7 +8,7 @@ module Make(Sectors: Mirage_block.S) = struct
     block : This_Block.t;
     block_size : int;
     program_block_size : int;
-    lookahead : (int64 list) ref;
+    lookahead : ([`Before | `After ] * (int64 list)) ref;
   }
 
   type key = Mirage_kv.Key.t
@@ -103,29 +103,37 @@ module Make(Sectors: Mirage_block.S) = struct
           ) ([]) links
         >>= fun list -> Lwt.return @@ Ok (a :: b :: list)
 
-  let unused t l1 =
+  let unused ~bias t l1 =
     let module IntSet = Set.Make(Int64) in
     let possible_blocks = This_Block.block_count t.block in
     let all_indices = IntSet.of_list (List.init possible_blocks (fun a -> Int64.of_int a)) in
     let set1 = IntSet.of_list l1 in
     let candidates = IntSet.diff all_indices set1 in
-    (* TODO: c'mon *)
-    [IntSet.min_elt candidates]
+    let pivot = Int64.(div (of_int possible_blocks) 2L) in
+    let set = match bias with
+      | `Before -> let s, _, _ = IntSet.split pivot candidates in s
+      | `After -> let _, _, s = IntSet.split pivot candidates in s
+    in
+    IntSet.elements set
+
+  let opp = function
+    | `Before -> `After
+    | `After -> `Before
   
   let get_block t =
     match !(t.lookahead) with
-    | block::l ->
-      t.lookahead := l;
+    | bias, block::l ->
+      t.lookahead := bias, l;
       Lwt.return @@ Ok block
-    | [] ->
+    | bias, [] ->
       (* TODO try to repopulate the lookahead buffer *)
       follow_links t (Littlefs.Entry.Metadata root_pair) >|= function
       | Error _ -> Error (`Littlefs `Corrupt) (* TODO: not quite *)
       | Ok used_blocks ->
-        match unused t used_blocks with
+        match unused ~bias t used_blocks with
         | [] -> Error (`Littlefs_write `Out_of_space)
         | block::l ->
-          t.lookahead := l;
+          t.lookahead := (opp bias, l);
           Ok block
 
   let connect device ~program_block_size ~block_size : (t, error) result Lwt.t =
@@ -136,11 +144,11 @@ module Make(Sectors: Mirage_block.S) = struct
      * make the functions that don't need allocable blocks marked
      * in the type system somehow,
      * or have them only take the arguments they need instead of a full `t` *)
-    let t = {block; block_size; program_block_size; lookahead = ref []} in
+    let t = {block; block_size; program_block_size; lookahead = ref (`Before, [])} in
     follow_links t (Littlefs.Entry.Metadata root_pair) >>= function
     | Error _e -> Lwt.fail_with "couldn't get list of used blocks"
     | Ok used_blocks ->
-      let lookahead = ref (unused t used_blocks) in
+      let lookahead = ref (`After, unused ~bias:`Before t used_blocks) in
       Lwt.return @@ Ok {lookahead; block; block_size; program_block_size}
 
   let format t =
@@ -369,33 +377,34 @@ module Make(Sectors: Mirage_block.S) = struct
           end
         | _ -> Lwt.return @@ Error (`Not_found key)
 
-  let rec write_block t l index so_far data =
-    if so_far >= String.length data then
+  let rec write_ctz_block t l index so_far data =
+    if Int.compare so_far (String.length data) >= 0 then begin
       (* we purposely don't reverse the list because we're going to want
        * the *last* block for inclusion in the ctz structure *)
       Lwt.return @@ Ok l
-    else begin
+    end else begin
       get_block t >>= function
       | Error _ -> Lwt.return @@ Error `No_space
       | Ok block_number ->
+        Printf.eprintf "using block number %Ld (0x%Lx) for block index %d (0x%x)\n%!" block_number block_number index index;
         let pointer = Int64.to_int32 block_number in
         let block_cs = Cstruct.create t.block_size in
         let skip_list_size = Littlefs.File.n_pointers index in
         let skip_list_length = skip_list_size * 4 in
-        let data_length = min (t.block_size - skip_list_length) (String.length data) in
+        let data_length = min (t.block_size - skip_list_length) ((String.length data) - so_far) in
+        (* TODO: this does not implement writing the full skip list;
+         * rather it writes only the first pointer (the one to the
+         * previous block) and leaves the rest blank *)
+        (match l with
+         | [] -> ()
+         | (_, last_pointer)::_ ->
+           Cstruct.LE.set_uint32 block_cs 0 last_pointer
+        );
         Cstruct.blit_from_string data so_far block_cs skip_list_length data_length;
-        let skip_list = List.init skip_list_size (fun n ->
-            if n = 0 then List.assoc (index - 1) l
-            else List.assoc (index / (n * 2)) l
-          )
-        in
-        List.iteri (fun n p ->
-            Cstruct.LE.set_uint32 block_cs (4 * n) p
-          ) skip_list;
         This_Block.write t.block (Int64.of_int32 pointer) [block_cs] >>= function
         | Error _ -> Lwt.return @@ Error `No_space
         | Ok () ->
-          write_block t ((index, pointer)::l) (index + 1) (so_far + data_length) data
+          write_ctz_block t ((index, pointer)::l) (index + 1) (so_far + data_length) data
     end
 
   let write_in_ctz root_block_pair t filename data =
@@ -403,10 +412,11 @@ module Make(Sectors: Mirage_block.S) = struct
     | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v filename))
     | Ok root ->
       let file_size = String.length data in
-      write_block t [] 0 0 data >>= function
+      write_ctz_block t [] 0 0 data >>= function
       | Error _ as e -> Lwt.return e
       | Ok [] -> Lwt.return @@ Error `No_space
-      | Ok ((_last_index, last_pointer)::_) ->
+      | Ok ((last_index, last_pointer)::_) ->
+        Printf.eprintf "wrote raw data blocks; last index is %d (0x%x) at %ld (0x%lx)\n%!" last_index last_index last_pointer last_pointer;
         let used_ids = Littlefs.Block.ids root in
         let next = match Littlefs.Block.IdSet.max_elt_opt used_ids with
           | None -> 1
@@ -414,7 +424,7 @@ module Make(Sectors: Mirage_block.S) = struct
         in
         let name = Littlefs.File.name filename next in
         let ctz = Littlefs.File.create_ctz next
-            last_pointer (Int32.of_int file_size)
+            ~pointer:last_pointer ~file_size:(Int32.of_int file_size)
         in
         let new_block = Littlefs.Block.add_commit root [name; ctz] in
         block_to_block_pair t new_block root_block_pair >>= function
