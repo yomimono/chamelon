@@ -39,7 +39,7 @@ fuse-format:
 	sudo umount -q /mnt || true
 	sudo losetup -d /dev/loop0 || true
 	sudo losetup /dev/loop0 {{image}}
-	sudo {{HOME}} fuse-littlefs/lfs --block_size={{block_size}} --format /dev/loop0
+	sudo {{HOME}}/fuse-littlefs/lfs --block_size={{block_size}} --format /dev/loop0
 
 hexdump:
 	xxd {{image}} | less
