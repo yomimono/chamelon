@@ -94,9 +94,9 @@ let into_cstruct_raw cs t =
   and length = t.length land 0x3ff
   in
   (* most significant bit (31): valid or no? *)
-  (* CAUTION: this write contradicts the spec,
-   * but matches the implementation of lfs_isvalid in the reference implementation.
-   * Seems like a strange choice to me, if I've understood it right. *)
+  (* this is inverted from what we'd expect the value to be --
+   * the spec isn't as explicit about this as I would be if I were writing something
+   * where 1 was no and 0 was yes :/ *)
   let byte0 = if t.valid then 0x00 else 0x80 in
   (* bits 30, 29, and 28: abstract type *)
   let shifted_type = (0x7 land (abstract_type_to_int abstract_type)) lsl 4 in

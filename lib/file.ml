@@ -1,15 +1,19 @@
 let sizeof_pointer = 4
 
+let inline_struct_chunk = 0x01
+let file_chunk = 0x01
+let ctz_chunk = 0x02
+
 let name n id = Tag.({
     valid = true;
-    type3 = (Tag.LFS_TYPE_NAME, 0x01);
+    type3 = (Tag.LFS_TYPE_NAME, file_chunk);
     id;
     length = String.length n;
   }, Cstruct.of_string n)
 
 let create_inline id contents = Tag.({
     valid = true;
-    type3 = (Tag.LFS_TYPE_STRUCT, 0x01);
+    type3 = (Tag.LFS_TYPE_STRUCT, inline_struct_chunk);
     id;
     length = (Cstruct.length contents);
   })
@@ -20,7 +24,7 @@ let create_ctz id ~pointer ~file_size =
   Cstruct.LE.set_uint32 cs 4 file_size;
   Tag.({
     valid = true;
-    type3 = (Tag.LFS_TYPE_STRUCT, 0x02);
+    type3 = (Tag.LFS_TYPE_STRUCT, ctz_chunk);
     id;
     length = (Cstruct.length cs);
   }, cs)

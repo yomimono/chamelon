@@ -36,6 +36,14 @@ let dirstruct_of_cstruct cs =
   else Some (Cstruct.LE.(get_uint32 cs 0 |> Int64.of_int32,
                          get_uint32 cs 4 |> Int64.of_int32))
 
+
+let soft_tail_links (tag, data) =
+  match tag.Tag.type3 with
+  | Tag.LFS_TYPE_TAIL,  0x00 ->
+    (* both soft_tail and dirstruct have a two-pointer metadata structure *)
+    dirstruct_of_cstruct data
+  | _ -> None
+
 let of_entry (tag, data) =
   let open Tag in
   match tag.type3 with

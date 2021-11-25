@@ -65,11 +65,6 @@ module Make(Sectors: Mirage_block.S) = struct
     | Error _ as e -> Lwt.return e
     | Ok () -> block_to_block_number t data b2
 
-  let linked_blocks root =
-    let entries = Littlefs.Commit.entries in
-    let links_of_commit c = List.filter_map Littlefs.Entry.links @@ entries c in
-    List.(flatten @@ map links_of_commit (Littlefs.Block.commits root))
-
   let rec get_ctz_pointers t l index pointer =
     match l with
     | Error _ as e -> Lwt.return e
@@ -83,6 +78,11 @@ module Make(Sectors: Mirage_block.S) = struct
           | [] -> Lwt.return @@ Ok (pointer::l)
           | next::_ -> get_ctz_pointers t (Ok (pointer::l)) (index - 1) (Int64.of_int32 next)
         end
+
+  let linked_blocks root =
+    let entries = Littlefs.Commit.entries in
+    let links_of_commit c = List.filter_map Littlefs.Entry.links @@ entries c in
+    List.(flatten @@ map links_of_commit (Littlefs.Block.commits root))
 
   let rec follow_links t = function
     | Littlefs.Entry.Data (pointer, length) -> begin
@@ -126,7 +126,6 @@ module Make(Sectors: Mirage_block.S) = struct
       t.lookahead := bias, l;
       Lwt.return @@ Ok block
     | bias, [] ->
-      (* TODO try to repopulate the lookahead buffer *)
       follow_links t (Littlefs.Entry.Metadata root_pair) >|= function
       | Error _ -> Error (`Littlefs `Corrupt) (* TODO: not quite *)
       | Ok used_blocks ->
@@ -167,7 +166,22 @@ module Make(Sectors: Mirage_block.S) = struct
     match b0, b1 with
     | Ok (), Ok () -> Lwt.return @@ Ok ()
     | _, _ -> Lwt.return @@ Error `No_space
-  
+
+  let rec entries_following_softtail t (block_pair : int64 * int64) =
+    block_of_block_pair t block_pair >>= function
+    | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v "softtail"))
+    | Ok block ->
+      let this_blocks_entries =
+        let commits = Littlefs.Block.commits block in
+        List.(flatten @@ map Littlefs.Commit.entries commits)
+      in
+      match List.filter_map Littlefs.Dir.soft_tail_links this_blocks_entries with
+      | [] -> Lwt.return @@ Ok this_blocks_entries
+      | nextpair::_ ->
+        entries_following_softtail t nextpair >>= function
+        | Ok entries -> Lwt.return @@ Ok (this_blocks_entries @ entries)
+        | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v "softtail"))
+
   let id_of_key block key =
     let data_matches c =
       0 = Mirage_kv.Key.(compare key @@ v @@ Cstruct.to_string c)
