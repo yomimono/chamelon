@@ -17,6 +17,9 @@ val add_commit : t -> Entry.t list -> t
 (* which IDs are already used? *)
 val ids : t -> IdSet.t
 
-val into_cstruct : program_block_size:int -> Cstruct.t -> t -> unit
-val to_cstruct : program_block_size:int -> block_size:int -> t -> Cstruct.t
+type write_result = [ `Ok | `Split | `Split_emergency ]
+
+val into_cstruct : program_block_size:int -> Cstruct.t -> t -> write_result
+val to_cstruct : program_block_size:int -> block_size:int -> t ->
+  Cstruct.t * write_result
 val of_cstruct : program_block_size:int -> Cstruct.t -> (t, [`Msg of string]) result

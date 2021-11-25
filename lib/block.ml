@@ -7,6 +7,8 @@ type t = {
   commits : Commit.t list; (* the structure specified is more complex than this, but `list` will do for now *)
 }
 
+type write_result = [ `Ok | `Split | `Split_emergency ]
+
 let commits t = t.commits
 let revision_count t = t.revision_count
 
@@ -51,28 +53,33 @@ let add_commit {revision_count; commits} entries =
     of_commits ~revision_count (l @ [commit])
 
 (* TODO: ugh, what if we need >1 block for the entries :( *)
+(* return variants here: either `ok` or `more_block`? *)
 let into_cstruct ~program_block_size cs block =
   match block.commits with
   | [] -> (* this is a somewhat degenerate case, but
              not pathological enough to throw an error IMO.
              Since there's nothing to write, write nothing *)
-    ()
+    `Ok
   | _ ->
     Cstruct.LE.set_uint32 cs 0 (Int32.of_int block.revision_count);
-    let _after_last_crc, _last_tag, _ = List.fold_left
-        (fun (pointer, prev_commit_last_tag, starting_offset) commit ->
-           (* it may be a bit surprising that we don't use `last_tag` from `commit` as the previous tag here.
-            * as serialized, the last tag in the commit is the tag for the CRC, so we need to XOR with that
-            * rather than the last non-CRC tag, which is what's represented in `commit.last_tag`. *)
-           let this_commit_region = Cstruct.shift cs pointer in
-           let (bytes_written, raw_crc_tag) = Commit.into_cstruct ~next_commit_valid:true
-               ~program_block_size ~starting_xor_tag:prev_commit_last_tag ~starting_offset
-               this_commit_region commit in
-            (* only the first commit has nonzero offset; all subsequent ones have an offset of 0,
-            * since each commit is padded to a multiple of the program block size. *)
-           (pointer + bytes_written, raw_crc_tag, 0)
-        ) (4, (Cstruct.of_string "\xff\xff\xff\xff"), 4) block.commits in
-    ()
+    try
+      let after_last_crc, _last_tag, _ =
+        List.fold_left
+          (fun (pointer, prev_commit_last_tag, starting_offset) commit ->
+             (* it may be a bit surprising that we don't use `last_tag` from `commit` as the previous tag here.
+              * as serialized, the last tag in the commit is the tag for the CRC, so we need to XOR with that
+              * rather than the last non-CRC tag, which is what's represented in `commit.last_tag`. *)
+             let this_commit_region = Cstruct.shift cs pointer in
+             let (bytes_written, raw_crc_tag) = Commit.into_cstruct ~next_commit_valid:true
+                 ~program_block_size ~starting_xor_tag:prev_commit_last_tag ~starting_offset
+                 this_commit_region commit in
+             (* only the first commit has nonzero offset; all subsequent ones have an offset of 0,
+              * since each commit is padded to a multiple of the program block size. *)
+             (pointer + bytes_written, raw_crc_tag, 0)
+          ) (4, (Cstruct.of_string "\xff\xff\xff\xff"), 4) block.commits
+      in
+      if after_last_crc > (Cstruct.length cs / 4) then `Split else `Ok
+    with Invalid_argument _ -> `Split_emergency
 
 (* TODO: this is pretty inefficient; do a fold accumulating all these
  * into a set instead -- actually check the Set documentation, IIRC
@@ -85,8 +92,8 @@ let ids t =
 
 let to_cstruct ~program_block_size ~block_size block =
   let cs = Cstruct.create block_size in
-  let () = into_cstruct ~program_block_size cs block in
-  cs
+  let res = into_cstruct ~program_block_size cs block in
+  cs, res
 
 let of_cstruct ~program_block_size cs =
   if Cstruct.length cs <= Tag.size

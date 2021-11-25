@@ -48,7 +48,8 @@ module Make(Sectors: Mirage_block.S) = struct
    * That's my excuse for punting on it for now, anyway. *)
   let block_to_block_number {block_size; block; program_block_size; _} data block_location =
     let cs = Cstruct.create block_size in
-    Littlefs.Block.into_cstruct ~program_block_size cs data;
+    match Littlefs.Block.into_cstruct ~program_block_size cs data with
+    | `Ok | `Split | `Split_emergency ->
     This_Block.write block block_location [cs]
 
   let block_of_block_pair t (l1, l2) =
@@ -154,7 +155,7 @@ module Make(Sectors: Mirage_block.S) = struct
     let program_block_size = t.program_block_size in
     let block_size = t.block_size in
     let write_whole_block n b = This_Block.write t.block n
-        [Littlefs.Block.to_cstruct ~program_block_size ~block_size b]
+        [fst @@ Littlefs.Block.to_cstruct ~program_block_size ~block_size b]
     in
     let name = Littlefs.Superblock.name in
     let block_count = This_Block.block_count t.block in

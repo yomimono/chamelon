@@ -104,7 +104,7 @@ module Block = struct
     let block = superblock in
     Alcotest.(check int) "in-memory block structure has 1 commit with 2 entries" 2
       (List.length @@ Littlefs.Commit.entries @@ List.hd @@ Littlefs.Block.commits block);
-    let cs = Littlefs.Block.to_cstruct ~program_block_size ~block_size block in
+    let cs, _res = Littlefs.Block.to_cstruct ~program_block_size ~block_size block in
     let expected_length = 
         4 (* revision count *)
       + 4 (* superblock name tag *)
@@ -139,7 +139,7 @@ module Block = struct
 
   let roundtrip () =
     let block = superblock in
-    let written_block = Block.to_cstruct ~program_block_size ~block_size block in
+    let written_block, _res = Block.to_cstruct ~program_block_size ~block_size block in
     let read_block = Block.of_cstruct ~program_block_size written_block |> Result.get_ok in
     let commits = Littlefs.Block.commits read_block in
     Alcotest.(check int) "read-back block has a commit" 1 (List.length commits);
@@ -155,8 +155,8 @@ module Block = struct
     let revision_count = Littlefs.Block.revision_count block in
     let new_rev_count = revision_count + 1 in
     let revised_block = Littlefs.Block.of_commits ~revision_count:new_rev_count commits in
-    let original_block_serialized = Littlefs.Block.to_cstruct ~program_block_size ~block_size block in
-    let incremented_block_serialized = Littlefs.Block.to_cstruct ~program_block_size ~block_size revised_block in
+    let original_block_serialized, _ = Littlefs.Block.to_cstruct ~program_block_size ~block_size block in
+    let incremented_block_serialized, _ = Littlefs.Block.to_cstruct ~program_block_size ~block_size revised_block in
     let orig_crc = Cstruct.(to_string @@ sub original_block_serialized 0x30 4) in
     let incremented_crc = Cstruct.(to_string @@ sub incremented_block_serialized 0x30 4) in
     Alcotest.(check bool) "crcs shouldn't be equal after revision count change" false (String.equal orig_crc incremented_crc)
