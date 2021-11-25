@@ -119,7 +119,7 @@ module Make(Sectors: Mirage_block.S) = struct
   let opp = function
     | `Before -> `After
     | `After -> `Before
-  
+
   let get_block t =
     match !(t.lookahead) with
     | bias, block::l ->
@@ -167,42 +167,49 @@ module Make(Sectors: Mirage_block.S) = struct
     | Ok (), Ok () -> Lwt.return @@ Ok ()
     | _, _ -> Lwt.return @@ Error `No_space
 
-  let rec entries_following_softtail t (block_pair : int64 * int64) =
+  let rec entries_following_hard_tail t (block_pair : int64 * int64) =
     block_of_block_pair t block_pair >>= function
-    | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v "softtail"))
+    | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v "hard_tail"))
     | Ok block ->
       let this_blocks_entries =
         let commits = Littlefs.Block.commits block in
         List.(flatten @@ map Littlefs.Commit.entries commits)
       in
-      match List.filter_map Littlefs.Dir.soft_tail_links this_blocks_entries with
+      match List.filter_map Littlefs.Dir.hard_tail_links this_blocks_entries with
       | [] -> Lwt.return @@ Ok this_blocks_entries
       | nextpair::_ ->
-        entries_following_softtail t nextpair >>= function
+        entries_following_hard_tail t nextpair >>= function
         | Ok entries -> Lwt.return @@ Ok (this_blocks_entries @ entries)
-        | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v "softtail"))
+        | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v "hard_tail"))
 
-  let id_of_key block key =
+  let id_of_key entries key =
     let data_matches c =
-      0 = Mirage_kv.Key.(compare key @@ v @@ Cstruct.to_string c)
+      0 = String.(compare key @@ Cstruct.to_string c)
     in
     let tag_matches t = Littlefs.Tag.(fst t.type3 = LFS_TYPE_NAME)
     in
-    List.find_map (fun c ->
-        match List.find_opt (fun (tag, data) ->
-            tag_matches tag && data_matches data
-          ) (Littlefs.Commit.entries c) with
-        | Some (tag, _) -> Some tag.Littlefs.Tag.id
-        | None -> None
-      ) (Littlefs.Block.commits block)
+    match List.find_opt (fun (tag, data) ->
+        tag_matches tag && data_matches data
+      ) entries  with
+    | Some (tag, _) -> Some tag.Littlefs.Tag.id
+    | None -> None
 
-  let entries_of_id block id =
-    let commits = Littlefs.Block.commits block in
+  let entries_of_id entries id =
     let matches (tag, _) =
       0 = compare tag.Littlefs.Tag.id id
     in
-    let aux c = List.find_all matches (Littlefs.Commit.entries c) in
-    List.(flatten @@ map aux commits)
+    List.find_all matches entries
+
+  let entries_of_name t block_pair name =
+    entries_following_hard_tail t block_pair >>= function
+    | Error _ as e -> Lwt.return e
+    | Ok entries ->
+      match id_of_key entries name with
+      | None -> Lwt.return @@ Error `No_id
+      | Some id ->
+        match entries_of_id entries id with
+        | []-> Lwt.return @@ Error `No_struct
+        | entries -> Lwt.return @@ Ok entries
 
   (** [follow_directory_pointers t block_pair l] returns:
    * an error or
@@ -214,18 +221,12 @@ module Make(Sectors: Mirage_block.S) = struct
   let follow_directory_pointers t block_pair = function
     | [] -> Lwt.return (`Basename_on block_pair)
     | key::remaining ->
-      block_of_block_pair t block_pair >>= function
-      | Error _ -> Lwt.return `Bad_pointer
-      | Ok block ->
-        match id_of_key block (Mirage_kv.Key.v key) with
-        | None -> Lwt.return (`No_id key)
-        | Some id ->
-          match entries_of_id block id with
-          | [] -> Lwt.return `No_entry
-          | l ->
-            match List.filter_map Littlefs.Dir.of_entry l with
-            | [] -> Lwt.return `No_structs
-            | next_blocks::_ -> Lwt.return (`Continue (remaining, next_blocks))
+      entries_of_name t block_pair key >>= function
+      | Error _ -> Lwt.return @@ `No_id key
+      | Ok l ->
+        match List.filter_map Littlefs.Dir.of_entry l with
+        | [] -> Lwt.return `No_structs
+        | next_blocks::_ -> Lwt.return (`Continue (remaining, next_blocks))
 
   let rec find_directory_block_pair t block_pair key =
     follow_directory_pointers t block_pair key >>= function
@@ -269,26 +270,20 @@ module Make(Sectors: Mirage_block.S) = struct
       | Error _ as e -> Lwt.return e
       | Ok newpair ->
         mkdir t newpair more
-  
+
   let rec find_directory t block key =
     match key with
     | [] -> Lwt.return (`Basename_on block)
     | key::remaining ->
-      match id_of_key block (Mirage_kv.Key.v key) with
-      | None -> Lwt.return @@ `No_id key
-      | Some id ->
-        match entries_of_id block id with
-        | [] -> Lwt.return `No_entry
-        | l ->
-          match List.filter_map Littlefs.Dir.of_entry l with
-          | [] -> Lwt.return `No_structs
-          | next_blocks::_ ->
-            block_of_block_pair t next_blocks >>= function
-            | Error _ -> Lwt.return `Bad_pointer
-            | Ok next_block ->
-             find_directory t next_block remaining
+      entries_of_name t block key >>= function
+      | Error `No_struct -> Lwt.return @@ `No_entry
+      | Error _ -> Lwt.return @@ `No_id key
+      | Ok l ->
+        match List.filter_map Littlefs.Dir.of_entry l with
+        | [] -> Lwt.return `No_structs
+        | next_blocks::_ -> find_directory t next_blocks remaining
 
-  let list_block block =
+  let list_block entries =
     (* we want to list all names in all commits in the block,
      * preserving information about which of them are files and which directories *)
     let info_of_entry (tag, data) =
@@ -299,25 +294,24 @@ module Make(Sectors: Mirage_block.S) = struct
         Some (Cstruct.to_string data, `Dictionary)
       | _ -> None
     in
-    let commits = Littlefs.Block.commits block in
-    let relevant_entries c = List.filter_map info_of_entry
-        (Littlefs.Commit.entries c)
-    in
-    List.flatten @@ List.map relevant_entries commits
+    List.filter_map info_of_entry entries
 
   let list t key : ((string * [`Dictionary | `Value]) list, error) result Lwt.t =
-    block_of_block_pair t root_pair >>= function
-    | Error _ -> Lwt.return @@ Error (`Not_found key)
-    | Ok start_block ->
-      match (Mirage_kv.Key.segments key) with
-      | [] -> Lwt.return @@ Ok (list_block start_block)
-      | segments ->
-        find_directory t start_block segments >>= function
-        | `No_id k -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v k))
-        | `No_structs | `No_entry | `Bad_pointer ->
-          Lwt.return @@ Error (`Not_found key)
-        | `Basename_on extant_block ->
-          Lwt.return @@ Ok (list_block extant_block)
+    match (Mirage_kv.Key.segments key) with
+    | [] -> begin
+      entries_following_hard_tail t root_pair >>= function
+      | Error _ -> Lwt.return @@ Error (`Not_found key)
+      | Ok entries -> Lwt.return @@ Ok (list_block entries)
+    end
+    | segments ->
+      find_directory t root_pair segments >>= function
+      | `No_id k -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v k))
+      | `No_structs | `No_entry | `Bad_pointer ->
+        Lwt.return @@ Error (`Not_found key)
+      | `Basename_on pair ->
+        entries_following_hard_tail t pair >>= function
+        | Error _ -> Lwt.return @@ Error (`Not_found key)
+        | Ok entries -> Lwt.return @@ Ok (list_block entries)
 
   let get_ctz t key (pointer, length) =
     let rec read_block l index pointer =
@@ -342,54 +336,47 @@ module Make(Sectors: Mirage_block.S) = struct
       let s = Cstruct.(to_string cs) in
       Lwt.return @@ Ok s
 
-  let get_value block key =
-    match id_of_key block key with
-    | None -> Error (`Not_found key)
-    | Some id ->
-      match entries_of_id block id with
-      | [] -> Error (`Not_found key)
-      | l ->
-        let inline_files = List.find_opt (fun (tag, _data) ->
-            Littlefs.Tag.((fst tag.type3) = LFS_TYPE_STRUCT) &&
-            Littlefs.Tag.((snd tag.type3) = 0x01)
-          ) 
-        in
-        let ctz_files = List.find_opt (fun (tag, _block) ->
-            Littlefs.Tag.((fst tag.type3 = LFS_TYPE_STRUCT) &&
-                          Littlefs.Tag.((snd tag.type3 = 0x02)
-                                       ))) in
-        match inline_files l, ctz_files l with
-        (* TODO: we should make sure a dictionary entry is there
-         * before returning this error *)
-        | None, None -> Error (`Value_expected key)
-        | Some (_tag, data), None -> Ok (`Inline (Cstruct.to_string data))
-        | _, Some (_, ctz) ->
-          match Littlefs.File.ctz_of_cstruct ctz with
-          | Some (pointer, length) -> Ok (`Ctz (Int64.of_int32 pointer, Int32.to_int length))
-          | None -> Error (`Value_expected key)
+  let get_value t block_pair key =
+    entries_of_name t block_pair key >|= function
+    | Error _ -> Error (`Not_found key)
+    | Ok l ->
+      let inline_files = List.find_opt (fun (tag, _data) ->
+          Littlefs.Tag.((fst tag.type3) = LFS_TYPE_STRUCT) &&
+          Littlefs.Tag.((snd tag.type3) = 0x01)
+        )
+      in
+      let ctz_files = List.find_opt (fun (tag, _block) ->
+          Littlefs.Tag.((fst tag.type3 = LFS_TYPE_STRUCT) &&
+                        Littlefs.Tag.((snd tag.type3 = 0x02)
+                                     ))) in
+      match inline_files l, ctz_files l with
+      (* TODO: we should make sure a dictionary entry is there
+       * before returning this error *)
+      | None, None -> Error (`Value_expected key)
+      | Some (_tag, data), None -> Ok (`Inline (Cstruct.to_string data))
+      | _, Some (_, ctz) ->
+        match Littlefs.File.ctz_of_cstruct ctz with
+        | Some (pointer, length) -> Ok (`Ctz (Int64.of_int32 pointer, Int32.to_int length))
+        | None -> Error (`Value_expected key)
 
   let get t key : (string, error) result Lwt.t =
-    block_of_block_pair t root_pair >>= function
-    | Error _ -> Lwt.return @@ Error (`Not_found key)
-    | Ok extant_block ->
-      match Mirage_kv.Key.segments key with
-      | [] -> Lwt.return @@ Error (`Not_found key)
-      | basename::[] -> begin
-          match get_value extant_block @@ Mirage_kv.Key.v basename with
-          | Ok (`Inline d) -> Lwt.return (Ok d)
-          | Ok (`Ctz ctz) -> get_ctz t key ctz
-          | Error _ -> Lwt.return @@ Error (`Not_found key)
+    let map_errors = function
+        | Ok (`Inline d) -> Lwt.return (Ok d)
+        | Ok (`Ctz ctz) -> get_ctz t key ctz
+        | Error _ -> Lwt.return @@ Error (`Not_found key)
+    in
+    match Mirage_kv.Key.segments key with
+    | [] -> Lwt.return @@ Error (`Value_expected key)
+    | basename::[] -> begin
+        get_value t root_pair basename >>= map_errors
+      end
+    | _ ->
+      let dirname = Mirage_kv.Key.(parent key |> segments) in
+      find_directory t root_pair dirname >>= function
+      | `Basename_on pair -> begin
+        get_value t pair (Mirage_kv.Key.basename key) >>= map_errors
         end
-      | _ ->
-        let dirname = Mirage_kv.Key.(parent key |> segments) in
-        find_directory t extant_block dirname >>= function
-        | `Basename_on block -> begin
-            match get_value block Mirage_kv.Key.(v @@ basename key) with
-            | Ok (`Inline d) -> Lwt.return (Ok d)
-            | Ok (`Ctz ctz) -> get_ctz t key ctz
-            | Error _ -> Lwt.return @@ Error (`Not_found key)
-          end
-        | _ -> Lwt.return @@ Error (`Not_found key)
+      | _ -> Lwt.return @@ Error (`Not_found key)
 
   let rec write_ctz_block t l index so_far data =
     if Int.compare so_far (String.length data) >= 0 then begin

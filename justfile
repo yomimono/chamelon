@@ -14,6 +14,13 @@ read: test_img mount
 	sudo cp lib/block.ml /mnt/lib
 	_build/default/src/lfs_read.exe {{image}} {{block_size}} lib/block.ml
 
+hardtail: test_img mount
+	#!/bin/bash
+	for i in `seq 1 10`; do
+		sudo dd if=/dev/zero of=/mnt/$i bs=500 count=1
+	done
+	_build/default/src/lfs_ls.exe {{image}} {{block_size}} /
+
 readmdir BLOCK:
 	readmdir.py -a --log {{image}} {{block_size}} {{BLOCK}}
 

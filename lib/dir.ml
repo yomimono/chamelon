@@ -12,6 +12,8 @@ let soft_tail = Tag.({
     length = 4 * 2;
   })
 
+let hard_tail = {soft_tail with type3 = Tag.LFS_TYPE_TAIL, 0x01}
+
 let name n id = Tag.({
     valid = true;
     type3 = (Tag.LFS_TYPE_NAME, 0x02);
@@ -37,10 +39,10 @@ let dirstruct_of_cstruct cs =
                          get_uint32 cs 4 |> Int64.of_int32))
 
 
-let soft_tail_links (tag, data) =
+let hard_tail_links (tag, data) =
   match tag.Tag.type3 with
-  | Tag.LFS_TYPE_TAIL,  0x00 ->
-    (* both soft_tail and dirstruct have a two-pointer metadata structure *)
+  | Tag.LFS_TYPE_TAIL, 0x01 ->
+    (* both hard_tail and dirstruct have a two-pointer metadata structure *)
     dirstruct_of_cstruct data
   | _ -> None
 
