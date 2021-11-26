@@ -33,6 +33,19 @@ let links (tag, data) =
     | _ -> None
   end else None
 
+let compact entries =
+  let remove_entries_matching id l =
+    List.filter_map (fun e ->
+        if 0 = (Int.compare Tag.((fst e).id) id) then None
+        else Some e
+      ) l
+  in
+  List.fold_left (fun new_list e ->
+      match Tag.((fst e).type3) with
+      | Tag.LFS_TYPE_SPLICE, 0xff -> remove_entries_matching Tag.((fst e).id) new_list
+      | _ -> e :: new_list
+    ) [] entries
+
 let lenv l =
   List.fold_left (fun sum t -> sum + sizeof t) 0 l
 

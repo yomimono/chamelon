@@ -164,6 +164,12 @@ module Block = struct
 end
 
 module Entry = struct
+
+  (* I can think of a *lot* of good properties for `compact` --
+   * you should never get more entries than you started with;
+   * no list returned should have >1 name entry for the same id
+   * no list returned should have deletion entries *)
+
   let roundtrip () =
     let block = Block.superblock in
     let commit = List.hd @@ Littlefs.Block.commits block in
