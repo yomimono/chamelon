@@ -4,7 +4,7 @@ module IdSet = Set.Make(Int)
 
 type t = {
   revision_count : int;
-  commits : Commit.t list; (* the structure specified is more complex than this, but `list` will do for now *)
+  commits : Commit.t list;
 }
 
 type write_result = [ `Ok | `Split | `Split_emergency ]
@@ -42,6 +42,11 @@ let of_entries ~revision_count entries =
   let crc = crc_of_revision_count revision_count in
   let commit = Commit.of_entries_filter_crc (Cstruct.of_string "\xff\xff\xff\xff") crc entries in
   of_commits ~revision_count (commit::[])
+
+let compact t =
+  let revision_count = t.revision_count in
+  let entries = List.map Commit.entries t.commits |> List.flatten |> Entry.compact in
+  of_entries ~revision_count entries
 
 let add_commit {revision_count; commits} entries =
   let revision_count = revision_count + 1 in

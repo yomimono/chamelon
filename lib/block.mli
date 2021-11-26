@@ -11,6 +11,9 @@ val of_commits : revision_count:int -> Commit.t list -> t
 (* start a new block with one commit containing these entries *)
 val of_entries : revision_count:int -> Entry.t list -> t
 
+(* remove entries that have been deleted, and compact all commits into one *)
+val compact : t -> t
+
 (* add a list of entries to an already-existing block *)
 val add_commit : t -> Entry.t list -> t
 

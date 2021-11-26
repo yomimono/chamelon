@@ -14,6 +14,12 @@ let soft_tail = Tag.({
 
 let hard_tail = {soft_tail with type3 = Tag.LFS_TYPE_TAIL, 0x01}
 
+let hard_tail_at (a, b) =
+  let data = Cstruct.create 8 in
+  Cstruct.LE.set_uint32 data 0 (Int64.to_int32 a);
+  Cstruct.LE.set_uint32 data 4 (Int64.to_int32 b);
+  (hard_tail, data)
+
 let name n id = Tag.({
     valid = true;
     type3 = (Tag.LFS_TYPE_NAME, 0x02);

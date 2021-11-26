@@ -35,6 +35,109 @@ module Make(Sectors: Mirage_block.S) = struct
       | Error _ -> Lwt.return @@ Error (`Littlefs `Corrupt)
       | Ok extant_block -> Lwt.return @@ Ok extant_block
 
+  let block_of_block_pair t (l1, l2) =
+    block_of_block_number t l1 >>= function
+    | Error _ as e -> Lwt.return e
+    | Ok b1 -> block_of_block_number t l2 >>= function
+      | Error _ as e -> Lwt.return e
+      | Ok b2 -> if Littlefs.Block.(compare (revision_count b1) (revision_count b2)) < 0
+        then Lwt.return @@ Ok b2
+        else Lwt.return @@ Ok b1
+
+  module Traversal = struct
+    let linked_blocks root =
+      let entries = List.flatten @@ List.map Littlefs.Commit.entries @@ Littlefs.Block.commits root in
+      (* we call `compact` on the entry list because otherwise we'd incorrectly follow
+       * deleted entries *)
+      List.filter_map Littlefs.Entry.links (Littlefs.Entry.compact entries)
+
+    let rec get_ctz_pointers t l index pointer =
+      match l with
+      | Error _ as e -> Lwt.return e
+      | Ok l ->
+        let data = Cstruct.create t.block_size in
+        This_Block.read t.block pointer [data] >>= function
+        | Error _ as e -> Lwt.return e
+        | Ok () -> begin
+            let pointers, _data_region = Littlefs.File.of_block index data in
+            match pointers with
+            | [] -> Lwt.return @@ Ok (pointer::l)
+            | next::_ -> get_ctz_pointers t (Ok (pointer::l)) (index - 1) (Int64.of_int32 next)
+          end
+
+    let rec follow_links t = function
+      | Littlefs.Entry.Data (pointer, length) -> begin
+          let file_size = Int32.to_int length in
+          let index = Littlefs.File.last_block_index ~file_size ~block_size:t.block_size in
+          get_ctz_pointers t (Ok []) index (Int64.of_int32 pointer)
+        end
+      | Littlefs.Entry.Metadata (a, b) ->
+        block_of_block_pair t (a, b) >>= function
+        | Error _ -> Lwt.return @@ Ok []
+        | Ok block ->
+          let links = linked_blocks block in
+          Lwt_list.fold_left_s (fun l link ->
+              follow_links t link >>= function
+              | Error _ -> Lwt.return @@ l
+              | Ok new_links ->
+                Lwt.return @@ (new_links @ l)
+            ) ([]) links
+          >>= fun list -> Lwt.return @@ Ok (a :: b :: list)
+
+  end
+
+  module Allocator = struct
+
+    let opp = function
+      | `Before -> `After
+      | `After -> `Before
+
+    let unused ~bias t l1 =
+      let module IntSet = Set.Make(Int64) in
+      let possible_blocks = This_Block.block_count t.block in
+      let all_indices = IntSet.of_list (List.init possible_blocks (fun a -> Int64.of_int a)) in
+      let set1 = IntSet.of_list l1 in
+      let candidates = IntSet.diff all_indices set1 in
+      let pivot = Int64.(div (of_int possible_blocks) 2L) in
+      let set = match bias with
+        | `Before -> let s, _, _ = IntSet.split pivot candidates in s
+        | `After -> let _, _, s = IntSet.split pivot candidates in s
+      in
+      IntSet.elements set
+
+    let get_block t =
+      match !(t.lookahead) with
+      | bias, block::l ->
+        t.lookahead := bias, l;
+        Lwt.return @@ Ok block
+      | bias, [] ->
+        Traversal.follow_links t (Littlefs.Entry.Metadata root_pair) >|= function
+        | Error _ -> Error (`Littlefs `Corrupt) (* TODO: not quite *)
+        | Ok used_blocks ->
+          match unused ~bias t used_blocks with
+          | [] -> Error (`Littlefs_write `Out_of_space)
+          | block::l ->
+            t.lookahead := (opp bias, l);
+            Ok block
+
+  end
+
+  let split block next_blockpair =
+    match Littlefs.Block.commits block with
+    | [] | _::[] -> (* trivial case - just add the hardtail to block,
+               since we have no commits to move *)
+      let block = Littlefs.Block.add_commit block [Littlefs.Dir.hard_tail_at next_blockpair] in
+      (block, Littlefs.Block.of_entries ~revision_count:0 [])
+    | l ->
+      let length = List.length l in
+      let half = (List.length l / 2) in
+      let first_half = List.init half (fun i -> List.nth l i) in
+      let second_half = List.init (length - half) (fun i -> List.nth l (half + i)) in
+      let new_block = Littlefs.Block.of_commits ~revision_count:0 second_half in
+      let old_block = Littlefs.Block.(of_commits ~revision_count:(revision_count block) first_half) in
+      let old_block = Littlefs.Block.add_commit old_block [Littlefs.Dir.hard_tail_at next_blockpair] in
+      (old_block, new_block)
+
   (* from the littlefs spec, we should be checking whether
    * the on-disk data matches what we have in memory after
    * doing this write. Then if it doesn't, we should rewrite
@@ -46,95 +149,40 @@ module Make(Sectors: Mirage_block.S) = struct
    * we're probably writing to a file on another filesystem
    * managed by an OS with its own bad block detection.
    * That's my excuse for punting on it for now, anyway. *)
-  let block_to_block_number {block_size; block; program_block_size; _} data block_location =
+  let block_to_block_number t data block_location =
+    let {block_size; block; program_block_size; _} = t in
     let cs = Cstruct.create block_size in
     match Littlefs.Block.into_cstruct ~program_block_size cs data with
-    | `Ok | `Split | `Split_emergency ->
-    This_Block.write block block_location [cs]
+    | `Split_emergency | `Split as s -> Lwt.return @@ Error s
+    | `Ok ->
+      This_Block.write block block_location [cs] >>= function
+      | Error _ -> Lwt.return @@ Error `No_space
+      | Ok () -> Lwt.return @@ Ok ()
 
-  let block_of_block_pair t (l1, l2) =
-    block_of_block_number t l1 >>= function
-    | Error _ as e -> Lwt.return e
-    | Ok b1 -> block_of_block_number t l2 >>= function
-      | Error _ as e -> Lwt.return e
-      | Ok b2 -> if Littlefs.Block.(compare (revision_count b1) (revision_count b2)) < 0
-        then Lwt.return @@ Ok b2
-        else Lwt.return @@ Ok b1
-
-  let block_to_block_pair t data (b1, b2) =
-    block_to_block_number t data b1 >>= function
-    | Error _ as e -> Lwt.return e
-    | Ok () -> block_to_block_number t data b2
-
-  let rec get_ctz_pointers t l index pointer =
-    match l with
-    | Error _ as e -> Lwt.return e
-    | Ok l ->
-      let data = Cstruct.create t.block_size in
-      This_Block.read t.block pointer [data] >>= function
-      | Error _ as e -> Lwt.return e
-      | Ok () -> begin
-          let pointers, _data_region = Littlefs.File.of_block index data in
-          match pointers with
-          | [] -> Lwt.return @@ Ok (pointer::l)
-          | next::_ -> get_ctz_pointers t (Ok (pointer::l)) (index - 1) (Int64.of_int32 next)
-        end
-
-  let linked_blocks root =
-    let entries = Littlefs.Commit.entries in
-    let links_of_commit c = List.filter_map Littlefs.Entry.links @@ entries c in
-    List.(flatten @@ map links_of_commit (Littlefs.Block.commits root))
-
-  let rec follow_links t = function
-    | Littlefs.Entry.Data (pointer, length) -> begin
-        let file_size = Int32.to_int length in
-        let index = Littlefs.File.last_block_index ~file_size ~block_size:t.block_size in
-        get_ctz_pointers t (Ok []) index (Int64.of_int32 pointer)
+  let rec block_to_block_pair t data (b1, b2) =
+    Lwt_result.both
+      (block_to_block_number t data b1)
+      (block_to_block_number t data b2)
+    >>= function
+    | Ok ((), ()) -> Lwt.return @@ Ok ()
+    | Error `Split -> begin
+        (* try a compaction first *)
+        block_to_block_pair t (Littlefs.Block.compact data) (b1, b2) >>= function
+        | Ok () -> Lwt.return @@ Ok ()
+        | Error _ -> Lwt.return @@ Error `Split_emergency
       end
-    | Littlefs.Entry.Metadata (a, b) ->
-      block_of_block_pair t (a, b) >>= function
-      | Error _ -> Lwt.return @@ Ok []
-      | Ok block ->
-        let links = linked_blocks block in
-        Lwt_list.fold_left_s (fun l link ->
-            follow_links t link >>= function
-            | Error _ -> Lwt.return @@ l
-            | Ok new_links ->
-              Lwt.return @@ (new_links @ l)
-          ) ([]) links
-        >>= fun list -> Lwt.return @@ Ok (a :: b :: list)
-
-  let unused ~bias t l1 =
-    let module IntSet = Set.Make(Int64) in
-    let possible_blocks = This_Block.block_count t.block in
-    let all_indices = IntSet.of_list (List.init possible_blocks (fun a -> Int64.of_int a)) in
-    let set1 = IntSet.of_list l1 in
-    let candidates = IntSet.diff all_indices set1 in
-    let pivot = Int64.(div (of_int possible_blocks) 2L) in
-    let set = match bias with
-      | `Before -> let s, _, _ = IntSet.split pivot candidates in s
-      | `After -> let _, _, s = IntSet.split pivot candidates in s
-    in
-    IntSet.elements set
-
-  let opp = function
-    | `Before -> `After
-    | `After -> `Before
-
-  let get_block t =
-    match !(t.lookahead) with
-    | bias, block::l ->
-      t.lookahead := bias, l;
-      Lwt.return @@ Ok block
-    | bias, [] ->
-      follow_links t (Littlefs.Entry.Metadata root_pair) >|= function
-      | Error _ -> Error (`Littlefs `Corrupt) (* TODO: not quite *)
-      | Ok used_blocks ->
-        match unused ~bias t used_blocks with
-        | [] -> Error (`Littlefs_write `Out_of_space)
-        | block::l ->
-          t.lookahead := (opp bias, l);
-          Ok block
+    | Error `Split_emergency -> begin
+      Lwt_result.both (Allocator.get_block t) (Allocator.get_block t) >>= function
+      | Error _ -> Lwt.return @@ Error `No_space
+      | Ok (a1, a2) -> begin
+          let new_block, old_block = split data (a1, a2) in
+          Lwt_result.both (block_to_block_pair t old_block (b1, b2))
+                           (block_to_block_pair t new_block (a1, a2)) >>= function
+          | Error _ as e -> Lwt.return e
+          | Ok ((), ()) -> Lwt.return @@ Ok ()
+      end
+    end
+    | Error `No_space -> Lwt.return @@ Error `No_space
 
   let connect device ~program_block_size ~block_size : (t, error) result Lwt.t =
     This_Block.connect ~block_size device >>= fun block ->
@@ -145,9 +193,10 @@ module Make(Sectors: Mirage_block.S) = struct
      * in the type system somehow,
      * or have them only take the arguments they need instead of a full `t` *)
     let t = {block; block_size; program_block_size; lookahead = ref (`Before, [])} in
-    follow_links t (Littlefs.Entry.Metadata root_pair) >>= function
+    Traversal.follow_links t (Littlefs.Entry.Metadata root_pair) >>= function
     | Error _e -> Lwt.fail_with "couldn't get list of used blocks"
     | Ok used_blocks ->
+      let open Allocator in
       let lookahead = ref (`After, unused ~bias:`Before t used_blocks) in
       Lwt.return @@ Ok {lookahead; block; block_size; program_block_size}
 
@@ -246,10 +295,10 @@ module Make(Sectors: Mirage_block.S) = struct
     | `Continue (_path, next_blocks) -> Lwt.return @@ Ok next_blocks
     | `Basename_on next_blocks -> Lwt.return @@ Ok next_blocks
     | _ ->
-      get_block t >>= function
+      Allocator.get_block t >>= function
       | Error _ -> Lwt.return @@ Error (`Not_found dirname)
       | Ok dir_block_0 ->
-        get_block t >>= function
+        Allocator.get_block t >>= function
         | Error _ -> Lwt.return @@ Error (`Not_found dirname)
         | Ok dir_block_1 ->
           block_of_block_pair t rootpair >>= function
@@ -385,7 +434,7 @@ module Make(Sectors: Mirage_block.S) = struct
        * the *last* block for inclusion in the ctz structure *)
       Lwt.return @@ Ok l
     end else begin
-      get_block t >>= function
+      Allocator.get_block t >>= function
       | Error _ -> Lwt.return @@ Error `No_space
       | Ok block_number ->
         Printf.eprintf "using block number %Ld (0x%Lx) for block index %d (0x%x)\n%!" block_number block_number index index;
