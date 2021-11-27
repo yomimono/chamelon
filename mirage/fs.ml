@@ -79,6 +79,18 @@ module Make(Sectors: Mirage_block.S) = struct
             ) ([]) links
           >>= fun list -> Lwt.return @@ Ok (a :: b :: list)
 
+(* [last_block t pair] returns the last blockpair in the hardtail
+ * linked list starting at [pair], which may well be [pair] itself *)
+    let rec last_block t pair =
+      let open Lwt_result.Infix in
+      block_of_block_pair t pair >>= fun block ->
+      match List.find_opt (fun e ->
+          Littlefs.Tag.is_hardtail (fst e)
+        ) (Littlefs.Block.entries block) with
+      | None -> Lwt.return @@ Ok pair
+      | Some entry -> match Littlefs.Dir.hard_tail_links entry with
+        | None -> Lwt.return @@ Ok pair
+        | Some next_pair -> last_block t next_pair
   end
 
   module Allocator = struct
@@ -121,6 +133,9 @@ module Make(Sectors: Mirage_block.S) = struct
     match Littlefs.Block.commits block with
     | [] | _::[] -> (* trivial case - just add the hardtail to block,
                since we have no commits to move *)
+      (* we'll overwhelmingly more often end up in this case, because
+       * in most situations we'll compact before we split,
+       * meaning that there will be only 1 commit on the block *)
       let block = Littlefs.Block.add_commit block [Littlefs.Dir.hard_tail_at next_blockpair] in
       (block, Littlefs.Block.of_entries ~revision_count:0 [])
     | l ->
@@ -148,13 +163,32 @@ module Make(Sectors: Mirage_block.S) = struct
     let {block_size; block; program_block_size; _} = t in
     let cs = Cstruct.create block_size in
     match Littlefs.Block.into_cstruct ~program_block_size cs data with
-    | `Split_emergency | `Split as s -> Lwt.return @@ Error s
+    | `Split_emergency -> Lwt.return @@ Error `Split_emergency
+    | `Split -> begin
+      (* TODO: I'm not a fan of how this swallows the `Split warning *)
+      This_Block.write block block_location [cs] >>= function
+      | Error _ -> Lwt.return @@ Error `Split_emergency
+      | Ok () -> Lwt.return @@ Ok ()
+    end
     | `Ok ->
       This_Block.write block block_location [cs] >>= function
       | Error _ -> Lwt.return @@ Error `No_space
       | Ok () -> Lwt.return @@ Ok ()
 
   let rec block_to_block_pair t data (b1, b2) =
+    let split () =
+      Lwt_result.both (Allocator.get_block t) (Allocator.get_block t) >>= function
+      | Error _ -> Lwt.return @@ Error `No_space
+      | Ok (a1, a2) -> begin
+          (* TODO: we need to make sure that we force a write of the block with the hardtail
+           * even if it's the Split case *)
+          let new_block, old_block = split data (a1, a2) in
+          Lwt_result.both (block_to_block_pair t old_block (b1, b2))
+                           (block_to_block_pair t new_block (a1, a2)) >>= function
+          | Error _ as e -> Lwt.return e
+          | Ok ((), ()) -> Lwt.return @@ Ok ()
+      end
+    in
     Lwt_result.both
       (block_to_block_number t data b1)
       (block_to_block_number t data b2)
@@ -162,31 +196,27 @@ module Make(Sectors: Mirage_block.S) = struct
     | Ok ((), ()) -> Lwt.return @@ Ok ()
     | Error `Split -> begin
         (* try a compaction first *)
-        block_to_block_pair t (Littlefs.Block.compact data) (b1, b2) >>= function
-        | Ok () -> Lwt.return @@ Ok ()
-        | Error _ -> Lwt.return @@ Error `Split_emergency
+        Lwt_result.both
+          (block_to_block_number t (Littlefs.Block.compact data) b1)
+          (block_to_block_number t (Littlefs.Block.compact data) b2) 
+        >>= function
+        | Ok ((), ()) -> Lwt.return @@ Ok ()
+        | Error `Split ->
+          Format.eprintf "Compaction wasn't sufficient. Eventually a hard split will be required\n%!";
+          Lwt.return @@ Ok ()
+        | Error `Split_emergency ->
+          Format.eprintf "No dice. We'll try a hard split\n%!";
+          split ()
+        | Error `No_space -> Lwt.return @@ Error `No_space
       end
-    | Error `Split_emergency -> begin
-      Lwt_result.both (Allocator.get_block t) (Allocator.get_block t) >>= function
-      | Error _ -> Lwt.return @@ Error `No_space
-      | Ok (a1, a2) -> begin
-          let new_block, old_block = split data (a1, a2) in
-          Lwt_result.both (block_to_block_pair t old_block (b1, b2))
-                           (block_to_block_pair t new_block (a1, a2)) >>= function
-          | Error _ as e -> Lwt.return e
-          | Ok ((), ()) -> Lwt.return @@ Ok ()
-      end
-    end
+    | Error `Split_emergency -> split ()
     | Error `No_space -> Lwt.return @@ Error `No_space
 
   let rec entries_following_hard_tail t (block_pair : int64 * int64) =
     block_of_block_pair t block_pair >>= function
     | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v "hard_tail"))
     | Ok block ->
-      let this_blocks_entries =
-        let commits = Littlefs.Block.commits block in
-        List.(flatten @@ map Littlefs.Commit.entries commits)
-      in
+      let this_blocks_entries = Littlefs.Block.entries block in
       match List.filter_map Littlefs.Dir.hard_tail_links this_blocks_entries with
       | [] -> Lwt.return @@ Ok this_blocks_entries
       | nextpair::_ ->
@@ -246,8 +276,12 @@ module Make(Sectors: Mirage_block.S) = struct
     | `No_id child ->
       let path = String.concat "/" key in
       let path = Mirage_kv.Key.(to_string @@ v path / child) in
-      Lwt.return (`No_id path)
-    | a -> Lwt.return a
+      Lwt.return @@ `No_id path
+    | `No_structs -> Lwt.return `No_structs
+    | `Basename_on block_pair ->
+      Traversal.last_block t block_pair >>= function
+      | Error _ -> Lwt.return @@ `Basename_on block_pair
+      | Ok last_pair ->  Lwt.return @@ `Basename_on last_pair
 
   (* `dirname` is the name of the directory relative to `rootpair`. It should be
    * a value that could be returned from `Mirage_kv.Key.basename` - in other words

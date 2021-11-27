@@ -58,6 +58,10 @@ let delete id =
     id;
     length = 0;
   }
+
+let is_hardtail {type3; _} =
+  (fst type3) = LFS_TYPE_TAIL && (snd type3) = 0x01
+
     
 (* TODO: verify whether all-0/all-1 check is for raw tags or XOR'd tags - currently we check both, but that will probably give us false negatives for select tags *)
 let of_cstruct ~xor_tag_with cs =

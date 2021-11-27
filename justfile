@@ -19,7 +19,13 @@ hardtail: test_img mount
 	for i in `seq 1 10`; do
 		sudo dd if=/dev/zero of=/mnt/$i bs=500 count=1
 	done
+	sudo umount /mnt
 	_build/default/src/lfs_ls.exe {{image}} {{block_size}} /
+	_build/default/src/lfs_read.exe {{image}} {{block_size}} 10
+	for i in `seq 1 10`; do
+		_build/default/src/lfs_write.exe {{image}} {{block_size}} /moar$i "moar data yey $i"
+	done
+	_build/default/src/lfs_read.exe {{image}} {{block_size}} /moar10
 
 readmdir BLOCK:
 	readmdir.py -a --log {{image}} {{block_size}} {{BLOCK}}

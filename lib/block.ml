@@ -12,6 +12,8 @@ type write_result = [ `Ok | `Split | `Split_emergency ]
 let commits t = t.commits
 let revision_count t = t.revision_count
 
+let entries t = List.(flatten @@ map Commit.entries t.commits)
+
 let crc_of_revision_count revision_count =
   let start_crc = Checkseum.Crc32.default in
   let cs = Cstruct.create 4 in
@@ -57,8 +59,13 @@ let add_commit {revision_count; commits} entries =
     let commit = Commit.commit_after last entries in
     of_commits ~revision_count (l @ [commit])
 
-(* TODO: ugh, what if we need >1 block for the entries :( *)
-(* return variants here: either `ok` or `more_block`? *)
+(* return variants `Split and `Ok are successful; `Split warns that the block
+ * took up more than 1/2 of the block size and the metadata block
+ * should be split into two pairs.
+ *
+ * `Split_emergency means the size of `block` exceeds the block size,
+ * and the data *cannot* be written. A partial serialization remains in [cs] in
+ * this case. *)
 let into_cstruct ~program_block_size cs block =
   match block.commits with
   | [] -> (* this is a somewhat degenerate case, but
@@ -83,7 +90,7 @@ let into_cstruct ~program_block_size cs block =
              (pointer + bytes_written, raw_crc_tag, 0)
           ) (4, (Cstruct.of_string "\xff\xff\xff\xff"), 4) block.commits
       in
-      if after_last_crc > (Cstruct.length cs / 4) then `Split else `Ok
+      if after_last_crc > (Cstruct.length cs / 2) then `Split else `Ok
     with Invalid_argument _ -> `Split_emergency
 
 (* TODO: this is pretty inefficient; do a fold accumulating all these
