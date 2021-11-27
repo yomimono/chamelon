@@ -22,10 +22,12 @@ hardtail: test_img mount
 	sudo umount /mnt
 	_build/default/src/lfs_ls.exe {{image}} {{block_size}} /
 	_build/default/src/lfs_read.exe {{image}} {{block_size}} 10
-	for i in `seq 1 10`; do
+	for i in `seq 1 20`; do
 		_build/default/src/lfs_write.exe {{image}} {{block_size}} /moar$i "moar data yey $i"
 	done
-	_build/default/src/lfs_read.exe {{image}} {{block_size}} /moar10
+	echo ""
+	_build/default/src/lfs_ls.exe {{image}} {{block_size}} /
+	_build/default/src/lfs_read.exe {{image}} {{block_size}} /moar2
 
 readmdir BLOCK:
 	readmdir.py -a --log {{image}} {{block_size}} {{BLOCK}}

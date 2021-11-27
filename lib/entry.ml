@@ -18,7 +18,7 @@ let to_cstruct ~xor_tag_with t =
   cs
 
 let links (tag, data) =
-  if Tag.has_links tag then begin
+  if Tag.is_file tag then begin
     match (snd tag.Tag.type3) with
     | 0x00 -> begin
       match Dir.dirstruct_of_cstruct data with
@@ -31,6 +31,10 @@ let links (tag, data) =
         | Some s -> Some (Data s)
       end
     | _ -> None
+  end else if Tag.is_hardtail tag then begin
+    match Dir.hard_tail_links (tag, data) with
+    | None -> None
+    | Some (next_metadata) -> Some (Metadata next_metadata)
   end else None
 
 let compact entries =

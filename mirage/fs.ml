@@ -130,22 +130,28 @@ module Make(Sectors: Mirage_block.S) = struct
   end
 
   let split block next_blockpair =
+    Format.eprintf "splitting %d commits into two blockpairs\n%!" @@ List.length @@ Littlefs.Block.commits block;
     match Littlefs.Block.commits block with
-    | [] | _::[] -> (* trivial case - just add the hardtail to block,
+    | [] -> (* trivial case - just add the hardtail to block,
                since we have no commits to move *)
       (* we'll overwhelmingly more often end up in this case, because
        * in most situations we'll compact before we split,
        * meaning that there will be only 1 commit on the block *)
       let block = Littlefs.Block.add_commit block [Littlefs.Dir.hard_tail_at next_blockpair] in
       (block, Littlefs.Block.of_entries ~revision_count:0 [])
-    | l ->
-      let length = List.length l in
-      let half = (List.length l / 2) in
-      let first_half = List.init half (fun i -> List.nth l i) in
-      let second_half = List.init (length - half) (fun i -> List.nth l (half + i)) in
-      let new_block = Littlefs.Block.of_commits ~revision_count:0 second_half in
-      let old_block = Littlefs.Block.(of_commits ~revision_count:(revision_count block) first_half) in
+    | _ ->
+      let entries = Littlefs.Block.entries block |> Littlefs.Entry.compact in
+      let length = List.length entries in
+      let half = (List.length entries) / 2 in
+      let first_half = List.init half (fun i -> List.nth entries i) in
+      let second_half = List.init (length - half) (fun i -> List.nth entries (half + i)) in
+      let new_block = Littlefs.Block.of_entries ~revision_count:0 second_half in
+      let old_block = Littlefs.Block.(of_entries ~revision_count:(revision_count block) first_half) in
       let old_block = Littlefs.Block.add_commit old_block [Littlefs.Dir.hard_tail_at next_blockpair] in
+      Format.eprintf "now we have one block with %d entries and another (at %Ld, %Ld) with %d\n%!"
+        (List.length @@ Littlefs.Block.entries old_block)
+        (fst next_blockpair) (snd next_blockpair)
+        (List.length @@ Littlefs.Block.entries new_block);
       (old_block, new_block)
 
   (* from the littlefs spec, we should be checking whether
@@ -167,19 +173,25 @@ module Make(Sectors: Mirage_block.S) = struct
     | `Split -> begin
       This_Block.write block block_location [cs] >>= function
       | Error _ -> Lwt.return @@ Error `Split_emergency
-      | Ok () -> Lwt.return @@ Ok ()
+      | Ok () -> Lwt.return @@ Error `Split
     end
     | `Ok ->
       This_Block.write block block_location [cs] >>= function
       | Error _ -> Lwt.return @@ Error `No_space
-      | Ok () -> Lwt.return @@ Ok ()
+      | Ok () -> Lwt.return @@ Ok `Done
 
   let rec block_to_block_pair t data (b1, b2) =
     let split () =
       Lwt_result.both (Allocator.get_block t) (Allocator.get_block t) >>= function
       | Error _ -> Lwt.return @@ Error `No_space
       | Ok (a1, a2) -> begin
-        let new_block, old_block = split data (a1, a2) in
+        Format.eprintf "splitting data (%d commits, %d entries) at %Ld, %Ld\n%!"
+          (List.length @@ Littlefs.Block.commits data)
+          (List.length @@ Littlefs.Block.entries data)
+          b1 b2;
+        (* it's not strictly necessary to order these,
+         * but it makes it easier for the debugging human to "reason about" *)
+        let old_block, new_block = split data ((min a1 a2), (max a1 a2)) in
         Lwt_result.both
           (block_to_block_pair t old_block (b1, b2))
           (block_to_block_pair t new_block (a1, a2)) >>= function
@@ -193,17 +205,20 @@ module Make(Sectors: Mirage_block.S) = struct
       (block_to_block_number t data b1)
       (block_to_block_number t data b2)
     >>= function
-    | Ok ((), ()) -> Lwt.return @@ Ok ()
+    | Ok _ -> Lwt.return @@ Ok ()
+        (* `Split happens when the write did succeed, but a split operation
+         * needs to happen to provide future problems *)
     | Error `Split -> begin
+        Format.eprintf "trying a compaction on blocks %Ld, %Ld\n%!" b1 b2;
         (* try a compaction first *)
         Lwt_result.both
           (block_to_block_number t (Littlefs.Block.compact data) b1)
           (block_to_block_number t (Littlefs.Block.compact data) b2) 
         >>= function
-        | Ok ((), ()) -> Lwt.return @@ Ok ()
+        | Ok _ -> Lwt.return @@ Ok ()
         | Error `Split ->
-          Format.eprintf "Compaction wasn't sufficient. Eventually a hard split will be required\n%!";
-          Lwt.return @@ Ok ()
+          Format.eprintf "Compaction wasn't sufficient. Initiating a split\n%!";
+          split ()
         | Error `Split_emergency ->
           Format.eprintf "No dice. We'll try a hard split\n%!";
           split ()
@@ -279,9 +294,14 @@ module Make(Sectors: Mirage_block.S) = struct
       Lwt.return @@ `No_id path
     | `No_structs -> Lwt.return `No_structs
     | `Basename_on block_pair ->
+      Format.eprintf "basename found at blockpair %Ld, %Ld. Looking for last block\n%!"
+        (fst block_pair) (snd block_pair);
       Traversal.last_block t block_pair >>= function
       | Error _ -> Lwt.return @@ `Basename_on block_pair
-      | Ok last_pair ->  Lwt.return @@ `Basename_on last_pair
+      | Ok last_pair ->
+        Format.eprintf "last block in the dir is at %Ld, %Ld\n%!"
+          (fst last_pair) (snd last_pair);
+        Lwt.return @@ `Basename_on last_pair
 
   (* `dirname` is the name of the directory relative to `rootpair`. It should be
    * a value that could be returned from `Mirage_kv.Key.basename` - in other words
@@ -504,7 +524,9 @@ module Make(Sectors: Mirage_block.S) = struct
   let set t key data : (unit, write_error) result Lwt.t =
     let dir = Mirage_kv.Key.parent key in
     find_directory_block_pair t root_pair (Mirage_kv.Key.segments dir) >>= function
-    | `Basename_on block_pair -> set_in_directory block_pair t (Mirage_kv.Key.basename key) data
+    | `Basename_on block_pair ->
+      Format.eprintf "writing %a to %Ld, %Ld\n%!" Mirage_kv.Key.pp key (fst block_pair) (snd block_pair);
+      set_in_directory block_pair t (Mirage_kv.Key.basename key) data
     | `No_id path -> begin
       mkdir t root_pair (Mirage_kv.Key.segments dir) >>= function
       | Error _ -> Lwt.return @@ (Error (`Not_found (Mirage_kv.Key.v path)))
