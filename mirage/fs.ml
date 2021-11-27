@@ -130,7 +130,6 @@ module Make(Sectors: Mirage_block.S) = struct
   end
 
   let split block next_blockpair =
-    Format.eprintf "splitting %d commits into two blockpairs\n%!" @@ List.length @@ Littlefs.Block.commits block;
     match Littlefs.Block.commits block with
     | [] -> (* trivial case - just add the hardtail to block,
                since we have no commits to move *)
@@ -148,10 +147,6 @@ module Make(Sectors: Mirage_block.S) = struct
       let new_block = Littlefs.Block.of_entries ~revision_count:0 second_half in
       let old_block = Littlefs.Block.(of_entries ~revision_count:(revision_count block) first_half) in
       let old_block = Littlefs.Block.add_commit old_block [Littlefs.Dir.hard_tail_at next_blockpair] in
-      Format.eprintf "now we have one block with %d entries and another (at %Ld, %Ld) with %d\n%!"
-        (List.length @@ Littlefs.Block.entries old_block)
-        (fst next_blockpair) (snd next_blockpair)
-        (List.length @@ Littlefs.Block.entries new_block);
       (old_block, new_block)
 
   (* from the littlefs spec, we should be checking whether
@@ -185,10 +180,6 @@ module Make(Sectors: Mirage_block.S) = struct
       Lwt_result.both (Allocator.get_block t) (Allocator.get_block t) >>= function
       | Error _ -> Lwt.return @@ Error `No_space
       | Ok (a1, a2) -> begin
-        Format.eprintf "splitting data (%d commits, %d entries) at %Ld, %Ld\n%!"
-          (List.length @@ Littlefs.Block.commits data)
-          (List.length @@ Littlefs.Block.entries data)
-          b1 b2;
         (* it's not strictly necessary to order these,
          * but it makes it easier for the debugging human to "reason about" *)
         let old_block, new_block = split data ((min a1 a2), (max a1 a2)) in
@@ -209,19 +200,13 @@ module Make(Sectors: Mirage_block.S) = struct
         (* `Split happens when the write did succeed, but a split operation
          * needs to happen to provide future problems *)
     | Error `Split -> begin
-        Format.eprintf "trying a compaction on blocks %Ld, %Ld\n%!" b1 b2;
         (* try a compaction first *)
         Lwt_result.both
           (block_to_block_number t (Littlefs.Block.compact data) b1)
           (block_to_block_number t (Littlefs.Block.compact data) b2) 
         >>= function
         | Ok _ -> Lwt.return @@ Ok ()
-        | Error `Split ->
-          Format.eprintf "Compaction wasn't sufficient. Initiating a split\n%!";
-          split ()
-        | Error `Split_emergency ->
-          Format.eprintf "No dice. We'll try a hard split\n%!";
-          split ()
+        | Error `Split | Error `Split_emergency -> split ()
         | Error `No_space -> Lwt.return @@ Error `No_space
       end
     | Error `Split_emergency -> split ()
@@ -294,14 +279,9 @@ module Make(Sectors: Mirage_block.S) = struct
       Lwt.return @@ `No_id path
     | `No_structs -> Lwt.return `No_structs
     | `Basename_on block_pair ->
-      Format.eprintf "basename found at blockpair %Ld, %Ld. Looking for last block\n%!"
-        (fst block_pair) (snd block_pair);
-      Traversal.last_block t block_pair >>= function
-      | Error _ -> Lwt.return @@ `Basename_on block_pair
-      | Ok last_pair ->
-        Format.eprintf "last block in the dir is at %Ld, %Ld\n%!"
-          (fst last_pair) (snd last_pair);
-        Lwt.return @@ `Basename_on last_pair
+      Traversal.last_block t block_pair >|= function
+      | Error _ -> `Basename_on block_pair
+      | Ok last_pair -> `Basename_on last_pair
 
   (* `dirname` is the name of the directory relative to `rootpair`. It should be
    * a value that could be returned from `Mirage_kv.Key.basename` - in other words
@@ -453,7 +433,6 @@ module Make(Sectors: Mirage_block.S) = struct
       Allocator.get_block t >>= function
       | Error _ -> Lwt.return @@ Error `No_space
       | Ok block_number ->
-        Printf.eprintf "using block number %Ld (0x%Lx) for block index %d (0x%x)\n%!" block_number block_number index index;
         let pointer = Int64.to_int32 block_number in
         let block_cs = Cstruct.create t.block_size in
         let skip_list_size = Littlefs.File.n_pointers index in
@@ -483,7 +462,6 @@ module Make(Sectors: Mirage_block.S) = struct
       | Error _ as e -> Lwt.return e
       | Ok [] -> Lwt.return @@ Error `No_space
       | Ok ((last_index, last_pointer)::_) ->
-        Printf.eprintf "wrote raw data blocks; last index is %d (0x%x) at %ld (0x%lx)\n%!" last_index last_index last_pointer last_pointer;
         let used_ids = Littlefs.Block.ids root in
         let next = match Littlefs.Block.IdSet.max_elt_opt used_ids with
           | None -> 1
@@ -525,7 +503,6 @@ module Make(Sectors: Mirage_block.S) = struct
     let dir = Mirage_kv.Key.parent key in
     find_directory_block_pair t root_pair (Mirage_kv.Key.segments dir) >>= function
     | `Basename_on block_pair ->
-      Format.eprintf "writing %a to %Ld, %Ld\n%!" Mirage_kv.Key.pp key (fst block_pair) (snd block_pair);
       set_in_directory block_pair t (Mirage_kv.Key.basename key) data
     | `No_id path -> begin
       mkdir t root_pair (Mirage_kv.Key.segments dir) >>= function
