@@ -165,7 +165,6 @@ module Make(Sectors: Mirage_block.S) = struct
     match Littlefs.Block.into_cstruct ~program_block_size cs data with
     | `Split_emergency -> Lwt.return @@ Error `Split_emergency
     | `Split -> begin
-      (* TODO: I'm not a fan of how this swallows the `Split warning *)
       This_Block.write block block_location [cs] >>= function
       | Error _ -> Lwt.return @@ Error `Split_emergency
       | Ok () -> Lwt.return @@ Ok ()
@@ -180,13 +179,14 @@ module Make(Sectors: Mirage_block.S) = struct
       Lwt_result.both (Allocator.get_block t) (Allocator.get_block t) >>= function
       | Error _ -> Lwt.return @@ Error `No_space
       | Ok (a1, a2) -> begin
-          (* TODO: we need to make sure that we force a write of the block with the hardtail
-           * even if it's the Split case *)
-          let new_block, old_block = split data (a1, a2) in
-          Lwt_result.both (block_to_block_pair t old_block (b1, b2))
-                           (block_to_block_pair t new_block (a1, a2)) >>= function
-          | Error _ as e -> Lwt.return e
-          | Ok ((), ()) -> Lwt.return @@ Ok ()
+        let new_block, old_block = split data (a1, a2) in
+        Lwt_result.both
+          (block_to_block_pair t old_block (b1, b2))
+          (block_to_block_pair t new_block (a1, a2)) >>= function
+        | Error `Split | Error `Split_emergency ->
+          Lwt.return @@ Error `No_space
+        | Error _ as e -> Lwt.return e
+        | Ok ((), ()) -> Lwt.return @@ Ok ()
       end
     in
     Lwt_result.both
