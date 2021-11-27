@@ -36,13 +36,11 @@ module Make(Sectors: Mirage_block.S) = struct
       | Ok extant_block -> Lwt.return @@ Ok extant_block
 
   let block_of_block_pair t (l1, l2) =
-    block_of_block_number t l1 >>= function
-    | Error _ as e -> Lwt.return e
-    | Ok b1 -> block_of_block_number t l2 >>= function
-      | Error _ as e -> Lwt.return e
-      | Ok b2 -> if Littlefs.Block.(compare (revision_count b1) (revision_count b2)) < 0
-        then Lwt.return @@ Ok b2
-        else Lwt.return @@ Ok b1
+    let open Lwt_result.Infix in
+    Lwt_result.both (block_of_block_number t l1) (block_of_block_number t l2) >>= fun (b1, b2) ->
+    if Littlefs.Block.(compare (revision_count b1) (revision_count b2)) < 0
+    then Lwt.return @@ Ok b2
+    else Lwt.return @@ Ok b1
 
   module Traversal = struct
     let linked_blocks root =
@@ -55,15 +53,13 @@ module Make(Sectors: Mirage_block.S) = struct
       match l with
       | Error _ as e -> Lwt.return e
       | Ok l ->
+        let open Lwt_result.Infix in
         let data = Cstruct.create t.block_size in
-        This_Block.read t.block pointer [data] >>= function
-        | Error _ as e -> Lwt.return e
-        | Ok () -> begin
-            let pointers, _data_region = Littlefs.File.of_block index data in
-            match pointers with
-            | [] -> Lwt.return @@ Ok (pointer::l)
-            | next::_ -> get_ctz_pointers t (Ok (pointer::l)) (index - 1) (Int64.of_int32 next)
-          end
+        This_Block.read t.block pointer [data] >>= fun ()->
+        let pointers, _data_region = Littlefs.File.of_block index data in
+        match pointers with
+        | [] -> Lwt.return @@ Ok (pointer::l)
+        | next::_ -> get_ctz_pointers t (Ok (pointer::l)) (index - 1) (Int64.of_int32 next)
 
     let rec follow_links t = function
       | Littlefs.Entry.Data (pointer, length) -> begin
@@ -79,8 +75,7 @@ module Make(Sectors: Mirage_block.S) = struct
           Lwt_list.fold_left_s (fun l link ->
               follow_links t link >>= function
               | Error _ -> Lwt.return @@ l
-              | Ok new_links ->
-                Lwt.return @@ (new_links @ l)
+              | Ok new_links -> Lwt.return @@ (new_links @ l)
             ) ([]) links
           >>= fun list -> Lwt.return @@ Ok (a :: b :: list)
 
@@ -184,39 +179,6 @@ module Make(Sectors: Mirage_block.S) = struct
     end
     | Error `No_space -> Lwt.return @@ Error `No_space
 
-  let connect device ~program_block_size ~block_size : (t, error) result Lwt.t =
-    This_Block.connect ~block_size device >>= fun block ->
-    (* TODO: setting an empty lookahead to generate a good-enough `t`
-     * to populate the lookahead buffer
-     * feels very kludgey and error-prone. We should either
-     * make the functions that don't need allocable blocks marked
-     * in the type system somehow,
-     * or have them only take the arguments they need instead of a full `t` *)
-    let t = {block; block_size; program_block_size; lookahead = ref (`Before, [])} in
-    Traversal.follow_links t (Littlefs.Entry.Metadata root_pair) >>= function
-    | Error _e -> Lwt.fail_with "couldn't get list of used blocks"
-    | Ok used_blocks ->
-      let open Allocator in
-      let lookahead = ref (`After, unused ~bias:`Before t used_blocks) in
-      Lwt.return @@ Ok {lookahead; block; block_size; program_block_size}
-
-  let format t =
-    let program_block_size = t.program_block_size in
-    let block_size = t.block_size in
-    let write_whole_block n b = This_Block.write t.block n
-        [fst @@ Littlefs.Block.to_cstruct ~program_block_size ~block_size b]
-    in
-    let name = Littlefs.Superblock.name in
-    let block_count = This_Block.block_count t.block in
-    let superblock_inline_struct = Littlefs.Superblock.inline_struct (Int32.of_int block_size) (Int32.of_int block_count) in
-    let block_0 = Littlefs.Block.of_entries ~revision_count:1 [name; superblock_inline_struct] in
-    let block_1 = Littlefs.Block.of_entries ~revision_count:2 [name; superblock_inline_struct] in
-    write_whole_block (fst root_pair) block_0 >>= fun b0 ->
-    write_whole_block (snd root_pair) block_1 >>= fun b1 ->
-    match b0, b1 with
-    | Ok (), Ok () -> Lwt.return @@ Ok ()
-    | _, _ -> Lwt.return @@ Error `No_space
-
   let rec entries_following_hard_tail t (block_pair : int64 * int64) =
     block_of_block_pair t block_pair >>= function
     | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v "hard_tail"))
@@ -232,25 +194,25 @@ module Make(Sectors: Mirage_block.S) = struct
         | Ok entries -> Lwt.return @@ Ok (this_blocks_entries @ entries)
         | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v "hard_tail"))
 
-  let id_of_key entries key =
-    let data_matches c =
-      0 = String.(compare key @@ Cstruct.to_string c)
+  let entries_of_name t block_pair name =
+    let entries_of_id entries id =
+      let matches (tag, _) =
+        0 = compare tag.Littlefs.Tag.id id
+      in
+      List.find_all matches entries
     in
-    let tag_matches t = Littlefs.Tag.(fst t.type3 = LFS_TYPE_NAME)
-    in
-    match List.find_opt (fun (tag, data) ->
-        tag_matches tag && data_matches data
-      ) entries  with
+    let id_of_key entries key =
+      let data_matches c =
+        0 = String.(compare key @@ Cstruct.to_string c)
+      in
+      let tag_matches t = Littlefs.Tag.(fst t.type3 = LFS_TYPE_NAME)
+      in
+      match List.find_opt (fun (tag, data) ->
+          tag_matches tag && data_matches data
+        ) entries  with
     | Some (tag, _) -> Some tag.Littlefs.Tag.id
     | None -> None
-
-  let entries_of_id entries id =
-    let matches (tag, _) =
-      0 = compare tag.Littlefs.Tag.id id
     in
-    List.find_all matches entries
-
-  let entries_of_name t block_pair name =
     entries_following_hard_tail t block_pair >>= function
     | Error _ as e -> Lwt.return e
     | Ok entries ->
@@ -259,7 +221,7 @@ module Make(Sectors: Mirage_block.S) = struct
       | Some id ->
         match entries_of_id entries id with
         | []-> Lwt.return @@ Error `No_struct
-        | entries -> Lwt.return @@ Ok entries
+        | entries -> Lwt.return @@ Ok (Littlefs.Entry.compact entries)
 
   (** [follow_directory_pointers t block_pair l] returns:
    * an error or
@@ -486,7 +448,7 @@ module Make(Sectors: Mirage_block.S) = struct
     block_of_block_pair t block_pair >>= function
     | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v filename))
     | Ok extant_block ->
-      (* TODO: we may need to do more work if the root directory
+      (* TODO: we need to do more work if the root directory
        * goes on past the first metadata pair *)
       let used_ids = Littlefs.Block.ids extant_block in
       let next = match Littlefs.Block.IdSet.max_elt_opt used_ids with
@@ -517,4 +479,36 @@ module Make(Sectors: Mirage_block.S) = struct
       end
     | _ -> Lwt.return @@ Error (`Not_found key)
 
+  let connect device ~program_block_size ~block_size : (t, error) result Lwt.t =
+    This_Block.connect ~block_size device >>= fun block ->
+    (* TODO: setting an empty lookahead to generate a good-enough `t`
+     * to populate the lookahead buffer
+     * feels very kludgey and error-prone. We should either
+     * make the functions that don't need allocable blocks marked
+     * in the type system somehow,
+     * or have them only take the arguments they need instead of a full `t` *)
+    let t = {block; block_size; program_block_size; lookahead = ref (`Before, [])} in
+    Traversal.follow_links t (Littlefs.Entry.Metadata root_pair) >>= function
+    | Error _e -> Lwt.fail_with "couldn't get list of used blocks"
+    | Ok used_blocks ->
+      let open Allocator in
+      let lookahead = ref (`After, unused ~bias:`Before t used_blocks) in
+      Lwt.return @@ Ok {lookahead; block; block_size; program_block_size}
+
+  let format t =
+    let program_block_size = t.program_block_size in
+    let block_size = t.block_size in
+    let write_whole_block n b = This_Block.write t.block n
+        [fst @@ Littlefs.Block.to_cstruct ~program_block_size ~block_size b]
+    in
+    let name = Littlefs.Superblock.name in
+    let block_count = This_Block.block_count t.block in
+    let superblock_inline_struct = Littlefs.Superblock.inline_struct (Int32.of_int block_size) (Int32.of_int block_count) in
+    let block_0 = Littlefs.Block.of_entries ~revision_count:1 [name; superblock_inline_struct] in
+    let block_1 = Littlefs.Block.of_entries ~revision_count:2 [name; superblock_inline_struct] in
+    write_whole_block (fst root_pair) block_0 >>= fun b0 ->
+    write_whole_block (snd root_pair) block_1 >>= fun b1 ->
+    match b0, b1 with
+    | Ok (), Ok () -> Lwt.return @@ Ok ()
+    | _, _ -> Lwt.return @@ Error `No_space
 end
