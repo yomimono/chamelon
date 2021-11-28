@@ -461,7 +461,7 @@ module Make(Sectors: Mirage_block.S) = struct
       write_ctz_block t [] 0 0 data >>= function
       | Error _ as e -> Lwt.return e
       | Ok [] -> Lwt.return @@ Error `No_space
-      | Ok ((last_index, last_pointer)::_) ->
+      | Ok ((_last_index, last_pointer)::_) ->
         let used_ids = Littlefs.Block.ids root in
         let next = match Littlefs.Block.IdSet.max_elt_opt used_ids with
           | None -> 1
@@ -480,8 +480,6 @@ module Make(Sectors: Mirage_block.S) = struct
     block_of_block_pair t block_pair >>= function
     | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v filename))
     | Ok extant_block ->
-      (* TODO: we need to do more work if the root directory
-       * goes on past the first metadata pair *)
       let used_ids = Littlefs.Block.ids extant_block in
       let next = match Littlefs.Block.IdSet.max_elt_opt used_ids with
         | None -> 1
