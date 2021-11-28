@@ -93,9 +93,6 @@ let into_cstruct ~program_block_size cs block =
       if after_last_crc > (Cstruct.length cs / 2) then `Split else `Ok
     with Invalid_argument _ -> `Split_emergency
 
-(* TODO: this is pretty inefficient; do a fold accumulating all these
- * into a set instead -- actually check the Set documentation, IIRC
- * there are performance notes in there *)
 let ids t =
   let id_of_entry e = (fst e).Tag.id in
   let commit_ids c = List.map id_of_entry (Commit.entries c) in
