@@ -25,17 +25,17 @@ module Make(Sectors : Mirage_block.S) = struct
   let get t key : (string, error) result Lwt.t =
     let map_errors = function
         | Ok (`Inline d) -> Lwt.return (Ok d)
-        | Ok (`Ctz ctz) -> Fs.get_ctz t key ctz
+        | Ok (`Ctz ctz) -> Fs.File_read.get_ctz t key ctz
         | Error _ -> Lwt.return @@ Error (`Not_found key)
     in
     match Mirage_kv.Key.segments key with
     | [] -> Lwt.return @@ Error (`Value_expected key)
-    | basename::[] -> Fs.(get_value t root_pair basename >>= map_errors)
+    | basename::[] -> Fs.File_read.get_value t root_pair basename >>= map_errors
     | _ ->
       let dirname = Mirage_kv.Key.(parent key |> segments) in
-      Fs.find_directory t root_pair dirname >>= function
+      Fs.Find.find_directory t root_pair dirname >>= function
       | `Basename_on pair -> begin
-        Fs.get_value t pair (Mirage_kv.Key.basename key) >>= map_errors
+        Fs.File_read.get_value t pair (Mirage_kv.Key.basename key) >>= map_errors
         end
       | _ -> Lwt.return @@ Error (`Not_found key)
 
@@ -43,12 +43,12 @@ module Make(Sectors : Mirage_block.S) = struct
     let dir = Mirage_kv.Key.parent key in
     Fs.Find.find_directory_block_pair t root_pair (Mirage_kv.Key.segments dir) >>= function
     | `Basename_on block_pair ->
-      Fs.set_in_directory block_pair t (Mirage_kv.Key.basename key) data
+      Fs.File_write.set_in_directory block_pair t (Mirage_kv.Key.basename key) data
     | `No_id path -> begin
       Fs.mkdir t root_pair (Mirage_kv.Key.segments dir) >>= function
       | Error _ -> Lwt.return @@ (Error (`Not_found (Mirage_kv.Key.v path)))
       | Ok block_pair ->
-        Fs.set_in_directory block_pair t (Mirage_kv.Key.basename key) data
+        Fs.File_write.set_in_directory block_pair t (Mirage_kv.Key.basename key) data
       end
     | _ -> Lwt.return @@ Error (`Not_found key)
 
@@ -60,7 +60,7 @@ module Make(Sectors : Mirage_block.S) = struct
       | Ok entries -> Lwt.return @@ Ok (Fs.list_block entries)
     end
     | segments ->
-      Fs.find_directory t root_pair segments >>= function
+      Fs.Find.find_directory t root_pair segments >>= function
       | `No_id k -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v k))
       | `No_structs | `No_entry | `Bad_pointer ->
         Lwt.return @@ Error (`Not_found key)
