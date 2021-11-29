@@ -44,7 +44,7 @@ module Make(Sectors: Mirage_block.S) = struct
 
   module Traversal = struct
     let linked_blocks root =
-      let entries = List.flatten @@ List.map Littlefs.Commit.entries @@ Littlefs.Block.commits root in
+      let entries = Littlefs.Block.entries root in
       (* we call `compact` on the entry list because otherwise we'd incorrectly follow
        * deleted entries *)
       List.filter_map Littlefs.Entry.links (Littlefs.Entry.compact entries)
