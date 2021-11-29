@@ -14,6 +14,10 @@ let path =
              and indeed no hierarchy is supported. In effect, this is just a filename." in
   Cmdliner.Arg.(value & pos 2 string "example" & info ~doc ~docv:"PATH" [])
 
+let pp_ty fmt = function
+  | `Value -> Stdlib.Format.fprintf fmt "%s" "file"
+  | `Dictionary -> Stdlib.Format.fprintf fmt "%s" "directory"
+
 let ls image block_size path =
   let open Lwt.Infix in
   Lwt_main.run @@ (
@@ -22,15 +26,19 @@ let ls image block_size path =
   | Error _ -> Stdlib.Format.eprintf "Error doing the initial filesystem ls\n%!"; exit 1
   | Ok t ->
     Littlefs.list t (Mirage_kv.Key.v path) >>= function
-    | Error (`Not_found _key) -> Stdlib.Format.eprintf "key %s not found\n%!" path; exit 1
     | Error (`Value_expected _key) -> Stdlib.Format.eprintf "%s isn't bound to a key\n%!" path; exit 1
+    | Error (`Not_found key) -> begin
+      Littlefs.exists t (Mirage_kv.Key.v path) >>= function
+      | Ok (Some ty) -> Stdlib.Format.eprintf "%a : %s\n%!" pp_ty ty path;
+        Lwt.return_unit
+      | Ok None -> 
+        Stdlib.Format.eprintf "key %a not found\n%!" Mirage_kv.Key.pp key; exit 1
+      | Error _ ->
+        Stdlib.Format.eprintf "error attempting to find %a\n%!" Mirage_kv.Key.pp key; exit 2
+    end
     | Error _ -> Stdlib.Format.eprintf "filesystem was opened, but ls failed\n%!"; exit 2
     | Ok l ->
       let pp fmt (name, key_or_dict) =
-        let pp_ty fmt = function
-          | `Value -> Stdlib.Format.fprintf fmt "%s" "file"
-          | `Dictionary -> Stdlib.Format.fprintf fmt "%s" "directory"
-        in
         Stdlib.Format.fprintf fmt "%s : %a" name pp_ty key_or_dict
       in
       List.iter (fun e -> Stdlib.Format.printf "%a\n%!" pp e) l

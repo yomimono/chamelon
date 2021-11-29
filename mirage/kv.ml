@@ -57,6 +57,19 @@ module Make(Sectors : Mirage_block.S) = struct
       | `No_structs | `No_entry -> Lwt.return @@ Error (`Not_found key)
       | `Basename_on pair -> ls_in_dir pair
 
+  let exists t key =
+    (* TODO: just go look for the thing directly in the FS,
+     * instead of getting a list and then having to sort through it *)
+    list t (Mirage_kv.Key.parent key) >>= function
+    | Error _ as e -> Lwt.return e
+    | Ok l ->
+      let lookup (name, dict_or_val) =
+        if (String.compare name (Mirage_kv.Key.basename key)) = 0 then
+          Some dict_or_val
+        else None
+      in
+      Lwt.return @@ Ok (List.find_map lookup l)
+
   let connect = Fs.connect
 
   let format = Fs.format

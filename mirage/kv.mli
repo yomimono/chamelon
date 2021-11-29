@@ -17,8 +17,10 @@ module Make(Sectors: Mirage_block.S) : sig
   val format : t -> (unit, write_error) result Lwt.t
   val connect : Sectors.t -> program_block_size:int -> block_size:int -> (t, error) result Lwt.t
 
-  val get: t -> key -> (string, error) result Lwt.t
-  val list: t -> key -> ((string * [`Value | `Dictionary]) list, error) result Lwt.t
+  val exists : t -> key -> ([`Value | `Dictionary] option, error) result Lwt.t
+  val get : t -> key -> (string, error) result Lwt.t
+  val list : t -> key -> ((string * [`Value | `Dictionary]) list, error) result Lwt.t
+
   val set: t -> key -> string -> (unit, write_error) result Lwt.t
 
 end

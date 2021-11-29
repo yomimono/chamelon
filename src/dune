@@ -14,6 +14,8 @@
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_write.exe} test.img 4096 "diary.txt" "Dear diary, today I ate cheese. It was great."))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_write.exe} test.img 4096 "secrets/mom_dont_look" "I SAID NOT TO LOOK JEEZ"))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_ls.exe} test.img 4096 "/"))
+            (setenv OCAMLRUNPARAM b (run %{exe:lfs_ls.exe} test.img 4096 "/secrets/mom_dont_look"))
+            (setenv OCAMLRUNPARAM b (run %{exe:lfs_ls.exe} test.img 4096 "/autoexec.bat"))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_read.exe} test.img 4096 "diary.txt"))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_read.exe} test.img 4096 "autoexec.bat"))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_read.exe} test.img 4096 "secrets/mom_dont_look"))
