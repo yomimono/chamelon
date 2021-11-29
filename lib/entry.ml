@@ -8,6 +8,14 @@ let sizeof t =
 let is_type abstract_type (tag, _data) =
   (fst tag.Tag.type3) = abstract_type
 
+let info_of_entry (tag, data) =
+  match tag.Tag.type3 with
+  | (LFS_TYPE_NAME, 0x01) ->
+    Some (Cstruct.to_string data, `Value)
+  | (LFS_TYPE_NAME, 0x02) ->
+    Some (Cstruct.to_string data, `Dictionary)
+  | _ -> None
+
 let into_cstruct ~xor_tag_with cs t =
   Tag.into_cstruct ~xor_tag_with cs @@ fst t;
   Cstruct.blit (snd t) 0 cs Tag.size (Cstruct.length @@ snd t)
@@ -18,7 +26,7 @@ let to_cstruct ~xor_tag_with t =
   cs
 
 let links (tag, data) =
-  if Tag.is_file tag then begin
+  if Tag.is_file_struct tag then begin
     match (snd tag.Tag.type3) with
     | 0x00 -> begin
       match Dir.dirstruct_of_cstruct data with

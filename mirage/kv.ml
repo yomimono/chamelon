@@ -28,8 +28,13 @@ module Make(Sectors : Mirage_block.S) = struct
     let dir = Mirage_kv.Key.parent key in
     Fs.Find.find_directory t root_pair (Mirage_kv.Key.segments dir) >>= function
     | `Basename_on block_pair ->
+      (* the directory already exists, so just write the file *)
       Fs.File_write.set_in_directory block_pair t (Mirage_kv.Key.basename key) data
     | `No_id path -> begin
+        (* something along the path is missing, so make it. *)
+        (* note we need to call mkdir with the whole path (save the basename),
+         * so that we get all levels of directory we may need,
+         * not just the first thing that was found missing. *)
       Fs.mkdir t root_pair (Mirage_kv.Key.segments dir) >>= function
       | Error _ -> Lwt.return @@ (Error (`Not_found (Mirage_kv.Key.v path)))
       | Ok block_pair ->
@@ -38,21 +43,19 @@ module Make(Sectors : Mirage_block.S) = struct
     | _ -> Lwt.return @@ Error (`Not_found key)
 
   let list t key : ((string * [`Dictionary | `Value]) list, error) result Lwt.t =
-    match (Mirage_kv.Key.segments key) with
-    | [] -> begin
-      Fs.Find.entries_following_hard_tail t root_pair >>= function
+    let translate entries = List.filter_map Littlefs.Entry.info_of_entry entries in
+    let ls_in_dir dir_pair =
+      Fs.Find.all_entries_in_dir t dir_pair >>= function
       | Error _ -> Lwt.return @@ Error (`Not_found key)
-      | Ok entries -> Lwt.return @@ Ok (Fs.list_block entries)
-    end
+      | Ok entries -> Lwt.return @@ Ok (translate entries)
+    in
+    match (Mirage_kv.Key.segments key) with
+    | [] -> ls_in_dir root_pair
     | segments ->
       Fs.Find.find_directory t root_pair segments >>= function
       | `No_id k -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v k))
-      | `No_structs | `No_entry ->
-        Lwt.return @@ Error (`Not_found key)
-      | `Basename_on pair ->
-        Fs.Find.entries_following_hard_tail t pair >>= function
-        | Error _ -> Lwt.return @@ Error (`Not_found key)
-        | Ok entries -> Lwt.return @@ Ok (Fs.list_block entries)
+      | `No_structs | `No_entry -> Lwt.return @@ Error (`Not_found key)
+      | `Basename_on pair -> ls_in_dir pair
 
   let connect = Fs.connect
 

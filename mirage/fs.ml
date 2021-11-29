@@ -193,7 +193,7 @@ module Make(Sectors: Mirage_block.S) = struct
   end
 
   module Find : sig
-    val entries_following_hard_tail : t -> int64 * int64 -> (Littlefs.Entry.t list, error) result Lwt.t
+    val all_entries_in_dir : t -> int64 * int64 -> (Littlefs.Entry.t list, error) result Lwt.t
 
     val entries_of_name : t -> int64 * int64 -> string -> (Littlefs.Entry.t list, 
                                                            [`No_id
@@ -206,7 +206,7 @@ module Make(Sectors: Mirage_block.S) = struct
 
   end = struct
 
-    let rec entries_following_hard_tail t (block_pair : int64 * int64) =
+    let rec all_entries_in_dir t (block_pair : int64 * int64) =
       Read.block_of_block_pair t block_pair >>= function
       | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v "hard_tail"))
       | Ok block ->
@@ -214,38 +214,36 @@ module Make(Sectors: Mirage_block.S) = struct
         match List.filter_map Littlefs.Dir.hard_tail_links this_blocks_entries with
         | [] -> Lwt.return @@ Ok this_blocks_entries
         | nextpair::_ ->
-          entries_following_hard_tail t nextpair >>= function
+          all_entries_in_dir t nextpair >>= function
           | Ok entries -> Lwt.return @@ Ok (this_blocks_entries @ entries)
           | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v "hard_tail"))
 
     let entries_of_name t block_pair name =
       let entries_of_id entries id =
-        let matches (tag, _) =
-          0 = compare tag.Littlefs.Tag.id id
-        in
+        let matches (tag, _) = 0 = compare tag.Littlefs.Tag.id id in
         List.find_all matches entries
       in
       let id_of_key entries key =
-        let data_matches c =
-          0 = String.(compare key @@ Cstruct.to_string c)
-        in
+        let data_matches c = 0 = String.(compare key @@ Cstruct.to_string c) in
         let tag_matches t = Littlefs.Tag.(fst t.type3 = LFS_TYPE_NAME)
         in
         match List.find_opt (fun (tag, data) ->
             tag_matches tag && data_matches data
-          ) entries  with
+          ) entries with
         | Some (tag, _) -> Some tag.Littlefs.Tag.id
         | None -> None
       in
-      entries_following_hard_tail t block_pair >>= function
-      | Error _ as e -> Lwt.return e
-      | Ok entries ->
-        match id_of_key entries name with
-        | None -> Lwt.return @@ Error `No_id
-        | Some id ->
-          match entries_of_id entries id with
-          | []-> Lwt.return @@ Error `No_struct
-          | entries -> Lwt.return @@ Ok (Littlefs.Entry.compact entries)
+      let open Lwt_result in
+      all_entries_in_dir t block_pair >>= fun entries ->
+      match id_of_key entries name with
+      | None -> Lwt.return @@ Error `No_id
+      | Some id ->
+        match entries_of_id entries id with
+        | [] -> Lwt.return @@ Error `No_struct
+        | entries ->
+          (* compact the entries, so no deleted entries are operated on as if they're
+           * still valid *)
+          Lwt.return @@ Ok (Littlefs.Entry.compact entries)
 
     let rec find_directory t block key =
       match key with
@@ -269,7 +267,7 @@ module Make(Sectors: Mirage_block.S) = struct
       | [] -> Lwt.return (`Basename_on block_pair)
       | key::remaining ->
         Find.entries_of_name t block_pair key >>= function
-        | Error _ -> Lwt.return @@ `No_id key
+        | Error _ -> Lwt.return @@ `Not_found key
         | Ok l ->
           match List.filter_map Littlefs.Dir.of_entry l with
           | [] -> Lwt.return `No_structs
@@ -283,8 +281,11 @@ module Make(Sectors: Mirage_block.S) = struct
       | `Continue (_path, next_blocks) -> Lwt.return @@ Ok next_blocks
       | `Basename_on next_blocks -> Lwt.return @@ Ok next_blocks
       | _ ->
+        (* for any error case, try making the directory *)
+        (* TODO: it's probably wise to put a delete entry first here if we got No_structs
+         * or another "something weird happened" case *)
         Lwt_result.both (Allocate.get_block t) (Allocate.get_block t) >>= function
-        | Error _ -> Lwt.return @@ Error (`Not_found dirname)
+        | Error _ -> Lwt.return @@ Error (`No_space)
         | Ok (dir_block_0, dir_block_1) ->
           Read.block_of_block_pair t rootpair >>= function
           | Error _ -> Lwt.return @@ Error (`Not_found dirname)
@@ -294,7 +295,7 @@ module Make(Sectors: Mirage_block.S) = struct
             let dirstruct = Littlefs.Dir.mkdir ~to_pair:(dir_block_0, dir_block_1) dir_id in
             let new_block = Littlefs.Block.add_commit root_block [name; dirstruct] in
             Write.block_to_block_pair t new_block rootpair >>= function
-            | Error _ -> Lwt.return @@ Error (`Not_found dirname)
+            | Error _ -> Lwt.return @@ Error `No_space
             | Ok () -> Lwt.return @@ Ok (dir_block_0, dir_block_1)
     in
     match key with
@@ -345,9 +346,7 @@ module Make(Sectors: Mirage_block.S) = struct
                           Littlefs.Tag.((snd tag.type3 = 0x02)
                                        ))) in
         match inline_files l, ctz_files l with
-        (* TODO: we should make sure a dictionary entry is there
-         * before returning this error *)
-        | None, None -> Error (`Value_expected key)
+        | None, None -> Error (`Not_found key)
         | Some (_tag, data), None -> Ok (`Inline (Cstruct.to_string data))
         | _, Some (_, ctz) ->
           match Littlefs.File.ctz_of_cstruct ctz with
@@ -358,7 +357,8 @@ module Make(Sectors: Mirage_block.S) = struct
       let map_errors = function
         | Ok (`Inline d) -> Lwt.return (Ok d)
         | Ok (`Ctz ctz) -> get_ctz t key ctz
-        | Error _ -> Lwt.return @@ Error (`Not_found key)
+        | Error (`Not_found _) -> Lwt.return @@ Error (`Not_found key)
+        | Error (`Value_expected _) -> Lwt.return @@ Error (`Value_expected key)
       in
       match Mirage_kv.Key.segments key with
       | [] -> Lwt.return @@ Error (`Value_expected key)
@@ -452,19 +452,6 @@ module Make(Sectors: Mirage_block.S) = struct
 
   end
 
-  let list_block entries =
-    (* we want to list all names in all commits in the block,
-     * preserving information about which of them are files and which directories *)
-    let info_of_entry (tag, data) =
-      match tag.Littlefs.Tag.type3 with
-      | (LFS_TYPE_NAME, 0x01) ->
-        Some (Cstruct.to_string data, `Value)
-      | (LFS_TYPE_NAME, 0x02) ->
-        Some (Cstruct.to_string data, `Dictionary)
-      | _ -> None
-    in
-    List.filter_map info_of_entry entries
-
   let connect device ~program_block_size ~block_size : (t, error) result Lwt.t =
     This_Block.connect ~block_size device >>= fun block ->
     (* TODO: setting an empty lookahead to generate a good-enough `t`
@@ -492,9 +479,10 @@ module Make(Sectors: Mirage_block.S) = struct
     let superblock_inline_struct = Littlefs.Superblock.inline_struct (Int32.of_int block_size) (Int32.of_int block_count) in
     let block_0 = Littlefs.Block.of_entries ~revision_count:1 [name; superblock_inline_struct] in
     let block_1 = Littlefs.Block.of_entries ~revision_count:2 [name; superblock_inline_struct] in
-    write_whole_block (fst root_pair) block_0 >>= fun b0 ->
-    write_whole_block (snd root_pair) block_1 >>= fun b1 ->
-    match b0, b1 with
-    | Ok (), Ok () -> Lwt.return @@ Ok ()
-    | _, _ -> Lwt.return @@ Error `No_space
+    Lwt_result.both
+    (write_whole_block (fst root_pair) block_0)
+    (write_whole_block (snd root_pair) block_1) >>= function
+    | Ok ((), ()) -> Lwt.return @@ Ok ()
+    | _ -> Lwt.return @@ Error `No_space
+
 end
