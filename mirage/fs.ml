@@ -26,23 +26,27 @@ module Make(Sectors: Mirage_block.S) = struct
                                    without success. *)
   ]
 
-  let block_of_block_number {block_size; block; program_block_size; _} block_location =
-    let cs = Cstruct.create block_size in
-    This_Block.read block block_location [cs] >>= function
-    | Error b -> Lwt.return @@ Error (`Block b)
-    | Ok () ->
-      match Littlefs.Block.of_cstruct ~program_block_size cs with
-      | Error _ -> Lwt.return @@ Error (`Littlefs `Corrupt)
-      | Ok extant_block -> Lwt.return @@ Ok extant_block
+  module Read = struct
 
-  let block_of_block_pair t (l1, l2) =
-    let open Lwt_result.Infix in
-    Lwt_result.both (block_of_block_number t l1) (block_of_block_number t l2) >>= fun (b1, b2) ->
-    if Littlefs.Block.(compare (revision_count b1) (revision_count b2)) < 0
-    then Lwt.return @@ Ok b2
-    else Lwt.return @@ Ok b1
+    let block_of_block_number {block_size; block; program_block_size; _} block_location =
+      let cs = Cstruct.create block_size in
+      This_Block.read block block_location [cs] >>= function
+      | Error b -> Lwt.return @@ Error (`Block b)
+      | Ok () ->
+        match Littlefs.Block.of_cstruct ~program_block_size cs with
+        | Error _ -> Lwt.return @@ Error (`Littlefs `Corrupt)
+        | Ok extant_block -> Lwt.return @@ Ok extant_block
 
-  module Traversal = struct
+    let block_of_block_pair t (l1, l2) =
+      let open Lwt_result.Infix in
+      Lwt_result.both (block_of_block_number t l1) (block_of_block_number t l2) >>= fun (b1, b2) ->
+      if Littlefs.Block.(compare (revision_count b1) (revision_count b2)) < 0
+      then Lwt.return @@ Ok b2
+      else Lwt.return @@ Ok b1
+          
+  end
+
+  module Traverse = struct
     let linked_blocks root =
       let entries = Littlefs.Block.entries root in
       (* we call `compact` on the entry list because otherwise we'd incorrectly follow
@@ -68,7 +72,7 @@ module Make(Sectors: Mirage_block.S) = struct
           get_ctz_pointers t (Ok []) index (Int64.of_int32 pointer)
         end
       | Littlefs.Entry.Metadata (a, b) ->
-        block_of_block_pair t (a, b) >>= function
+        Read.block_of_block_pair t (a, b) >>= function
         | Error _ -> Lwt.return @@ Ok []
         | Ok block ->
           let links = linked_blocks block in
@@ -83,7 +87,7 @@ module Make(Sectors: Mirage_block.S) = struct
  * linked list starting at [pair], which may well be [pair] itself *)
     let rec last_block t pair =
       let open Lwt_result.Infix in
-      block_of_block_pair t pair >>= fun block ->
+      Read.block_of_block_pair t pair >>= fun block ->
       match List.find_opt (fun e ->
           Littlefs.Tag.is_hardtail (fst e)
         ) (Littlefs.Block.entries block) with
@@ -93,7 +97,7 @@ module Make(Sectors: Mirage_block.S) = struct
         | Some next_pair -> last_block t next_pair
   end
 
-  module Allocator = struct
+  module Allocate = struct
 
     let opp = function
       | `Before -> `After
@@ -118,7 +122,7 @@ module Make(Sectors: Mirage_block.S) = struct
         t.lookahead := bias, l;
         Lwt.return @@ Ok block
       | bias, [] ->
-        Traversal.follow_links t (Littlefs.Entry.Metadata root_pair) >|= function
+        Traverse.follow_links t (Littlefs.Entry.Metadata root_pair) >|= function
         | Error _ -> Error (`Littlefs `Corrupt) (* TODO: not quite *)
         | Ok used_blocks ->
           match unused ~bias t used_blocks with
@@ -157,7 +161,7 @@ module Make(Sectors: Mirage_block.S) = struct
 
   let rec block_to_block_pair t data (b1, b2) =
     let split () =
-      Lwt_result.both (Allocator.get_block t) (Allocator.get_block t) >>= function
+      Lwt_result.both (Allocate.get_block t) (Allocate.get_block t) >>= function
       | Error _ -> Lwt.return @@ Error `No_space
       | Ok (a1, a2) -> begin
         (* it's not strictly necessary to order these,
@@ -192,92 +196,96 @@ module Make(Sectors: Mirage_block.S) = struct
     | Error `Split_emergency -> split ()
     | Error `No_space -> Lwt.return @@ Error `No_space
 
-  let rec entries_following_hard_tail t (block_pair : int64 * int64) =
-    block_of_block_pair t block_pair >>= function
-    | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v "hard_tail"))
-    | Ok block ->
-      let this_blocks_entries = Littlefs.Block.entries block in
-      match List.filter_map Littlefs.Dir.hard_tail_links this_blocks_entries with
-      | [] -> Lwt.return @@ Ok this_blocks_entries
-      | nextpair::_ ->
-        entries_following_hard_tail t nextpair >>= function
-        | Ok entries -> Lwt.return @@ Ok (this_blocks_entries @ entries)
-        | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v "hard_tail"))
+  module Find = struct
 
-  let entries_of_name t block_pair name =
-    let entries_of_id entries id =
-      let matches (tag, _) =
-        0 = compare tag.Littlefs.Tag.id id
-      in
-      List.find_all matches entries
-    in
-    let id_of_key entries key =
-      let data_matches c =
-        0 = String.(compare key @@ Cstruct.to_string c)
-      in
-      let tag_matches t = Littlefs.Tag.(fst t.type3 = LFS_TYPE_NAME)
-      in
-      match List.find_opt (fun (tag, data) ->
-          tag_matches tag && data_matches data
-        ) entries  with
-    | Some (tag, _) -> Some tag.Littlefs.Tag.id
-    | None -> None
-    in
-    entries_following_hard_tail t block_pair >>= function
-    | Error _ as e -> Lwt.return e
-    | Ok entries ->
-      match id_of_key entries name with
-      | None -> Lwt.return @@ Error `No_id
-      | Some id ->
-        match entries_of_id entries id with
-        | []-> Lwt.return @@ Error `No_struct
-        | entries -> Lwt.return @@ Ok (Littlefs.Entry.compact entries)
+    let rec entries_following_hard_tail t (block_pair : int64 * int64) =
+      Read.block_of_block_pair t block_pair >>= function
+      | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v "hard_tail"))
+      | Ok block ->
+        let this_blocks_entries = Littlefs.Block.entries block in
+        match List.filter_map Littlefs.Dir.hard_tail_links this_blocks_entries with
+        | [] -> Lwt.return @@ Ok this_blocks_entries
+        | nextpair::_ ->
+          entries_following_hard_tail t nextpair >>= function
+          | Ok entries -> Lwt.return @@ Ok (this_blocks_entries @ entries)
+          | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v "hard_tail"))
 
-  (** [follow_directory_pointers t block_pair l] returns:
-   * an error or
-   * `Basename_on block_pair: you have reached the termination of the directory traversal;
-   * items within the path can be found at [block_pair]
-   * `Continue (l, block_pair) : there is more directory structure to be traversed;
-   * the remaining elements [l] can be found starting at [block_pair]
-   * *)
-  let follow_directory_pointers t block_pair = function
-    | [] -> Lwt.return (`Basename_on block_pair)
-    | key::remaining ->
-      entries_of_name t block_pair key >>= function
-      | Error _ -> Lwt.return @@ `No_id key
-      | Ok l ->
-        match List.filter_map Littlefs.Dir.of_entry l with
-        | [] -> Lwt.return `No_structs
-        | next_blocks::_ -> Lwt.return (`Continue (remaining, next_blocks))
+    let entries_of_name t block_pair name =
+      let entries_of_id entries id =
+        let matches (tag, _) =
+          0 = compare tag.Littlefs.Tag.id id
+        in
+        List.find_all matches entries
+      in
+      let id_of_key entries key =
+        let data_matches c =
+          0 = String.(compare key @@ Cstruct.to_string c)
+        in
+        let tag_matches t = Littlefs.Tag.(fst t.type3 = LFS_TYPE_NAME)
+        in
+        match List.find_opt (fun (tag, data) ->
+            tag_matches tag && data_matches data
+          ) entries  with
+        | Some (tag, _) -> Some tag.Littlefs.Tag.id
+        | None -> None
+      in
+      entries_following_hard_tail t block_pair >>= function
+      | Error _ as e -> Lwt.return e
+      | Ok entries ->
+        match id_of_key entries name with
+        | None -> Lwt.return @@ Error `No_id
+        | Some id ->
+          match entries_of_id entries id with
+          | []-> Lwt.return @@ Error `No_struct
+          | entries -> Lwt.return @@ Ok (Littlefs.Entry.compact entries)
 
-  let rec find_directory_block_pair t block_pair key =
-    follow_directory_pointers t block_pair key >>= function
-    | `Continue (path, next_blocks) -> find_directory_block_pair t next_blocks path
-    | `No_id child ->
-      let path = String.concat "/" key in
-      let path = Mirage_kv.Key.(to_string @@ v path / child) in
-      Lwt.return @@ `No_id path
-    | `No_structs -> Lwt.return `No_structs
-    | `Basename_on block_pair ->
-      Traversal.last_block t block_pair >|= function
-      | Error _ -> `Basename_on block_pair
-      | Ok last_pair -> `Basename_on last_pair
+    (** [follow_directory_pointers t block_pair l] returns:
+     * an error or
+     * `Basename_on block_pair: you have reached the termination of the directory traversal;
+     * items within the path can be found at [block_pair]
+     * `Continue (l, block_pair) : there is more directory structure to be traversed;
+     * the remaining elements [l] can be found starting at [block_pair]
+     * *)
+    let follow_directory_pointers t block_pair = function
+      | [] -> Lwt.return (`Basename_on block_pair)
+      | key::remaining ->
+        entries_of_name t block_pair key >>= function
+        | Error _ -> Lwt.return @@ `No_id key
+        | Ok l ->
+          match List.filter_map Littlefs.Dir.of_entry l with
+          | [] -> Lwt.return `No_structs
+          | next_blocks::_ -> Lwt.return (`Continue (remaining, next_blocks))
+
+    let rec find_directory_block_pair t block_pair key =
+      follow_directory_pointers t block_pair key >>= function
+      | `Continue (path, next_blocks) -> find_directory_block_pair t next_blocks path
+      | `No_id child ->
+        let path = String.concat "/" key in
+        let path = Mirage_kv.Key.(to_string @@ v path / child) in
+        Lwt.return @@ `No_id path
+      | `No_structs -> Lwt.return `No_structs
+      | `Basename_on block_pair ->
+        Traverse.last_block t block_pair >|= function
+        | Error _ -> `Basename_on block_pair
+        | Ok last_pair -> `Basename_on last_pair
+
+  end
 
   (* `dirname` is the name of the directory relative to `rootpair`. It should be
    * a value that could be returned from `Mirage_kv.Key.basename` - in other words
    * it should contain no separators. *)
   let plain_mkdir t rootpair (dirname : string) =
-    follow_directory_pointers t rootpair [dirname] >>= function
+    Find.follow_directory_pointers t rootpair [dirname] >>= function
     | `Continue (_path, next_blocks) -> Lwt.return @@ Ok next_blocks
     | `Basename_on next_blocks -> Lwt.return @@ Ok next_blocks
     | _ ->
-      Allocator.get_block t >>= function
+      Allocate.get_block t >>= function
       | Error _ -> Lwt.return @@ Error (`Not_found dirname)
       | Ok dir_block_0 ->
-        Allocator.get_block t >>= function
+        Allocate.get_block t >>= function
         | Error _ -> Lwt.return @@ Error (`Not_found dirname)
         | Ok dir_block_1 ->
-          block_of_block_pair t rootpair >>= function
+          Read.block_of_block_pair t rootpair >>= function
           | Error _ -> Lwt.return @@ Error (`Not_found dirname)
           | Ok root_block ->
             let dir_id = Littlefs.Block.(IdSet.max_elt @@ ids root_block) + 1 in
@@ -301,7 +309,7 @@ module Make(Sectors: Mirage_block.S) = struct
     match key with
     | [] -> Lwt.return (`Basename_on block)
     | key::remaining ->
-      entries_of_name t block key >>= function
+      Find.entries_of_name t block key >>= function
       | Error `No_struct -> Lwt.return @@ `No_entry
       | Error _ -> Lwt.return @@ `No_id key
       | Ok l ->
@@ -333,7 +341,7 @@ module Make(Sectors: Mirage_block.S) = struct
       Lwt.return @@ Ok s
 
   let get_value t block_pair key =
-    entries_of_name t block_pair key >|= function
+    Find.entries_of_name t block_pair key >|= function
     | Error _ -> Error (`Not_found key)
     | Ok l ->
       let inline_files = List.find_opt (fun (tag, _data) ->
@@ -361,7 +369,7 @@ module Make(Sectors: Mirage_block.S) = struct
        * the *last* block for inclusion in the ctz structure *)
       Lwt.return @@ Ok l
     end else begin
-      Allocator.get_block t >>= function
+      Allocate.get_block t >>= function
       | Error _ -> Lwt.return @@ Error `No_space
       | Ok block_number ->
         let pointer = Int64.to_int32 block_number in
@@ -385,7 +393,7 @@ module Make(Sectors: Mirage_block.S) = struct
     end
 
   let write_in_ctz root_block_pair t filename data =
-    block_of_block_pair t root_block_pair >>= function
+    Read.block_of_block_pair t root_block_pair >>= function
     | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v filename))
     | Ok root ->
       let file_size = String.length data in
@@ -407,7 +415,7 @@ module Make(Sectors: Mirage_block.S) = struct
         | Ok () -> Lwt.return @@ Ok ()
 
   let write_inline block_pair t filename data =
-    block_of_block_pair t block_pair >>= function
+    Read.block_of_block_pair t block_pair >>= function
     | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v filename))
     | Ok extant_block ->
       let used_ids = Littlefs.Block.ids extant_block in
@@ -449,10 +457,10 @@ module Make(Sectors: Mirage_block.S) = struct
      * in the type system somehow,
      * or have them only take the arguments they need instead of a full `t` *)
     let t = {block; block_size; program_block_size; lookahead = ref (`Before, [])} in
-    Traversal.follow_links t (Littlefs.Entry.Metadata root_pair) >>= function
+    Traverse.follow_links t (Littlefs.Entry.Metadata root_pair) >>= function
     | Error _e -> Lwt.fail_with "couldn't get list of used blocks"
     | Ok used_blocks ->
-      let open Allocator in
+      let open Allocate in
       let lookahead = ref (`After, unused ~bias:`Before t used_blocks) in
       Lwt.return @@ Ok {lookahead; block; block_size; program_block_size}
 

@@ -30,9 +30,7 @@ module Make(Sectors : Mirage_block.S) = struct
     in
     match Mirage_kv.Key.segments key with
     | [] -> Lwt.return @@ Error (`Value_expected key)
-    | basename::[] -> begin
-        Fs.(get_value t root_pair basename >>= map_errors)
-      end
+    | basename::[] -> Fs.(get_value t root_pair basename >>= map_errors)
     | _ ->
       let dirname = Mirage_kv.Key.(parent key |> segments) in
       Fs.find_directory t root_pair dirname >>= function
@@ -43,7 +41,7 @@ module Make(Sectors : Mirage_block.S) = struct
 
   let set t key data : (unit, write_error) result Lwt.t =
     let dir = Mirage_kv.Key.parent key in
-    Fs.find_directory_block_pair t root_pair (Mirage_kv.Key.segments dir) >>= function
+    Fs.Find.find_directory_block_pair t root_pair (Mirage_kv.Key.segments dir) >>= function
     | `Basename_on block_pair ->
       Fs.set_in_directory block_pair t (Mirage_kv.Key.basename key) data
     | `No_id path -> begin
@@ -57,7 +55,7 @@ module Make(Sectors : Mirage_block.S) = struct
   let list t key : ((string * [`Dictionary | `Value]) list, error) result Lwt.t =
     match (Mirage_kv.Key.segments key) with
     | [] -> begin
-      Fs.entries_following_hard_tail t root_pair >>= function
+      Fs.Find.entries_following_hard_tail t root_pair >>= function
       | Error _ -> Lwt.return @@ Error (`Not_found key)
       | Ok entries -> Lwt.return @@ Ok (Fs.list_block entries)
     end
@@ -67,7 +65,7 @@ module Make(Sectors : Mirage_block.S) = struct
       | `No_structs | `No_entry | `Bad_pointer ->
         Lwt.return @@ Error (`Not_found key)
       | `Basename_on pair ->
-        Fs.entries_following_hard_tail t pair >>= function
+        Fs.Find.entries_following_hard_tail t pair >>= function
         | Error _ -> Lwt.return @@ Error (`Not_found key)
         | Ok entries -> Lwt.return @@ Ok (Fs.list_block entries)
 
