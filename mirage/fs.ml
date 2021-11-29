@@ -462,8 +462,7 @@ module Make(Sectors: Mirage_block.S) = struct
       | Error _ as e -> Lwt.return e
       | Ok [] -> Lwt.return @@ Error `No_space
       | Ok ((_last_index, last_pointer)::_) ->
-        let used_ids = Littlefs.Block.ids root in
-        let next = match Littlefs.Block.IdSet.max_elt_opt used_ids with
+        let next = match Littlefs.Block.(IdSet.max_elt_opt @@ ids root) with
           | None -> 1
           | Some n -> n + 1
         in
