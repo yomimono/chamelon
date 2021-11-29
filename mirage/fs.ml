@@ -329,36 +329,6 @@ module Make(Sectors: Mirage_block.S) = struct
         | [] -> Lwt.return `No_structs
         | next_blocks::_ -> find_directory t next_blocks remaining
 
-  let list_block entries =
-    (* we want to list all names in all commits in the block,
-     * preserving information about which of them are files and which directories *)
-    let info_of_entry (tag, data) =
-      match tag.Littlefs.Tag.type3 with
-      | (LFS_TYPE_NAME, 0x01) ->
-        Some (Cstruct.to_string data, `Value)
-      | (LFS_TYPE_NAME, 0x02) ->
-        Some (Cstruct.to_string data, `Dictionary)
-      | _ -> None
-    in
-    List.filter_map info_of_entry entries
-
-  let list t key : ((string * [`Dictionary | `Value]) list, error) result Lwt.t =
-    match (Mirage_kv.Key.segments key) with
-    | [] -> begin
-      entries_following_hard_tail t root_pair >>= function
-      | Error _ -> Lwt.return @@ Error (`Not_found key)
-      | Ok entries -> Lwt.return @@ Ok (list_block entries)
-    end
-    | segments ->
-      find_directory t root_pair segments >>= function
-      | `No_id k -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v k))
-      | `No_structs | `No_entry | `Bad_pointer ->
-        Lwt.return @@ Error (`Not_found key)
-      | `Basename_on pair ->
-        entries_following_hard_tail t pair >>= function
-        | Error _ -> Lwt.return @@ Error (`Not_found key)
-        | Ok entries -> Lwt.return @@ Ok (list_block entries)
-
   let get_ctz t key (pointer, length) =
     let rec read_block l index pointer =
       let data = Cstruct.create t.block_size in
@@ -404,25 +374,6 @@ module Make(Sectors: Mirage_block.S) = struct
         match Littlefs.File.ctz_of_cstruct ctz with
         | Some (pointer, length) -> Ok (`Ctz (Int64.of_int32 pointer, Int32.to_int length))
         | None -> Error (`Value_expected key)
-
-  let get t key : (string, error) result Lwt.t =
-    let map_errors = function
-        | Ok (`Inline d) -> Lwt.return (Ok d)
-        | Ok (`Ctz ctz) -> get_ctz t key ctz
-        | Error _ -> Lwt.return @@ Error (`Not_found key)
-    in
-    match Mirage_kv.Key.segments key with
-    | [] -> Lwt.return @@ Error (`Value_expected key)
-    | basename::[] -> begin
-        get_value t root_pair basename >>= map_errors
-      end
-    | _ ->
-      let dirname = Mirage_kv.Key.(parent key |> segments) in
-      find_directory t root_pair dirname >>= function
-      | `Basename_on pair -> begin
-        get_value t pair (Mirage_kv.Key.basename key) >>= map_errors
-        end
-      | _ -> Lwt.return @@ Error (`Not_found key)
 
   let rec write_ctz_block t l index so_far data =
     if Int.compare so_far (String.length data) >= 0 then begin
@@ -496,18 +447,18 @@ module Make(Sectors: Mirage_block.S) = struct
     else
       write_inline block_pair t filename data
 
-  let set t key data : (unit, write_error) result Lwt.t =
-    let dir = Mirage_kv.Key.parent key in
-    find_directory_block_pair t root_pair (Mirage_kv.Key.segments dir) >>= function
-    | `Basename_on block_pair ->
-      set_in_directory block_pair t (Mirage_kv.Key.basename key) data
-    | `No_id path -> begin
-      mkdir t root_pair (Mirage_kv.Key.segments dir) >>= function
-      | Error _ -> Lwt.return @@ (Error (`Not_found (Mirage_kv.Key.v path)))
-      | Ok block_pair ->
-        set_in_directory block_pair t (Mirage_kv.Key.basename key) data
-      end
-    | _ -> Lwt.return @@ Error (`Not_found key)
+  let list_block entries =
+    (* we want to list all names in all commits in the block,
+     * preserving information about which of them are files and which directories *)
+    let info_of_entry (tag, data) =
+      match tag.Littlefs.Tag.type3 with
+      | (LFS_TYPE_NAME, 0x01) ->
+        Some (Cstruct.to_string data, `Value)
+      | (LFS_TYPE_NAME, 0x02) ->
+        Some (Cstruct.to_string data, `Dictionary)
+      | _ -> None
+    in
+    List.filter_map info_of_entry entries
 
   let connect device ~program_block_size ~block_size : (t, error) result Lwt.t =
     This_Block.connect ~block_size device >>= fun block ->

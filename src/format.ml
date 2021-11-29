@@ -1,5 +1,5 @@
 module Mirage_sectors = Block (* disambiguate this from Littlefs.Block *)
-module Littlefs = Fs.Make(Mirage_sectors)
+module Littlefs = Kv.Make(Mirage_sectors)
 
 let program_block_size =
   let doc = "program block size in bytes" in

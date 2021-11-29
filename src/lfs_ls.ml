@@ -1,5 +1,5 @@
 module Mirage_block = Block (* disambiguate this from Littlefs.Block *)
-module Littlefs = Fs.Make(Mirage_block)
+module Littlefs = Kv.Make(Mirage_block)
 
 let image =
   let doc = "path to the filesystem image" in
