@@ -99,6 +99,26 @@ let ids t =
   let block_ids = List.(flatten @@ map commit_ids t.commits) in
   IdSet.of_list block_ids
 
+let split block next_blockpair =
+  match block.commits with
+  | [] -> (* trivial case - just add the hardtail to block,
+             since we have no commits to move *)
+    (* we'll overwhelmingly more often end up in this case, because
+     * in most situations we'll compact before we split,
+     * meaning that there will be only 1 commit on the block *)
+    let block = add_commit block [Dir.hard_tail_at next_blockpair] in
+    (block, of_entries ~revision_count:0 [])
+  | _ ->
+    let entries = entries block |> Entry.compact in
+    let length = List.length entries in
+    let half = (List.length entries) / 2 in
+    let first_half = List.init half (fun i -> List.nth entries i) in
+    let second_half = List.init (length - half) (fun i -> List.nth entries (half + i)) in
+    let new_block = of_entries ~revision_count:0 second_half in
+    let old_block = of_entries ~revision_count:(revision_count block) first_half in
+    let old_block = add_commit old_block [Dir.hard_tail_at next_blockpair] in
+    (old_block, new_block)
+
 let to_cstruct ~program_block_size ~block_size block =
   let cs = Cstruct.create block_size in
   let res = into_cstruct ~program_block_size cs block in

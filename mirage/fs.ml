@@ -129,26 +129,6 @@ module Make(Sectors: Mirage_block.S) = struct
 
   end
 
-  let split block next_blockpair =
-    match Littlefs.Block.commits block with
-    | [] -> (* trivial case - just add the hardtail to block,
-               since we have no commits to move *)
-      (* we'll overwhelmingly more often end up in this case, because
-       * in most situations we'll compact before we split,
-       * meaning that there will be only 1 commit on the block *)
-      let block = Littlefs.Block.add_commit block [Littlefs.Dir.hard_tail_at next_blockpair] in
-      (block, Littlefs.Block.of_entries ~revision_count:0 [])
-    | _ ->
-      let entries = Littlefs.Block.entries block |> Littlefs.Entry.compact in
-      let length = List.length entries in
-      let half = (List.length entries) / 2 in
-      let first_half = List.init half (fun i -> List.nth entries i) in
-      let second_half = List.init (length - half) (fun i -> List.nth entries (half + i)) in
-      let new_block = Littlefs.Block.of_entries ~revision_count:0 second_half in
-      let old_block = Littlefs.Block.(of_entries ~revision_count:(revision_count block) first_half) in
-      let old_block = Littlefs.Block.add_commit old_block [Littlefs.Dir.hard_tail_at next_blockpair] in
-      (old_block, new_block)
-
   (* from the littlefs spec, we should be checking whether
    * the on-disk data matches what we have in memory after
    * doing this write. Then if it doesn't, we should rewrite
@@ -182,7 +162,7 @@ module Make(Sectors: Mirage_block.S) = struct
       | Ok (a1, a2) -> begin
         (* it's not strictly necessary to order these,
          * but it makes it easier for the debugging human to "reason about" *)
-        let old_block, new_block = split data ((min a1 a2), (max a1 a2)) in
+        let old_block, new_block = Littlefs.Block.split data ((min a1 a2), (max a1 a2)) in
         Lwt_result.both
           (block_to_block_pair t old_block (b1, b2))
           (block_to_block_pair t new_block (a1, a2)) >>= function
