@@ -111,7 +111,7 @@ let split block next_blockpair =
   | _ ->
     let entries = entries block |> Entry.compact in
     let length = List.length entries in
-    let half = (List.length entries) / 2 in
+    let half = length / 2 in
     let first_half = List.init half (fun i -> List.nth entries i) in
     let second_half = List.init (length - half) (fun i -> List.nth entries (half + i)) in
     let new_block = of_entries ~revision_count:0 second_half in
