@@ -9,6 +9,7 @@ val commits : t -> Commit.t list
 val revision_count : t -> int
 
 val split : t -> int64 * int64 -> t * t
+val linked_blocks : t -> Entry.link list
 
 (* given a list of commits, assemble a block *)
 val of_commits : revision_count:int -> Commit.t list -> t

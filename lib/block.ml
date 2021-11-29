@@ -25,6 +25,11 @@ let crc_of_revision_count revision_count =
   (* hey hey, ho ho, we don't want no overflow *)
   Optint.((logand) revision_count_crc @@ of_unsigned_int32 0xffffffffl)
 
+let linked_blocks t =
+  (* we call `compact` on the entry list because otherwise we'd incorrectly follow
+   * deleted entries *)
+  List.filter_map Entry.links @@ Entry.compact @@ entries t
+
 let of_commits ~revision_count commits =
   (* we have to redo the crc for the first commit when the revision count changes :( *)
   (* we don't have to recalculate CRCs for any subsequent commits because the only data

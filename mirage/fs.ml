@@ -47,12 +47,6 @@ module Make(Sectors: Mirage_block.S) = struct
   end
 
   module Traverse = struct
-    let linked_blocks root =
-      let entries = Littlefs.Block.entries root in
-      (* we call `compact` on the entry list because otherwise we'd incorrectly follow
-       * deleted entries *)
-      List.filter_map Littlefs.Entry.links (Littlefs.Entry.compact entries)
-
     let rec get_ctz_pointers t l index pointer =
       match l with
       | Error _ as e -> Lwt.return e
@@ -75,7 +69,7 @@ module Make(Sectors: Mirage_block.S) = struct
         Read.block_of_block_pair t (a, b) >>= function
         | Error _ -> Lwt.return @@ Ok []
         | Ok block ->
-          let links = linked_blocks block in
+          let links = Littlefs.Block.linked_blocks block in
           Lwt_list.fold_left_s (fun l link ->
               follow_links t link >>= function
               | Error _ -> Lwt.return @@ l
@@ -133,70 +127,84 @@ module Make(Sectors: Mirage_block.S) = struct
 
   end
 
-  (* from the littlefs spec, we should be checking whether
-   * the on-disk data matches what we have in memory after
-   * doing this write. Then if it doesn't, we should rewrite
-   * to a different block, and note the block as bad so we don't
-   * try to write to it in the future.
-   *
-   * I don't think that's necessary in our execution context.
-   * we're not writing directly to a flash controller,
-   * we're probably writing to a file on another filesystem
-   * managed by an OS with its own bad block detection.
-   * That's my excuse for punting on it for now, anyway. *)
-  let block_to_block_number t data block_location =
-    let {block_size; block; program_block_size; _} = t in
-    let cs = Cstruct.create block_size in
-    match Littlefs.Block.into_cstruct ~program_block_size cs data with
-    | `Split_emergency -> Lwt.return @@ Error `Split_emergency
-    | `Split -> begin
-      This_Block.write block block_location [cs] >>= function
-      | Error _ -> Lwt.return @@ Error `Split_emergency
-      | Ok () -> Lwt.return @@ Error `Split
-    end
-    | `Ok ->
-      This_Block.write block block_location [cs] >>= function
-      | Error _ -> Lwt.return @@ Error `No_space
-      | Ok () -> Lwt.return @@ Ok `Done
+  module Write = struct
+    (* from the littlefs spec, we should be checking whether
+     * the on-disk data matches what we have in memory after
+     * doing this write. Then if it doesn't, we should rewrite
+     * to a different block, and note the block as bad so we don't
+     * try to write to it in the future.
+     *
+     * I don't think that's necessary in our execution context.
+     * we're not writing directly to a flash controller,
+     * we're probably writing to a file on another filesystem
+     * managed by an OS with its own bad block detection.
+     * That's my excuse for punting on it for now, anyway. *)
+    let block_to_block_number t data block_location =
+      let {block_size; block; program_block_size; _} = t in
+      let cs = Cstruct.create block_size in
+      match Littlefs.Block.into_cstruct ~program_block_size cs data with
+      | `Split_emergency -> Lwt.return @@ Error `Split_emergency
+      | `Split -> begin
+          This_Block.write block block_location [cs] >>= function
+          | Error _ -> Lwt.return @@ Error `Split_emergency
+          | Ok () -> Lwt.return @@ Error `Split
+        end
+      | `Ok ->
+        This_Block.write block block_location [cs] >>= function
+        | Error _ -> Lwt.return @@ Error `No_space
+        | Ok () -> Lwt.return @@ Ok `Done
 
-  let rec block_to_block_pair t data (b1, b2) =
-    let split () =
-      Lwt_result.both (Allocate.get_block t) (Allocate.get_block t) >>= function
-      | Error _ -> Lwt.return @@ Error `No_space
-      | Ok (a1, a2) -> begin
-        (* it's not strictly necessary to order these,
-         * but it makes it easier for the debugging human to "reason about" *)
-        let old_block, new_block = Littlefs.Block.split data ((min a1 a2), (max a1 a2)) in
-        Lwt_result.both
-          (block_to_block_pair t old_block (b1, b2))
-          (block_to_block_pair t new_block (a1, a2)) >>= function
-        | Error `Split | Error `Split_emergency ->
-          Lwt.return @@ Error `No_space
-        | Error _ as e -> Lwt.return e
-        | Ok ((), ()) -> Lwt.return @@ Ok ()
-      end
-    in
-    Lwt_result.both
-      (block_to_block_number t data b1)
-      (block_to_block_number t data b2)
-    >>= function
-    | Ok _ -> Lwt.return @@ Ok ()
-        (* `Split happens when the write did succeed, but a split operation
-         * needs to happen to provide future problems *)
-    | Error `Split -> begin
-        (* try a compaction first *)
-        Lwt_result.both
-          (block_to_block_number t (Littlefs.Block.compact data) b1)
-          (block_to_block_number t (Littlefs.Block.compact data) b2) 
-        >>= function
-        | Ok _ -> Lwt.return @@ Ok ()
-        | Error `Split | Error `Split_emergency -> split ()
-        | Error `No_space -> Lwt.return @@ Error `No_space
-      end
-    | Error `Split_emergency -> split ()
-    | Error `No_space -> Lwt.return @@ Error `No_space
+    let rec block_to_block_pair t data (b1, b2) =
+      let split () =
+        Lwt_result.both (Allocate.get_block t) (Allocate.get_block t) >>= function
+        | Error _ -> Lwt.return @@ Error `No_space
+        | Ok (a1, a2) -> begin
+            (* it's not strictly necessary to order these,
+             * but it makes it easier for the debugging human to "reason about" *)
+            let old_block, new_block = Littlefs.Block.split data ((min a1 a2), (max a1 a2)) in
+            Lwt_result.both
+              (block_to_block_pair t old_block (b1, b2))
+              (block_to_block_pair t new_block (a1, a2)) >>= function
+            | Error `Split | Error `Split_emergency ->
+              Lwt.return @@ Error `No_space
+            | Error _ as e -> Lwt.return e
+            | Ok ((), ()) -> Lwt.return @@ Ok ()
+          end
+      in
+      Lwt_result.both
+        (block_to_block_number t data b1)
+        (block_to_block_number t data b2)
+      >>= function
+      | Ok _ -> Lwt.return @@ Ok ()
+      (* `Split happens when the write did succeed, but a split operation
+       * needs to happen to provide future problems *)
+      | Error `Split -> begin
+          (* try a compaction first *)
+          Lwt_result.both
+            (block_to_block_number t (Littlefs.Block.compact data) b1)
+            (block_to_block_number t (Littlefs.Block.compact data) b2) 
+          >>= function
+          | Ok _ -> Lwt.return @@ Ok ()
+          | Error `Split | Error `Split_emergency -> split ()
+          | Error `No_space -> Lwt.return @@ Error `No_space
+        end
+      | Error `Split_emergency -> split ()
+      | Error `No_space -> Lwt.return @@ Error `No_space
+  end
 
-  module Find = struct
+  module Find : sig
+    val entries_following_hard_tail : t -> int64 * int64 -> (Littlefs.Entry.t list, error) result Lwt.t
+
+    val entries_of_name : t -> int64 * int64 -> string -> (Littlefs.Entry.t list, 
+                                                           [`No_id
+                                                           | `No_struct
+                                                           | `Not_found of key]
+                                                          ) result Lwt.t
+
+    val find_directory : t -> int64 * int64 -> string list ->
+      [`Basename_on of int64 * int64 | `No_entry | `No_id of string | `No_structs] Lwt.t
+
+  end = struct
 
     let rec entries_following_hard_tail t (block_pair : int64 * int64) =
       Read.block_of_block_pair t block_pair >>= function
@@ -239,36 +247,6 @@ module Make(Sectors: Mirage_block.S) = struct
           | []-> Lwt.return @@ Error `No_struct
           | entries -> Lwt.return @@ Ok (Littlefs.Entry.compact entries)
 
-    (** [follow_directory_pointers t block_pair l] returns:
-     * an error or
-     * `Basename_on block_pair: you have reached the termination of the directory traversal;
-     * items within the path can be found at [block_pair]
-     * `Continue (l, block_pair) : there is more directory structure to be traversed;
-     * the remaining elements [l] can be found starting at [block_pair]
-     * *)
-    let follow_directory_pointers t block_pair = function
-      | [] -> Lwt.return (`Basename_on block_pair)
-      | key::remaining ->
-        entries_of_name t block_pair key >>= function
-        | Error _ -> Lwt.return @@ `No_id key
-        | Ok l ->
-          match List.filter_map Littlefs.Dir.of_entry l with
-          | [] -> Lwt.return `No_structs
-          | next_blocks::_ -> Lwt.return (`Continue (remaining, next_blocks))
-
-    let rec find_directory_block_pair t block_pair key =
-      follow_directory_pointers t block_pair key >>= function
-      | `Continue (path, next_blocks) -> find_directory_block_pair t next_blocks path
-      | `No_id child ->
-        let path = String.concat "/" key in
-        let path = Mirage_kv.Key.(to_string @@ v path / child) in
-        Lwt.return @@ `No_id path
-      | `No_structs -> Lwt.return `No_structs
-      | `Basename_on block_pair ->
-        Traverse.last_block t block_pair >|= function
-        | Error _ -> `Basename_on block_pair
-        | Ok last_pair -> `Basename_on last_pair
-
     let rec find_directory t block key =
       match key with
       | [] -> Lwt.return (`Basename_on block)
@@ -284,40 +262,51 @@ module Make(Sectors: Mirage_block.S) = struct
   end
 
   let rec mkdir t rootpair key =
+    (* mkdir has its own function for traversing the directory structure
+     * because we want to make anything that's missing along the way,
+     * rather than having to get an error, mkdir, get another error, mkdir... *)
+    let follow_directory_pointers t block_pair = function
+      | [] -> Lwt.return (`Basename_on block_pair)
+      | key::remaining ->
+        Find.entries_of_name t block_pair key >>= function
+        | Error _ -> Lwt.return @@ `No_id key
+        | Ok l ->
+          match List.filter_map Littlefs.Dir.of_entry l with
+          | [] -> Lwt.return `No_structs
+          | next_blocks::_ -> Lwt.return (`Continue (remaining, next_blocks))
+    in 
     (* `dirname` is the name of the directory relative to `rootpair`. It should be
      * a value that could be returned from `Mirage_kv.Key.basename` - in other words
      * it should contain no separators. *)
-    let plain_mkdir t rootpair (dirname : string) =
-      Find.follow_directory_pointers t rootpair [dirname] >>= function
+    let find_or_mkdir t rootpair (dirname : string) =
+      follow_directory_pointers t rootpair [dirname] >>= function
       | `Continue (_path, next_blocks) -> Lwt.return @@ Ok next_blocks
       | `Basename_on next_blocks -> Lwt.return @@ Ok next_blocks
       | _ ->
-        Allocate.get_block t >>= function
+        Lwt_result.both (Allocate.get_block t) (Allocate.get_block t) >>= function
         | Error _ -> Lwt.return @@ Error (`Not_found dirname)
-        | Ok dir_block_0 ->
-          Allocate.get_block t >>= function
+        | Ok (dir_block_0, dir_block_1) ->
+          Read.block_of_block_pair t rootpair >>= function
           | Error _ -> Lwt.return @@ Error (`Not_found dirname)
-          | Ok dir_block_1 ->
-            Read.block_of_block_pair t rootpair >>= function
+          | Ok root_block ->
+            let dir_id = Littlefs.Block.(IdSet.max_elt @@ ids root_block) + 1 in
+            let name = Littlefs.Dir.name dirname dir_id in
+            let dirstruct = Littlefs.Dir.mkdir ~to_pair:(dir_block_0, dir_block_1) dir_id in
+            let new_block = Littlefs.Block.add_commit root_block [name; dirstruct] in
+            Write.block_to_block_pair t new_block rootpair >>= function
             | Error _ -> Lwt.return @@ Error (`Not_found dirname)
-            | Ok root_block ->
-              let dir_id = Littlefs.Block.(IdSet.max_elt @@ ids root_block) + 1 in
-              let name = Littlefs.Dir.name dirname dir_id in
-              let dirstruct = Littlefs.Dir.mkdir ~to_pair:(dir_block_0, dir_block_1) dir_id in
-              let new_block = Littlefs.Block.add_commit root_block [name; dirstruct] in
-              block_to_block_pair t new_block rootpair >>= function
-              | Error _ -> Lwt.return @@ Error (`Not_found dirname)
-              | Ok () -> Lwt.return @@ Ok (dir_block_0, dir_block_1)
+            | Ok () -> Lwt.return @@ Ok (dir_block_0, dir_block_1)
     in
     match key with
     | [] -> Lwt.return @@ Ok rootpair
     | dirname::more ->
-      plain_mkdir t rootpair dirname >>= function
-      | Error _ as e -> Lwt.return e
-      | Ok newpair ->
-        mkdir t newpair more
+      let open Lwt_result in
+      find_or_mkdir t rootpair dirname >>= fun newpair ->
+      mkdir t newpair more
 
-  module File_read = struct
+  module File_read : sig
+    val get : t -> Mirage_kv.Key.t -> (string, error) result Lwt.t
+  end = struct
 
     let get_ctz t key (pointer, length) =
       let rec read_block l index pointer =
@@ -365,9 +354,29 @@ module Make(Sectors: Mirage_block.S) = struct
           | Some (pointer, length) -> Ok (`Ctz (Int64.of_int32 pointer, Int32.to_int length))
           | None -> Error (`Value_expected key)
 
+    let get t key : (string, error) result Lwt.t =
+      let map_errors = function
+        | Ok (`Inline d) -> Lwt.return (Ok d)
+        | Ok (`Ctz ctz) -> get_ctz t key ctz
+        | Error _ -> Lwt.return @@ Error (`Not_found key)
+      in
+      match Mirage_kv.Key.segments key with
+      | [] -> Lwt.return @@ Error (`Value_expected key)
+      | basename::[] -> get_value t root_pair basename >>= map_errors
+      | _ ->
+        let dirname = Mirage_kv.Key.(parent key |> segments) in
+        Find.find_directory t root_pair dirname >>= function
+        | `Basename_on pair -> begin
+            get_value t pair (Mirage_kv.Key.basename key) >>= map_errors
+          end
+        | _ -> Lwt.return @@ Error (`Not_found key)
+
   end
 
-  module File_write = struct  
+  module File_write : sig
+    val set_in_directory : int64 * int64 -> t -> string -> string ->
+      (unit, write_error) result Lwt.t
+  end = struct  
 
     let rec write_ctz_block t l index so_far data =
       if Int.compare so_far (String.length data) >= 0 then begin
@@ -416,7 +425,7 @@ module Make(Sectors: Mirage_block.S) = struct
               ~pointer:last_pointer ~file_size:(Int32.of_int file_size)
           in
           let new_block = Littlefs.Block.add_commit root [name; ctz] in
-          block_to_block_pair t new_block root_block_pair >>= function
+          Write.block_to_block_pair t new_block root_block_pair >>= function
           | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v filename))
           | Ok () -> Lwt.return @@ Ok ()
 
@@ -431,7 +440,7 @@ module Make(Sectors: Mirage_block.S) = struct
         in
         let file = Littlefs.File.write_inline filename next (Cstruct.of_string data) in
         let new_block = Littlefs.Block.add_commit extant_block file in
-        block_to_block_pair t new_block block_pair >>= function
+        Write.block_to_block_pair t new_block block_pair >>= function
         | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v filename))
         | Ok () -> Lwt.return @@ Ok ()
 
