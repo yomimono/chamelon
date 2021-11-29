@@ -269,34 +269,46 @@ module Make(Sectors: Mirage_block.S) = struct
         | Error _ -> `Basename_on block_pair
         | Ok last_pair -> `Basename_on last_pair
 
+    let rec find_directory t block key =
+      match key with
+      | [] -> Lwt.return (`Basename_on block)
+      | key::remaining ->
+        entries_of_name t block key >>= function
+        | Error `No_struct -> Lwt.return @@ `No_entry
+        | Error _ -> Lwt.return @@ `No_id key
+        | Ok l ->
+          match List.filter_map Littlefs.Dir.of_entry l with
+          | [] -> Lwt.return `No_structs
+          | next_blocks::_ -> find_directory t next_blocks remaining
+
   end
 
-  (* `dirname` is the name of the directory relative to `rootpair`. It should be
-   * a value that could be returned from `Mirage_kv.Key.basename` - in other words
-   * it should contain no separators. *)
-  let plain_mkdir t rootpair (dirname : string) =
-    Find.follow_directory_pointers t rootpair [dirname] >>= function
-    | `Continue (_path, next_blocks) -> Lwt.return @@ Ok next_blocks
-    | `Basename_on next_blocks -> Lwt.return @@ Ok next_blocks
-    | _ ->
-      Allocate.get_block t >>= function
-      | Error _ -> Lwt.return @@ Error (`Not_found dirname)
-      | Ok dir_block_0 ->
+  let rec mkdir t rootpair key =
+    (* `dirname` is the name of the directory relative to `rootpair`. It should be
+     * a value that could be returned from `Mirage_kv.Key.basename` - in other words
+     * it should contain no separators. *)
+    let plain_mkdir t rootpair (dirname : string) =
+      Find.follow_directory_pointers t rootpair [dirname] >>= function
+      | `Continue (_path, next_blocks) -> Lwt.return @@ Ok next_blocks
+      | `Basename_on next_blocks -> Lwt.return @@ Ok next_blocks
+      | _ ->
         Allocate.get_block t >>= function
         | Error _ -> Lwt.return @@ Error (`Not_found dirname)
-        | Ok dir_block_1 ->
-          Read.block_of_block_pair t rootpair >>= function
+        | Ok dir_block_0 ->
+          Allocate.get_block t >>= function
           | Error _ -> Lwt.return @@ Error (`Not_found dirname)
-          | Ok root_block ->
-            let dir_id = Littlefs.Block.(IdSet.max_elt @@ ids root_block) + 1 in
-            let name = Littlefs.Dir.name dirname dir_id in
-            let dirstruct = Littlefs.Dir.mkdir ~to_pair:(dir_block_0, dir_block_1) dir_id in
-            let new_block = Littlefs.Block.add_commit root_block [name; dirstruct] in
-            block_to_block_pair t new_block rootpair >>= function
+          | Ok dir_block_1 ->
+            Read.block_of_block_pair t rootpair >>= function
             | Error _ -> Lwt.return @@ Error (`Not_found dirname)
-            | Ok () -> Lwt.return @@ Ok (dir_block_0, dir_block_1)
-
-  let rec mkdir t rootpair key =
+            | Ok root_block ->
+              let dir_id = Littlefs.Block.(IdSet.max_elt @@ ids root_block) + 1 in
+              let name = Littlefs.Dir.name dirname dir_id in
+              let dirstruct = Littlefs.Dir.mkdir ~to_pair:(dir_block_0, dir_block_1) dir_id in
+              let new_block = Littlefs.Block.add_commit root_block [name; dirstruct] in
+              block_to_block_pair t new_block rootpair >>= function
+              | Error _ -> Lwt.return @@ Error (`Not_found dirname)
+              | Ok () -> Lwt.return @@ Ok (dir_block_0, dir_block_1)
+    in
     match key with
     | [] -> Lwt.return @@ Ok rootpair
     | dirname::more ->
@@ -304,18 +316,6 @@ module Make(Sectors: Mirage_block.S) = struct
       | Error _ as e -> Lwt.return e
       | Ok newpair ->
         mkdir t newpair more
-
-  let rec find_directory t block key =
-    match key with
-    | [] -> Lwt.return (`Basename_on block)
-    | key::remaining ->
-      Find.entries_of_name t block key >>= function
-      | Error `No_struct -> Lwt.return @@ `No_entry
-      | Error _ -> Lwt.return @@ `No_id key
-      | Ok l ->
-        match List.filter_map Littlefs.Dir.of_entry l with
-        | [] -> Lwt.return `No_structs
-        | next_blocks::_ -> find_directory t next_blocks remaining
 
   let get_ctz t key (pointer, length) =
     let rec read_block l index pointer =
