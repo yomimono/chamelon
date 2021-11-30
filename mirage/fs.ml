@@ -196,8 +196,7 @@ module Make(Sectors: Mirage_block.S) = struct
     val all_entries_in_dir : t -> int64 * int64 -> (Littlefs.Entry.t list, error) result Lwt.t
 
     val entries_of_name : t -> int64 * int64 -> string -> (Littlefs.Entry.t list, 
-                                                           [`No_id
-                                                           | `No_struct
+                                                           [`No_id of key
                                                            | `Not_found of key]
                                                           ) result Lwt.t
 
@@ -236,21 +235,15 @@ module Make(Sectors: Mirage_block.S) = struct
       let open Lwt_result in
       all_entries_in_dir t block_pair >>= fun entries ->
       match id_of_key entries name with
-      | None -> Lwt.return @@ Error `No_id
+      | None -> Lwt.return @@ Error (`No_id (Mirage_kv.Key.v name))
       | Some id ->
-        match entries_of_id entries id with
-        | [] -> Lwt.return @@ Error `No_struct
-        | entries ->
-          (* compact the entries, so no deleted entries are operated on as if they're
-           * still valid *)
-          Lwt.return @@ Ok (Littlefs.Entry.compact entries)
+        Lwt.return @@ Ok (Littlefs.Entry.compact @@ entries_of_id entries id)
 
     let rec find_directory t block key =
       match key with
       | [] -> Lwt.return (`Basename_on block)
       | key::remaining ->
         entries_of_name t block key >>= function
-        | Error `No_struct -> Lwt.return @@ `No_entry
         | Error _ -> Lwt.return @@ `No_id key
         | Ok l ->
           match List.filter_map Littlefs.Dir.of_entry l with
@@ -374,8 +367,11 @@ module Make(Sectors: Mirage_block.S) = struct
   end
 
   module File_write : sig
+    (** [set_in_directory block_pair t filename data] creates entries in
+     * [block_pair] for [filename] pointing to [data] *)
     val set_in_directory : int64 * int64 -> t -> string -> string ->
       (unit, write_error) result Lwt.t
+
   end = struct  
 
     let rec write_ctz_block t l index so_far data =
@@ -449,6 +445,25 @@ module Make(Sectors: Mirage_block.S) = struct
         write_in_ctz block_pair t filename data
       else
         write_inline block_pair t filename data
+
+  end
+
+  module Delete = struct
+    let delete_in_directory block_pair t name =
+      Find.entries_of_name t block_pair name >>= function
+        (* several "it's not here" cases *)
+      | Error (`No_id _) | Error (`Not_found _) -> Lwt.return @@ Ok ()
+      | Ok [] -> Lwt.return @@ Ok ()
+      | Ok (hd::_tl) ->
+        let id = Littlefs.Tag.((fst hd).id) in
+        let deletion = Littlefs.Tag.delete id in
+        Read.block_of_block_pair t block_pair >>= function
+        | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v name))
+        | Ok block ->
+        let new_block = Littlefs.Block.add_commit block [(deletion, Cstruct.empty)] in
+        Write.block_to_block_pair t new_block block_pair >>= function
+        | Error _ -> Lwt.return @@ Error `No_space
+        | Ok () -> Lwt.return @@ Ok ()
 
   end
 

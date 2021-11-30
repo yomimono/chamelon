@@ -29,6 +29,9 @@ hardtail: test_img mount
 	_build/default/src/lfs_ls.exe {{image}} {{block_size}} /
 	_build/default/src/lfs_read.exe {{image}} {{block_size}} /moar2
 
+test: read hardtail
+	dune runtest -f
+
 readmdir BLOCK:
 	readmdir.py -a --log {{image}} {{block_size}} {{BLOCK}}
 

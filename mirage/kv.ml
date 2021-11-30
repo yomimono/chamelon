@@ -20,6 +20,16 @@ module Make(Sectors : Mirage_block.S) = struct
                                    without success. *)
   ]
 
+  let pp_error fmt = function
+    | `Not_found key -> Format.fprintf fmt "key %a not found" Mirage_kv.Key.pp key
+    | `Dictionary_expected key -> Format.fprintf fmt "%a was not a dictionary" Mirage_kv.Key.pp key
+    | `Value_expected key -> Format.fprintf fmt "%a was not a value" Mirage_kv.Key.pp key
+
+  let pp_write_error fmt = function
+    | `No_space -> Format.fprintf fmt "no space left on device"
+    | `Too_many_retries n -> Format.fprintf fmt "tried to write %d times and didn't succeed" n
+    | #error as e -> pp_error fmt e
+
   type t = Fs.t
 
   let get = Fs.File_read.get
@@ -69,6 +79,16 @@ module Make(Sectors : Mirage_block.S) = struct
         else None
       in
       Lwt.return @@ Ok (List.find_map lookup l)
+
+  let remove t key =
+    match Mirage_kv.Key.segments key with
+    (* it's impossible to remove the root directory in littlefs, as it's
+     * implicitly at the root pair *)
+    | [] -> Lwt.return @@ Error (`Not_found key)
+    | l ->
+      Fs.Find.find_directory t root_pair l >>= function
+      | `Basename_on pair -> Fs.Delete.delete_in_directory pair t (Mirage_kv.Key.basename key)
+      | `No_entry | `No_id _ | `No_structs -> Lwt.return @@ Ok ()
 
   let connect = Fs.connect
 

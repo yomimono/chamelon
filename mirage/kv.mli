@@ -14,6 +14,9 @@ module Make(Sectors: Mirage_block.S) : sig
                                    without success. *)
   ]
 
+  val pp_error : error Fmt.t
+  val pp_write_error : write_error Fmt.t
+
   val format : t -> (unit, write_error) result Lwt.t
   val connect : Sectors.t -> program_block_size:int -> block_size:int -> (t, error) result Lwt.t
 
@@ -22,5 +25,6 @@ module Make(Sectors: Mirage_block.S) : sig
   val list : t -> key -> ((string * [`Value | `Dictionary]) list, error) result Lwt.t
 
   val set: t -> key -> string -> (unit, write_error) result Lwt.t
+  val remove : t -> key -> (unit, write_error) result Lwt.t
 
 end

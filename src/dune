@@ -1,16 +1,31 @@
 (executables
-  (public_names format lfs_write lfs_read lfs_ls)
+  (public_names format lfs_ls lfs_read lfs_rmrf lfs_write)
   (libraries bos cmdliner fpath littlefs.kv mirage-block-unix mirage-kv lwt)
 )
 
 (rule
+  (targets colossal)
+  (action
+    (run dd if=/dev/urandom of=colossal bs=16K count=1)
+  ))
+
+(rule
+  (targets test.img)
+  (action
+    (progn
+      (run dd if=/dev/zero of=test.img bs=64K count=1)
+      (setenv OCAMLRUNPARAM b (run %{exe:format.exe} test.img))
+    )
+  ))
+
+(rule
   (alias runtest)
+  (deps colossal test.img)
   (action (progn
-            (run dd if=/dev/zero of=test.img bs=64K count=1)
-            (setenv OCAMLRUNPARAM b (run %{exe:format.exe} test.img))
-            (run grep littlefs test.img)
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_write.exe} test.img 4096 "autoexec.bat" "CLS"))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_write.exe} test.img 4096 "config.sys" ""))
+            (setenv OCAMLRUNPARAM b (run %{exe:lfs_rmrf.exe} test.img 4096 "config.sys"))
+            (setenv OCAMLRUNPARAM b (run %{exe:lfs_rmrf.exe} test.img 4096 "config.sys"))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_write.exe} test.img 4096 "diary.txt" "Dear diary, today I ate cheese. It was great."))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_write.exe} test.img 4096 "secrets/mom_dont_look" "I SAID NOT TO LOOK JEEZ"))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_ls.exe} test.img 4096 "/"))
@@ -21,10 +36,11 @@
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_read.exe} test.img 4096 "secrets/mom_dont_look"))
             (setenv OCAMLRUNPARAM b (with-stdin-from lfs_write.ml (run %{exe:lfs_write.exe} test.img 4096 "lfs_write.ml" -)))
             (setenv OCAMLRUNPARAM b (with-stdout-to lfs_write.bak (run %{exe:lfs_read.exe} test.img 4096 "lfs_write.ml")))
-            (no-infer (run cmp -l lfs_write.ml lfs_write.bak))
-            (run dd if=/dev/urandom of=colossal bs=16K count=1)
-            (no-infer (setenv OCAMLRUNPARAM b (with-stdin-from colossal (run %{exe:lfs_write.exe} test.img 4096 "colossal.bak" -))))
-            (no-infer (setenv OCAMLRUNPARAM b (with-stdout-to colossal.bak (run %{exe:lfs_read.exe} test.img 4096 "colossal.bak"))))
-            (no-infer (run cmp colossal colossal.bak))
+            (run cmp -l lfs_write.ml lfs_write.bak)
+            (setenv OCAMLRUNPARAM b (with-stdin-from colossal (run %{exe:lfs_write.exe} test.img 4096 "colossal.bak" -)))
+            (setenv OCAMLRUNPARAM b (with-stdout-to colossal.bak (run %{exe:lfs_read.exe} test.img 4096 "colossal.bak")))
+            (run cmp colossal colossal.bak)
+            (setenv OCAMLRUNPARAM b (run %{exe:lfs_rmrf.exe} test.img 4096 "secrets"))
+            (setenv OCAMLRUNPARAM b (run %{exe:lfs_ls.exe} test.img 4096 "/"))
   ))
 )

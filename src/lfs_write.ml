@@ -33,7 +33,7 @@ let write image block_size path data =
     in
     Littlefs.set t (Mirage_kv.Key.v path) data >>= function
     | Ok () -> Lwt.return_unit
-    | Error _ -> Stdlib.Format.eprintf "Filesystem was opened, but write failed\n%!";
+    | Error e -> Stdlib.Format.eprintf "%a" Littlefs.pp_write_error e;
       exit 1
 )
 
