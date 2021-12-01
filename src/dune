@@ -1,6 +1,6 @@
 (executables
   (public_names format lfs_ls lfs_read lfs_rmrf lfs_write)
-  (libraries bos cmdliner fpath littlefs.kv mirage-block-unix mirage-kv lwt)
+  (libraries bos cmdliner fmt fmt.cli fmt.tty fpath littlefs.kv mirage-block-unix mirage-kv logs.cli logs.fmt lwt)
 )
 
 (rule
@@ -22,7 +22,8 @@
   (alias runtest)
   (deps colossal test.img)
   (action (progn
-            (setenv OCAMLRUNPARAM b (run %{exe:lfs_write.exe} test.img 4096 "autoexec.bat" "CLS"))
+            (run chmod 666 test.img)
+            (setenv OCAMLRUNPARAM b (run %{exe:lfs_write.exe} --verbosity=debug test.img 4096 "autoexec.bat" "CLS"))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_write.exe} test.img 4096 "config.sys" ""))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_rmrf.exe} test.img 4096 "config.sys"))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_rmrf.exe} test.img 4096 "config.sys"))

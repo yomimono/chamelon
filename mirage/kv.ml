@@ -7,6 +7,9 @@ module Make(Sectors : Mirage_block.S) = struct
   
   type key = Mirage_kv.Key.t
 
+  let log_src = Logs.Src.create "littlefs-kv" ~doc:"littlefs KV layer"
+  module Log = (val Logs.src_log log_src : Logs.LOG)
+
   (* error type definitions straight outta mirage-kv *)
   type error = [
     | `Not_found           of key (** key not found *)
@@ -38,19 +41,32 @@ module Make(Sectors : Mirage_block.S) = struct
     let dir = Mirage_kv.Key.parent key in
     Fs.Find.find_directory t root_pair (Mirage_kv.Key.segments dir) >>= function
     | `Basename_on block_pair ->
+      Logs.debug (fun m -> m "found basename of path %a on block pair %Ld, %Ld"
+                     Mirage_kv.Key.pp key
+                     (fst block_pair) (snd block_pair));
       (* the directory already exists, so just write the file *)
       Fs.File_write.set_in_directory block_pair t (Mirage_kv.Key.basename key) data
     | `No_id path -> begin
+        Logs.debug (fun m -> m "path component %s had no id; making it and its children" path);
         (* something along the path is missing, so make it. *)
         (* note we need to call mkdir with the whole path (save the basename),
          * so that we get all levels of directory we may need,
          * not just the first thing that was found missing. *)
       Fs.mkdir t root_pair (Mirage_kv.Key.segments dir) >>= function
-      | Error _ -> Lwt.return @@ (Error (`Not_found (Mirage_kv.Key.v path)))
+      | Error (`Not_found _) -> Lwt.return @@ (Error (`Not_found (Mirage_kv.Key.v path)))
+      | Error `No_space as e -> Lwt.return e
       | Ok block_pair ->
+        Logs.debug (fun m -> m "made filesystem structure for %a, writing to blockpair %Ld, %Ld"
+                       Mirage_kv.Key.pp dir (fst block_pair) (snd block_pair)
+        );
         Fs.File_write.set_in_directory block_pair t (Mirage_kv.Key.basename key) data
       end
-    | _ -> Lwt.return @@ Error (`Not_found key)
+    | `No_entry ->
+      Logs.err (fun m -> m "id was present but no matching entries");
+      Lwt.return @@ Error (`Not_found key)
+    | `No_structs ->
+      Logs.err (fun m -> m "id was present but no matching structure");
+      Lwt.return @@ Error (`Not_found key)
 
   let list t key : ((string * [`Dictionary | `Value]) list, error) result Lwt.t =
     let translate entries = List.filter_map Littlefs.Entry.info_of_entry entries in

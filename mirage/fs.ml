@@ -13,6 +13,9 @@ module Make(Sectors: Mirage_block.S) = struct
 
   type key = Mirage_kv.Key.t
 
+  let log_src = Logs.Src.create "littlefs-fs" ~doc:"littlefs FS layer"
+  module Log = (val Logs.src_log log_src : Logs.LOG)
+
   (* error type definitions straight outta mirage-kv *)
   type error = [
     | `Not_found           of key (** key not found *)
@@ -34,7 +37,10 @@ module Make(Sectors: Mirage_block.S) = struct
       | Error b -> Lwt.return @@ Error (`Block b)
       | Ok () ->
         match Littlefs.Block.of_cstruct ~program_block_size cs with
-        | Error _ -> Lwt.return @@ Error (`Littlefs `Corrupt)
+        | Error (`Msg s) ->
+          Log.err (fun f -> f "error reading block %Ld : %s"
+                      block_location s);
+          Lwt.return @@ Error (`Littlefs `Corrupt)
         | Ok extant_block -> Lwt.return @@ Ok extant_block
 
     let block_of_block_pair t (l1, l2) =
@@ -151,7 +157,9 @@ module Make(Sectors: Mirage_block.S) = struct
         end
       | `Ok ->
         This_Block.write block block_location [cs] >>= function
-        | Error _ -> Lwt.return @@ Error `No_space
+        | Error e ->
+          Log.err (fun m -> m "block write error: %a" This_Block.pp_write_error e);
+          Lwt.return @@ Error `No_space
         | Ok () -> Lwt.return @@ Ok `Done
 
     let rec block_to_block_pair t data (b1, b2) =
@@ -159,6 +167,8 @@ module Make(Sectors: Mirage_block.S) = struct
         Lwt_result.both (Allocate.get_block t) (Allocate.get_block t) >>= function
         | Error _ -> Lwt.return @@ Error `No_space
         | Ok (a1, a2) -> begin
+            Logs.debug (fun m -> m "splitting block pair %Ld, %Ld to %Ld, %Ld"
+                           b1 b2 a1 a2);
             (* it's not strictly necessary to order these,
              * but it makes it easier for the debugging human to "reason about" *)
             let old_block, new_block = Littlefs.Block.split data ((min a1 a2), (max a1 a2)) in
@@ -179,6 +189,7 @@ module Make(Sectors: Mirage_block.S) = struct
       (* `Split happens when the write did succeed, but a split operation
        * needs to happen to provide future problems *)
       | Error `Split -> begin
+          Logs.debug (fun m -> m "split required for block write to %Ld, %Ld" b1 b2);
           (* try a compaction first *)
           Lwt_result.both
             (block_to_block_number t (Littlefs.Block.compact data) b1)
@@ -427,7 +438,10 @@ module Make(Sectors: Mirage_block.S) = struct
 
     let write_inline block_pair t filename data =
       Read.block_of_block_pair t block_pair >>= function
-      | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v filename))
+      | Error _ ->
+        Logs.err (fun m -> m "error reading block pair %Ld, %Ld"
+                     (fst block_pair) (snd block_pair));
+        Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v filename))
       | Ok extant_block ->
         let used_ids = Littlefs.Block.ids extant_block in
         let next = match Littlefs.Block.IdSet.max_elt_opt used_ids with
@@ -437,7 +451,10 @@ module Make(Sectors: Mirage_block.S) = struct
         let file = Littlefs.File.write_inline filename next (Cstruct.of_string data) in
         let new_block = Littlefs.Block.add_commit extant_block file in
         Write.block_to_block_pair t new_block block_pair >>= function
-        | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v filename))
+        | Error `No_space -> Lwt.return @@ Error `No_space
+        | Error `Split
+        | Error `Split_emergency -> Logs.err (fun m -> m "couldn't write a block, because it got too big");
+          Lwt.return @@ Error `No_space
         | Ok () -> Lwt.return @@ Ok ()
 
     let set_in_directory block_pair t (filename : string) data =
