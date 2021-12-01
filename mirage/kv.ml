@@ -100,8 +100,17 @@ module Make(Sectors : Mirage_block.S) = struct
     match Mirage_kv.Key.segments key with
     (* it's impossible to remove the root directory in littlefs, as it's
      * implicitly at the root pair *)
-    | [] -> Lwt.return @@ Error (`Not_found key)
+    | [] ->
+      Logs.warn (fun m -> m "can't delete %a" Mirage_kv.Key.pp key);
+      Lwt.return @@ Error (`Not_found key)
     | l ->
+      (* TODO logic problem: this is going to give us the blockpair of a directory rather than its parent.
+       * concrete example: kv has /secrets/mom_dont_look
+       * remove /secrets
+       * find_directory t (0, 1) /secrets
+       *        - ok, here's the blockpair linked from the / entry for secrets dirstruct
+       * so then we go to delete "" in /secrets, rather than adding a deletion
+       * entry for "secrets" in / *)
       Fs.Find.find_directory t root_pair l >>= function
       | `Basename_on pair -> Fs.Delete.delete_in_directory pair t (Mirage_kv.Key.basename key)
       | `No_entry | `No_id _ | `No_structs -> Lwt.return @@ Ok ()

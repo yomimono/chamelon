@@ -246,7 +246,10 @@ module Make(Sectors: Mirage_block.S) = struct
       let open Lwt_result in
       all_entries_in_dir t block_pair >>= fun entries ->
       match id_of_key entries name with
-      | None -> Lwt.return @@ Error (`No_id (Mirage_kv.Key.v name))
+      | None ->
+        Logs.debug (fun m -> m "id for %s not found in %d entries from %Ld, %Ld"
+                       name (List.length entries) (fst block_pair) (snd block_pair));
+        Lwt.return @@ Error (`No_id (Mirage_kv.Key.v name))
       | Some id ->
         Lwt.return @@ Ok (Littlefs.Entry.compact @@ entries_of_id entries id)
 
@@ -469,11 +472,18 @@ module Make(Sectors: Mirage_block.S) = struct
     let delete_in_directory block_pair t name =
       Find.entries_of_name t block_pair name >>= function
         (* several "it's not here" cases *)
-      | Error (`No_id _) | Error (`Not_found _) -> Lwt.return @@ Ok ()
-      | Ok [] -> Lwt.return @@ Ok ()
+      | Error (`No_id _) | Error (`Not_found _) ->
+        Logs.debug (fun m -> m "no id or nothing found for %s" name);
+        Lwt.return @@ Ok ()
+      | Ok [] ->
+        Logs.debug (fun m -> m "no entries on %Ld, %Ld for %s"
+                       (fst block_pair) (snd block_pair) name);
+        Lwt.return @@ Ok ()
       | Ok (hd::_tl) ->
         let id = Littlefs.Tag.((fst hd).id) in
         let deletion = Littlefs.Tag.delete id in
+        Logs.debug (fun m -> m "adding deletion for id %d on block pair %Ld, %Ld"
+                       id (fst block_pair) (snd block_pair));
         Read.block_of_block_pair t block_pair >>= function
         | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v name))
         | Ok block ->
