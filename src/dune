@@ -19,17 +19,77 @@
   ))
 
 (rule
-  (alias runtest)
+  (alias ls)
+  (deps test.img)
+  (locks test.img)
+  (action
+    (progn
+      (with-stdout-to empty-ls.output (run %{exe:lfs_ls.exe} test.img 4096 /))
+      (with-stdout-to empty-ls.expected (run echo -n ""))
+      (diff empty-ls.expected empty-ls.output)
+      )
+    )
+  )
+
+(rule
+  (alias big)
   (deps colossal test.img)
+  (locks colossal test.img)
+  (action (progn
+            (run chmod 666 test.img)
+            (setenv OCAMLRUNPARAM b (with-stdin-from colossal (run %{exe:lfs_write.exe} test.img 4096 "colossal.bak" -)))
+
+            (with-stdout-to colossal-ls.expected (run echo "colossal.bak : file"))
+            (setenv OCAMLRUNPARAM b (with-stdout-to colossal-ls.output (run %{exe:lfs_ls.exe} test.img 4096 "/")))
+            (diff colossal-ls.expected colossal-ls.output)
+            
+            (setenv OCAMLRUNPARAM b (with-stdout-to colossal.bak (run %{exe:lfs_read.exe} test.img 4096 "colossal.bak")))
+            (run cmp colossal colossal.bak)
+  ))
+)
+
+(rule
+  (alias rootdir)
+  (deps test.img)
+  (locks test.img)
   (action (progn
             (run chmod 666 test.img)
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_write.exe} --verbosity=debug test.img 4096 "autoexec.bat" "CLS"))
+            (with-stdout-to autoexec.expected (run echo -n CLS))
+            (with-stdout-to autoexec.output (run %{exe:lfs_read.exe} test.img 4096 autoexec.bat))
+            (diff autoexec.expected autoexec.output)
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_write.exe} test.img 4096 "config.sys" ""))
+            (setenv OCAMLRUNPARAM b (run %{exe:lfs_read.exe} test.img 4096 "config.sys"))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_rmrf.exe} test.img 4096 "config.sys"))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_rmrf.exe} test.img 4096 "config.sys"))
             (setenv OCAMLRUNPARAM b (with-accepted-exit-codes 1 (run %{exe:lfs_read.exe} test.img 4096 "config.sys")))
+            
+            )))
+
+(rule
+  (alias rewrite)
+  (deps test.img)
+  (locks test.img)
+  (action
+    (progn
+            (run chmod 666 test.img)
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_write.exe} test.img 4096 "diary.txt" "Dear diary, today I ate cheese. It was great."))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_write.exe} test.img 4096 "diary.txt" "Dear diary, today I ate cheese. It was a nice sharp cheddar. Delicious."))
+            (with-stdout-to rewrite.expected (run echo -n "Dear diary, today I ate cheese. It was a nice sharp cheddar. Delicious."))
+            (with-stdout-to rewrite.output (run %{exe:lfs_read.exe} test.img 4096 "diary.txt"))
+            (diff rewrite.expected rewrite.output)
+  )))
+
+(rule
+  (alias runtest)
+  (deps (alias ls)
+        (alias big)
+        (alias rootdir)
+        (alias rewrite)
+        test.img
+        )
+  (action (progn
+            (run chmod 666 test.img)
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_write.exe} test.img 4096 "secrets/mom_dont_look" "I SAID NOT TO LOOK JEEZ"))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_ls.exe} test.img 4096 "/"))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_ls.exe} test.img 4096 "/secrets/mom_dont_look"))
@@ -40,9 +100,6 @@
             (setenv OCAMLRUNPARAM b (with-stdin-from lfs_write.ml (run %{exe:lfs_write.exe} test.img 4096 "lfs_write.ml" -)))
             (setenv OCAMLRUNPARAM b (with-stdout-to lfs_write.bak (run %{exe:lfs_read.exe} test.img 4096 "lfs_write.ml")))
             (run cmp -l lfs_write.ml lfs_write.bak)
-            (setenv OCAMLRUNPARAM b (with-stdin-from colossal (run %{exe:lfs_write.exe} test.img 4096 "colossal.bak" -)))
-            (setenv OCAMLRUNPARAM b (with-stdout-to colossal.bak (run %{exe:lfs_read.exe} test.img 4096 "colossal.bak")))
-            (run cmp colossal colossal.bak)
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_rmrf.exe} --verbosity=debug test.img 4096 "secrets"))
             (setenv OCAMLRUNPARAM b (with-accepted-exit-codes 1 
                                                               (run %{exe:lfs_ls.exe} test.img 4096 "/secrets")))
