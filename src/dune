@@ -27,7 +27,9 @@
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_write.exe} test.img 4096 "config.sys" ""))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_rmrf.exe} test.img 4096 "config.sys"))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_rmrf.exe} test.img 4096 "config.sys"))
+            (setenv OCAMLRUNPARAM b (with-accepted-exit-codes 1 (run %{exe:lfs_read.exe} test.img 4096 "config.sys")))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_write.exe} test.img 4096 "diary.txt" "Dear diary, today I ate cheese. It was great."))
+            (setenv OCAMLRUNPARAM b (run %{exe:lfs_write.exe} test.img 4096 "diary.txt" "Dear diary, today I ate cheese. It was a nice sharp cheddar. Delicious."))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_write.exe} test.img 4096 "secrets/mom_dont_look" "I SAID NOT TO LOOK JEEZ"))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_ls.exe} test.img 4096 "/"))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_ls.exe} test.img 4096 "/secrets/mom_dont_look"))
@@ -42,6 +44,7 @@
             (setenv OCAMLRUNPARAM b (with-stdout-to colossal.bak (run %{exe:lfs_read.exe} test.img 4096 "colossal.bak")))
             (run cmp colossal colossal.bak)
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_rmrf.exe} --verbosity=debug test.img 4096 "secrets"))
-            (setenv OCAMLRUNPARAM b (run %{exe:lfs_ls.exe} test.img 4096 "/secrets"))
+            (setenv OCAMLRUNPARAM b (with-accepted-exit-codes 1 
+                                                              (run %{exe:lfs_ls.exe} test.img 4096 "/secrets")))
   ))
 )

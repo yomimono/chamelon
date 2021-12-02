@@ -216,6 +216,8 @@ module Make(Sectors: Mirage_block.S) = struct
 
   end = struct
 
+    (* nb: all does mean *all* here; the list is returned uncompacted,
+     * so the caller may have to compact to avoid reporting on expired state *)
     let rec all_entries_in_dir t (block_pair : int64 * int64) =
       Read.block_of_block_pair t block_pair >>= function
       | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v "hard_tail"))
