@@ -10,9 +10,7 @@ let block_size =
   Cmdliner.Arg.(value & pos 1 int 4096 & info ~doc ~docv:"BLOCK_SIZE" [])
 
 let path =
-  let doc = "path to list. Currently any missing hierarchy will not be created,
-             and indeed no hierarchy is supported. In effect, this is just a filename." in
-  Cmdliner.Arg.(value & pos 2 string "example" & info ~doc ~docv:"PATH" [])
+  Cmdliner.Arg.(value & pos 2 string "/" & info ~docv:"PATH" [])
 
 let pp_ty fmt = function
   | `Value -> Stdlib.Format.fprintf fmt "%s" "file"
