@@ -16,6 +16,18 @@ let info_of_entry (tag, data) =
     Some (Cstruct.to_string data, `Dictionary)
   | _ -> None
 
+let ctime id (time : Ptime.span) =
+  let cs = Cstruct.create @@ 4 + 8 in
+  let d, ps = Ptime.Span.to_d_ps time in
+  Cstruct.LE.set_uint32 cs 0 (Int32.of_int d);
+  Cstruct.LE.set_uint64 cs 4 ps;
+  Tag.({
+      valid = true;
+      type3 = (LFS_TYPE_USERATTR, 0x74);
+      length = 4 + 8;
+      id;
+    }), cs
+
 let into_cstruct ~xor_tag_with cs t =
   Tag.into_cstruct ~xor_tag_with cs @@ fst t;
   Cstruct.blit (snd t) 0 cs Tag.size (Cstruct.length @@ snd t)

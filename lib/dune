@@ -1,6 +1,6 @@
 (library
   (public_name littlefs)
-  (libraries checkseum cstruct)
+  (libraries checkseum cstruct ptime)
   (preprocess (pps ppx_cstruct))
   (foreign_stubs
     (language c)
