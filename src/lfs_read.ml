@@ -14,7 +14,16 @@ let path =
              and indeed no hierarchy is supported. In effect, this is just a filename." in
   Cmdliner.Arg.(value & pos 2 string "example" & info ~doc ~docv:"PATH" [])
 
-let read image block_size path =
+let setup_log style_renderer level =
+  Fmt_tty.setup_std_outputs ?style_renderer ();
+  Logs.set_level level;
+  Logs.set_reporter (Logs_fmt.reporter ());
+  ()
+
+let setup_log =
+  Cmdliner.Term.(const setup_log $ Fmt_cli.style_renderer () $ Logs_cli.level ())
+
+let read image block_size path _log =
   let open Lwt.Infix in
   Lwt_main.run @@ (
   Mirage_block.connect image >>= fun block ->
@@ -29,5 +38,5 @@ let read image block_size path =
 )
 
 let () =
-  let go = Cmdliner.Term.(const read $ image $ block_size $ path) in
+  let go = Cmdliner.Term.(const read $ image $ block_size $ path $ setup_log) in
   Cmdliner.Term.(exit @@ eval (go, info "lfs_read"))

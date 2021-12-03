@@ -247,12 +247,15 @@ module Make(Sectors: Mirage_block.S) = struct
       in
       let open Lwt_result in
       all_entries_in_dir t block_pair >>= fun entries ->
-      match id_of_key entries name with
+      match id_of_key (Littlefs.Entry.compact entries) name with
       | None ->
         Logs.debug (fun m -> m "id for %s not found in %d entries from %Ld, %Ld"
                        name (List.length entries) (fst block_pair) (snd block_pair));
         Lwt.return @@ Error (`No_id (Mirage_kv.Key.v name))
       | Some id ->
+        Logs.debug (fun m -> m "found %d entries for id %d"
+                       (List.length @@ entries_of_id entries id)
+                       id);
         Lwt.return @@ Ok (Littlefs.Entry.compact @@ entries_of_id entries id)
 
     let rec find_directory t block key =
@@ -341,10 +344,10 @@ module Make(Sectors: Mirage_block.S) = struct
         let s = Cstruct.(to_string cs) in
         Lwt.return @@ Ok s
 
-    let get_value t block_pair key =
-      Find.entries_of_name t block_pair key >|= function
-      | Error _ -> Error (`Not_found key)
-      | Ok l ->
+    let get_value t block_pair filename =
+      Find.entries_of_name t block_pair filename >|= function
+      | Error _ -> Error (`Not_found filename)
+      | Ok compacted ->
         let inline_files = List.find_opt (fun (tag, _data) ->
             Littlefs.Tag.((fst tag.type3) = LFS_TYPE_STRUCT) &&
             Littlefs.Tag.((snd tag.type3) = 0x01)
@@ -354,13 +357,14 @@ module Make(Sectors: Mirage_block.S) = struct
             Littlefs.Tag.((fst tag.type3 = LFS_TYPE_STRUCT) &&
                           Littlefs.Tag.((snd tag.type3 = 0x02)
                                        ))) in
-        match inline_files l, ctz_files l with
-        | None, None -> Error (`Not_found key)
+        Log.debug (fun m -> m "found %d entries with name %s" (List.length compacted) filename);
+        match inline_files compacted, ctz_files compacted with
+        | None, None -> Error (`Not_found filename)
         | Some (_tag, data), None -> Ok (`Inline (Cstruct.to_string data))
         | _, Some (_, ctz) ->
           match Littlefs.File.ctz_of_cstruct ctz with
           | Some (pointer, length) -> Ok (`Ctz (Int64.of_int32 pointer, Int32.to_int length))
-          | None -> Error (`Value_expected key)
+          | None -> Error (`Value_expected filename)
 
     let get t key : (string, error) result Lwt.t =
       let map_errors = function
@@ -419,8 +423,8 @@ module Make(Sectors: Mirage_block.S) = struct
             write_ctz_block t ((index, pointer)::l) (index + 1) (so_far + data_length) data
       end
 
-    let write_in_ctz root_block_pair t filename data =
-      Read.block_of_block_pair t root_block_pair >>= function
+    let write_in_ctz dir_block_pair t filename data entries =
+      Read.block_of_block_pair t dir_block_pair >>= function
       | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v filename))
       | Ok root ->
         let file_size = String.length data in
@@ -436,12 +440,14 @@ module Make(Sectors: Mirage_block.S) = struct
           let ctz = Littlefs.File.create_ctz next
               ~pointer:last_pointer ~file_size:(Int32.of_int file_size)
           in
-          let new_block = Littlefs.Block.add_commit root [name; ctz] in
-          Write.block_to_block_pair t new_block root_block_pair >>= function
+          let new_entries = entries @ [name; ctz] in
+          Logs.debug (fun m -> m "writing ctz %d entries for ctz for file %s" (List.length new_entries) filename);
+          let new_block = Littlefs.Block.add_commit root new_entries in
+          Write.block_to_block_pair t new_block dir_block_pair >>= function
           | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v filename))
           | Ok () -> Lwt.return @@ Ok ()
 
-    let write_inline block_pair t filename data =
+    let write_inline block_pair t filename data entries =
       Read.block_of_block_pair t block_pair >>= function
       | Error _ ->
         Logs.err (fun m -> m "error reading block pair %Ld, %Ld"
@@ -453,7 +459,8 @@ module Make(Sectors: Mirage_block.S) = struct
           | None -> 1
           | Some n -> n + 1
         in
-        let file = Littlefs.File.write_inline filename next (Cstruct.of_string data) in
+        let file = entries @ (Littlefs.File.write_inline filename next (Cstruct.of_string data)) in
+        Logs.debug (fun m -> m "writing %d entries for inline file %s" (List.length file) filename);
         let new_block = Littlefs.Block.add_commit extant_block file in
         Write.block_to_block_pair t new_block block_pair >>= function
         | Error `No_space -> Lwt.return @@ Error `No_space
@@ -463,10 +470,28 @@ module Make(Sectors: Mirage_block.S) = struct
         | Ok () -> Lwt.return @@ Ok ()
 
     let set_in_directory block_pair t (filename : string) data =
-      if (String.length data) > (t.block_size / 4) then
-        write_in_ctz block_pair t filename data
-      else
-        write_inline block_pair t filename data
+      Find.entries_of_name t block_pair filename >>= function
+      | Error (`Not_found _ ) as e -> Lwt.return e
+      | Ok [] | Error (`No_id _) -> begin
+          Logs.debug (fun m -> m "writing new file %s" filename);
+          if (String.length data) > (t.block_size / 4) then
+            write_in_ctz block_pair t filename data []
+          else
+            write_inline block_pair t filename data []
+        end
+      | Ok (hd::_) ->
+      (* we *could* replace the previous ctz/inline entry,
+       * instead of deleting the whole mapping and replacing it,
+       * but since we do both the deletion and the new addition
+       * in the same commit, I think this saves us some potentially
+       * error-prone work *)
+        let id = Littlefs.Tag.((fst hd).id) in
+        Logs.debug (fun m -> m "deleting existing entry %s at id %d" filename id);
+        let delete = (Littlefs.Tag.(delete id), Cstruct.create 0) in
+        if (String.length data) > (t.block_size / 4) then
+          write_in_ctz block_pair t filename data [delete]
+        else
+          write_inline block_pair t filename data [delete]
 
   end
 
