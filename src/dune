@@ -1,6 +1,6 @@
 (executables
   (public_names format lfs_ls lfs_read lfs_rmrf lfs_write)
-  (libraries bos cmdliner fmt fmt.cli fmt.tty fpath littlefs.kv mirage-block-unix mirage-kv logs.cli logs.fmt lwt)
+  (libraries bos cmdliner fmt fmt.cli fmt.tty fpath littlefs.kv mirage-block-unix mirage-clock-unix mirage-kv logs.cli logs.fmt lwt)
 )
 
 (rule

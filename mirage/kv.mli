@@ -1,4 +1,4 @@
-module Make(Sectors: Mirage_block.S) : sig
+module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) : sig
 
   type t
   type key = Mirage_kv.Key.t
@@ -23,6 +23,7 @@ module Make(Sectors: Mirage_block.S) : sig
   val exists : t -> key -> ([`Value | `Dictionary] option, error) result Lwt.t
   val get : t -> key -> (string, error) result Lwt.t
   val list : t -> key -> ((string * [`Value | `Dictionary]) list, error) result Lwt.t
+  val last_modified : t -> key -> (int * int64, error) result Lwt.t
 
   val set: t -> key -> string -> (unit, write_error) result Lwt.t
   val remove : t -> key -> (unit, write_error) result Lwt.t

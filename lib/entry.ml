@@ -16,9 +16,8 @@ let info_of_entry (tag, data) =
     Some (Cstruct.to_string data, `Dictionary)
   | _ -> None
 
-let ctime id (time : Ptime.span) =
+let ctime id (d, ps) =
   let cs = Cstruct.create @@ 4 + 8 in
-  let d, ps = Ptime.Span.to_d_ps time in
   Cstruct.LE.set_uint32 cs 0 (Int32.of_int d);
   Cstruct.LE.set_uint64 cs 4 ps;
   Tag.({
@@ -27,6 +26,14 @@ let ctime id (time : Ptime.span) =
       length = 4 + 8;
       id;
     }), cs
+
+let ctime_of_cstruct cs =
+  if Cstruct.length cs < 4 + 8 then None
+  else begin
+    let d = Cstruct.LE.get_uint32 cs 0 |> Int32.to_int in
+    let ps = Cstruct.LE.get_uint64 cs 4 in
+    Some (d, ps)
+  end
 
 let into_cstruct ~xor_tag_with cs t =
   Tag.into_cstruct ~xor_tag_with cs @@ fst t;

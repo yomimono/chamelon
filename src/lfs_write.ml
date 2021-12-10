@@ -1,5 +1,5 @@
 module Mirage_block = Block (* disambiguate this from Littlefs.Block *)
-module Littlefs = Kv.Make(Mirage_block)
+module Littlefs = Kv.Make(Mirage_block)(Pclock) (* Pclock comes from mirage-clock-unix *)
 
 let image =
   let doc = "path to the filesystem image" in

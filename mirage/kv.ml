@@ -2,8 +2,8 @@ open Lwt.Infix
 
 let root_pair = (0L, 1L)
 
-module Make(Sectors : Mirage_block.S) = struct
-  module Fs = Fs.Make(Sectors)
+module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
+  module Fs = Fs.Make(Sectors)(Clock)
   
   type key = Mirage_kv.Key.t
 
@@ -106,6 +106,31 @@ module Make(Sectors : Mirage_block.S) = struct
       Fs.Find.find_directory t root_pair Mirage_kv.Key.(segments @@ parent key) >>= function
       | `Basename_on pair -> Fs.Delete.delete_in_directory pair t (Mirage_kv.Key.basename key)
       | `No_entry | `No_id _ | `No_structs -> Lwt.return @@ Ok ()
+
+  let last_modified t key =
+    (* TODO: try getting the blockpair for the full path, in case it's a directory,
+     * and then we can browse through the entries and give the most recent of them *)
+    Fs.Find.find_directory t root_pair Mirage_kv.Key.(segments @@ parent key) >>= function
+    | `No_entry | `No_structs -> Lwt.return @@ Error (`Not_found key)
+    | `No_id k -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v k))
+    | `Basename_on block_pair ->
+      Fs.Find.entries_of_name t block_pair @@ Mirage_kv.Key.basename key >>= function
+      | Error (`No_id k) | Error (`Not_found k) -> Lwt.return @@ Error (`Not_found k)
+      | Ok l ->
+        match List.find_opt (fun (tag, _data) ->
+            Littlefs.Tag.(fst @@ tag.type3) = LFS_TYPE_USERATTR &&
+            Littlefs.Tag.(snd @@ tag.type3) = 0x74
+          ) l with
+        | None ->
+          Log.warn (fun m -> m "Key %a found but it had no time attributes associated" Mirage_kv.Key.pp key);
+          Lwt.return @@ Error (`Not_found key)
+        | Some (_tag, data) ->
+          match Littlefs.Entry.ctime_of_cstruct data with
+          | None ->
+            Log.err (fun m -> m "Time attributes (%a) found for %a but they were not parseable" Cstruct.hexdump_pp data Mirage_kv.Key.pp key);
+
+            Lwt.return @@ Error (`Not_found key)
+          | Some k -> Lwt.return @@ Ok k
 
   let connect = Fs.connect
 

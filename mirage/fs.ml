@@ -2,7 +2,7 @@ let root_pair = (0L, 1L)
 
 open Lwt.Infix
 
-module Make(Sectors: Mirage_block.S) = struct
+module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
   module This_Block = Block_ops.Make(Sectors)
   type t = {
     block : This_Block.t;
@@ -437,10 +437,11 @@ module Make(Sectors: Mirage_block.S) = struct
             | Some n -> n + 1
           in
           let name = Littlefs.File.name filename next in
+          let ctime = Littlefs.Entry.ctime next (Clock.now_d_ps ()) in
           let ctz = Littlefs.File.create_ctz next
               ~pointer:last_pointer ~file_size:(Int32.of_int file_size)
           in
-          let new_entries = entries @ [name; ctz] in
+          let new_entries = entries @ [name; ctime; ctz] in
           Logs.debug (fun m -> m "writing ctz %d entries for ctz for file %s" (List.length new_entries) filename);
           let new_block = Littlefs.Block.add_commit root new_entries in
           Write.block_to_block_pair t new_block dir_block_pair >>= function
@@ -459,9 +460,11 @@ module Make(Sectors: Mirage_block.S) = struct
           | None -> 1
           | Some n -> n + 1
         in
-        let file = entries @ (Littlefs.File.write_inline filename next (Cstruct.of_string data)) in
+        let ctime = Littlefs.Entry.ctime next (Clock.now_d_ps ()) in
+        let file = Littlefs.File.write_inline filename next (Cstruct.of_string data) in
+        let commit = entries @ (ctime :: file) in
         Logs.debug (fun m -> m "writing %d entries for inline file %s" (List.length file) filename);
-        let new_block = Littlefs.Block.add_commit extant_block file in
+        let new_block = Littlefs.Block.add_commit extant_block commit in
         Write.block_to_block_pair t new_block block_pair >>= function
         | Error `No_space -> Lwt.return @@ Error `No_space
         | Error `Split
