@@ -50,6 +50,7 @@
             (diff autoexec.expected autoexec.output)
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_write.exe} test.img 4096 "config.sys" ""))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_read.exe} --verbosity=debug test.img 4096 "config.sys"))
+            (setenv OCAMLRUNPARAM b (run %{exe:lfs_ls.exe} test.img 4096 "config.sys"))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_rmrf.exe} test.img 4096 "config.sys"))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_rmrf.exe} test.img 4096 "config.sys"))
             (with-stderr-to read-deleted.expected (run echo "key config.sys not found"))
@@ -66,7 +67,9 @@
     (progn
             (run chmod 666 test.img)
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_write.exe} --verbosity=debug test.img 4096 "diary.txt" "Dear diary, today I ate cheese. It was great."))
+            (setenv OCAMLRUNPARAM b (run %{exe:lfs_ls.exe} test.img 4096 "diary.txt"))
             (setenv OCAMLRUNPARAM b (run %{exe:lfs_write.exe} test.img --verbosity=debug 4096 "diary.txt" "Dear diary, today I ate cheese. It was a nice sharp cheddar. Delicious."))
+            (setenv OCAMLRUNPARAM b (run %{exe:lfs_ls.exe} test.img 4096 "diary.txt"))
             (with-stdout-to rewrite.expected (run echo -n "Dear diary, today I ate cheese. It was a nice sharp cheddar. Delicious."))
             (with-stdout-to rewrite.output (run %{exe:lfs_read.exe} --verbosity=debug test.img 4096 "diary.txt"))
             (diff rewrite.expected rewrite.output)

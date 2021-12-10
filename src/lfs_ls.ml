@@ -42,8 +42,13 @@ let ls image block_size path =
             Stdlib.Format.printf "%a : %s\n%!" pp_ty ty path;
             Lwt.return_unit
           | Some span ->
-            Stdlib.Format.printf "%a: %s (%a)\n%!" pp_ty ty path Ptime.Span.pp span;
-            Lwt.return_unit
+            match Ptime.of_span span with
+            | None ->
+              Stdlib.Format.printf "%a: %s (%a)\n%!" pp_ty ty path Ptime.Span.pp span;
+              Lwt.return_unit
+            | Some timestamp ->
+              Stdlib.Format.printf "%a: %s (%a)\n%!" pp_ty ty path Ptime.pp timestamp;
+              Lwt.return_unit
     end
     | Error _ -> Stdlib.Format.eprintf "filesystem was opened, but ls failed\n%!"; exit 2
     | Ok l ->

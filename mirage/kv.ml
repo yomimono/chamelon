@@ -108,29 +108,56 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       | `No_entry | `No_id _ | `No_structs -> Lwt.return @@ Ok ()
 
   let last_modified t key =
-    (* TODO: try getting the blockpair for the full path, in case it's a directory,
-     * and then we can browse through the entries and give the most recent of them *)
-    Fs.Find.find_directory t root_pair Mirage_kv.Key.(segments @@ parent key) >>= function
-    | `No_entry | `No_structs -> Lwt.return @@ Error (`Not_found key)
-    | `No_id k -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v k))
-    | `Basename_on block_pair ->
-      Fs.Find.entries_of_name t block_pair @@ Mirage_kv.Key.basename key >>= function
-      | Error (`No_id k) | Error (`Not_found k) -> Lwt.return @@ Error (`Not_found k)
-      | Ok l ->
-        match List.find_opt (fun (tag, _data) ->
-            Littlefs.Tag.(fst @@ tag.type3) = LFS_TYPE_USERATTR &&
-            Littlefs.Tag.(snd @@ tag.type3) = 0x74
-          ) l with
-        | None ->
-          Log.warn (fun m -> m "Key %a found but it had no time attributes associated" Mirage_kv.Key.pp key);
-          Lwt.return @@ Error (`Not_found key)
-        | Some (_tag, data) ->
-          match Littlefs.Entry.ctime_of_cstruct data with
+    let last_modified_value t key =
+      Fs.Find.find_directory t root_pair Mirage_kv.Key.(segments @@ parent key) >>= function
+      | `No_entry | `No_structs -> Lwt.return @@ Error (`Not_found key)
+      | `No_id k -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v k))
+      | `Basename_on block_pair ->
+        Fs.Find.entries_of_name t block_pair @@ Mirage_kv.Key.basename key >>= function
+        | Error (`No_id k) | Error (`Not_found k) -> Lwt.return @@ Error (`Not_found k)
+        | Ok l ->
+          match List.find_opt (fun (tag, _data) ->
+              Littlefs.Tag.(fst @@ tag.type3) = LFS_TYPE_USERATTR &&
+              Littlefs.Tag.(snd @@ tag.type3) = 0x74
+            ) l with
           | None ->
-            Log.err (fun m -> m "Time attributes (%a) found for %a but they were not parseable" Cstruct.hexdump_pp data Mirage_kv.Key.pp key);
-
+            Log.warn (fun m -> m "Key %a found but it had no time attributes associated" Mirage_kv.Key.pp key);
             Lwt.return @@ Error (`Not_found key)
-          | Some k -> Lwt.return @@ Ok k
+          | Some (_tag, data) ->
+            match Littlefs.Entry.ctime_of_cstruct data with
+            | None ->
+              Log.err (fun m -> m "Time attributes (%a) found for %a but they were not parseable" Cstruct.hexdump_pp data Mirage_kv.Key.pp key);
+
+              Lwt.return @@ Error (`Not_found key)
+            | Some k -> Lwt.return @@ Ok k
+    in
+    Fs.Find.find_directory t root_pair (Mirage_kv.Key.segments key) >>= function
+    | `No_id _ | `No_entry | `No_structs -> last_modified_value t key
+    | `Basename_on _block_pair ->
+      let open Lwt_result.Infix in
+      (* we were asked to get the last_modified time of a directory :/ *)
+      list t key >>= fun l ->
+      (* luckily, the spec says we should only check last_modified dates to a depth of 1 *)
+      (* unfortunately, the spec *doesn't* say what the last_modified time of an empty directory is :/ *)
+      Lwt_list.fold_left_s (fun span entry ->
+          match span with
+          | Error _ as e -> Lwt.return e
+          | Ok prev ->
+            match entry with
+            | _, `Dictionary -> Lwt.return (Ok prev)
+            | (name, `Value) ->
+              last_modified_value t Mirage_kv.Key.(key / name) >>= fun new_span ->
+              match Ptime.Span.of_d_ps prev, Ptime.Span.of_d_ps new_span with
+              | None, _ | _, None -> Lwt.return @@ Error (`Not_found key)
+              | Some p, Some n ->
+                match Ptime.of_span p, Ptime.of_span n with
+                | None, _ | _, None -> Lwt.return @@ Error (`Not_found key)
+                | Some p_ts, Some a_ts ->
+                  if Ptime.is_later a_ts ~than:p_ts
+                  then Lwt.return @@ Ok new_span
+                  else Lwt.return @@ Ok prev
+        )
+        (Ok Ptime.Span.(zero |> to_d_ps)) l
 
   let connect = Fs.connect
 
