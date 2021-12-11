@@ -159,6 +159,12 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         )
         (Ok Ptime.Span.(zero |> to_d_ps)) l
 
+  (* TODO: it is extremely unclear to me how the hell this is supposed to work *)
+  let batch _t ?(_retries=13) _f = Error `Too_many_retries
+
+  (* TODO: need `digestif` for this *)
+  let digest _t _key = Error `Not_found
+
   let connect = Fs.connect
 
   let format = Fs.format
