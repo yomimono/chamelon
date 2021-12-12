@@ -160,10 +160,42 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         (Ok Ptime.Span.(zero |> to_d_ps)) l
 
   (* TODO: it is extremely unclear to me how the hell this is supposed to work *)
-  let batch _t ?(_retries=13) _f = Error `Too_many_retries
+  let batch t ?(retries=13) f =
+    let _ = retries in f t
 
-  (* TODO: need `digestif` for this *)
-  let digest _t _key = Error `Not_found
+  let digest t key =
+    let rec aux ctx t key =
+      get t key >>= function
+      | Ok v ->
+        let digest = Digestif.SHA256.feed_string ctx v in
+        Lwt.return @@ Ok digest
+      | Error (`Value_expected _) -> begin
+          (* let's see whether we can get a digest for the directory contents *)
+          (* unfortunately we can't just run a digest of the block list,
+           * because CTZs can change file contents without changing
+           * metadata :/ *)
+          list t key >>= function
+          | Error _ as e -> Lwt.return e
+          | Ok l ->
+            (* There's no explicit statement in the mli about whether
+             * we should descend beyond 1 dictionary for `digest`,
+             * but I'm not sure how we can meaningfully have a digest if we don't *)
+            Lwt_list.fold_left_s (fun ctx_result (basename, _) ->
+                match ctx_result with
+                | Ok ctx ->
+                  let path = Mirage_kv.Key.add key basename in
+                  aux ctx t path
+                | e -> Lwt.return e
+              ) (Ok ctx) l
+        end
+      | Error _ as e -> Lwt.return e
+    in
+    let ctx = Digestif.SHA256.init () in
+    aux ctx t key >|= function
+    | Error e -> Error e
+    | Ok ctx -> Ok Digestif.SHA256.(to_raw_string @@ get ctx)
+
+  let disconnect _ = Lwt.return_unit
 
   let connect = Fs.connect
 

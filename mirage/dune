@@ -1,5 +1,5 @@
 (library
   (public_name littlefs.kv)
   (name kv)
-  (libraries fmt littlefs mirage-block mirage-clock mirage-kv mirage-logs lwt)
+  (libraries fmt digestif littlefs mirage-block mirage-clock mirage-kv mirage-logs lwt)
 )

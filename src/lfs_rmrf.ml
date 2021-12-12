@@ -50,6 +50,7 @@ let rmrf image block_size path () =
     | Error (`Too_many_retries i) ->
       Stdlib.Format.eprintf "couldn't execute deletion batch after %d tries\n%!" i;
       exit 1
+    | Error _ -> Stdlib.Format.eprintf "oh no"; exit 1
 )
 
 let () =
