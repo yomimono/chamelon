@@ -173,7 +173,9 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
           (* let's see whether we can get a digest for the directory contents *)
           (* unfortunately we can't just run a digest of the block list,
            * because CTZs can change file contents without changing
-           * metadata :/ *)
+           * metadata if the length remains the same, and also because
+           * there are many differences possible in the entry list that map to the same
+           * filesystem structure *)
           list t key >>= function
           | Error _ as e -> Lwt.return e
           | Ok l ->
