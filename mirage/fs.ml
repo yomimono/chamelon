@@ -390,7 +390,6 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       | basename::[] -> get_value t root_pair basename >>= map_errors
       | _ ->
         let dirname = Mirage_kv.Key.(parent key |> segments) in
-        Format.eprintf "finding directory %a\n%!" Mirage_kv.Key.pp @@ Mirage_kv.Key.parent key;
         Find.find_directory t root_pair dirname >>= function
         | `Basename_on pair -> begin
             get_value t pair (Mirage_kv.Key.basename key) >>= map_errors
