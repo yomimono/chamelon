@@ -89,9 +89,10 @@ let test_digest_slash fs _ () =
   let key = Mirage_kv.Key.v "digest" in
   Littlefs.format fs >>= function | Error e -> fail_write e | Ok () ->
   Littlefs.digest fs slash >>= function | Error e -> fail_read e | Ok digest ->
-    (* no special meaning to setting the digest, it's just a handy value *)
-    Littlefs.set fs key digest >>= function | Error e -> fail_write e | Ok () ->
-      Littlefs.digest fs slash >>= function | Error e -> fail_read e | Ok _post_write_digest ->
+  (* no special meaning to setting the digest, it's just a handy value *)
+  Littlefs.set fs key digest >>= function | Error e -> fail_write e | Ok () ->
+  Littlefs.digest fs slash >>= function | Error e -> fail_read e | Ok post_write_digest ->
+  Alcotest.(check bool) "digest changes after write" false (String.equal post_write_digest digest);
   Lwt.return_unit
 
 let test_digest_deep_key fs _ () =
@@ -102,10 +103,11 @@ let test_digest_deep_key fs _ () =
   Littlefs.set fs deep deep_contents >>= function | Error e -> fail_write e | Ok () -> 
   Littlefs.digest fs deep >>= function
   | Error e -> Lwt.fail_with @@ Format.asprintf "digest of deep directory key failed: %a" Littlefs.pp_error e
-  | Ok _digest_key_post_write ->
+  | Ok digest_key_post_write ->
     Littlefs.digest fs slash >>= function
     | Error e -> Lwt.fail_with @@ Format.asprintf "digest of / failed: %a" Littlefs.pp_error e
-    | Ok _digest_slash_post_write ->
+    | Ok digest_slash_post_write ->
+      Alcotest.(check string) "digest for fs should be digest of only file" digest_key_post_write digest_slash_post_write;
       Lwt.return_unit
 
 let test_digest_deep_dictionary fs _ () =
