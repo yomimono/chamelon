@@ -114,13 +114,18 @@ let test_digest_deep_dictionary fs _ () =
   let slash = Mirage_kv.Key.v "/" in
   let deep = Mirage_kv.Key.v "/digest/deep/dictionary" in
   let deep_contents = "arglebarglefargle" in
+  let shallow = Mirage_kv.Key.v "/smorgleforg" in
+  let shallow_contents = "clinglefrimp" in
   Littlefs.format fs >>= function | Error e -> fail_write e | Ok () ->
   Littlefs.digest fs slash >>= function | Error e -> fail_read e | Ok digest_empty_slash -> 
   Littlefs.set fs deep deep_contents >>= function | Error e -> fail_write e | Ok () -> 
-  Littlefs.digest fs slash >>= function | Error e -> fail_read e | Ok digest_slash_post_write ->
-    (* Alcotest.(check bool) "setting a key deep in the hierarchy affects the digest of /" false (String.equal digest_empty_slash digest_slash_post_write); *)
-    let _, _ = digest_empty_slash, digest_slash_post_write in
-    Lwt.return_unit
+  Littlefs.digest fs slash >>= function | Error e -> fail_read e | Ok digest_slash_post_deep_write ->
+  Littlefs.digest fs deep >>= function | Error e -> fail_read e | Ok digest_deep_pre_shallow_write ->
+  Littlefs.set fs shallow shallow_contents >>= function | Error e -> fail_write e | Ok () -> 
+  Littlefs.digest fs deep >>= function | Error e -> fail_read e | Ok digest_deep_post_shallow_write ->
+  Alcotest.(check bool) "setting a key deep in the hierarchy affects the digest of /" false (String.equal digest_empty_slash digest_slash_post_deep_write);
+  Alcotest.(check string) "digests of things in the fs hierarchy aren't sensitive to unrelated changes" digest_deep_pre_shallow_write digest_deep_post_shallow_write;
+  Lwt.return_unit
 
 let test img block_size =
   Logs.set_level (Some Logs.Debug);
