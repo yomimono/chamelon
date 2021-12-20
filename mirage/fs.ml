@@ -302,7 +302,11 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
           Read.block_of_block_pair t rootpair >>= function
           | Error _ -> Lwt.return @@ Error (`Not_found dirname)
           | Ok root_block ->
-            let dir_id = Littlefs.Block.(IdSet.max_elt @@ ids root_block) + 1 in
+            let extant_ids = Littlefs.Block.ids root_block in
+            let dir_id = match Littlefs.Block.IdSet.max_elt_opt extant_ids with
+              | None -> 1
+              | Some s -> s + 1
+            in
             let name = Littlefs.Dir.name dirname dir_id in
             let dirstruct = Littlefs.Dir.mkdir ~to_pair:(dir_block_0, dir_block_1) dir_id in
             let new_block = Littlefs.Block.add_commit root_block [name; dirstruct] in
@@ -359,8 +363,16 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
                                        ))) in
         Log.debug (fun m -> m "found %d entries with name %s" (List.length compacted) filename);
         match inline_files compacted, ctz_files compacted with
-        | None, None -> Error (`Not_found filename)
         | Some (_tag, data), None -> Ok (`Inline (Cstruct.to_string data))
+        | None, None -> begin
+          (* is it actually a directory? *)
+            match List.find_opt (fun (tag, _data) ->
+                Littlefs.Tag.((fst tag.type3) = LFS_TYPE_STRUCT) &&
+                Littlefs.Tag.((snd tag.type3) = 0x00)
+              ) compacted with
+            | Some _ -> Error (`Value_expected filename)
+            | None -> Error (`Not_found filename)
+        end
         | _, Some (_, ctz) ->
           match Littlefs.File.ctz_of_cstruct ctz with
           | Some (pointer, length) -> Ok (`Ctz (Int64.of_int32 pointer, Int32.to_int length))
@@ -378,6 +390,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       | basename::[] -> get_value t root_pair basename >>= map_errors
       | _ ->
         let dirname = Mirage_kv.Key.(parent key |> segments) in
+        Format.eprintf "finding directory %a\n%!" Mirage_kv.Key.pp @@ Mirage_kv.Key.parent key;
         Find.find_directory t root_pair dirname >>= function
         | `Basename_on pair -> begin
             get_value t pair (Mirage_kv.Key.basename key) >>= map_errors

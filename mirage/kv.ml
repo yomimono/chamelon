@@ -81,7 +81,10 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       Fs.Find.find_directory t root_pair segments >>= function
       | `No_id k -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v k))
       | `No_structs | `No_entry -> Lwt.return @@ Error (`Not_found key)
-      | `Basename_on pair -> ls_in_dir pair
+      | `Basename_on pair ->
+        Format.eprintf "found entry for basename %a on %Ld, %Ld\n%!"
+          Fmt.(list string) segments (fst pair) (snd pair);
+        ls_in_dir pair
 
   let exists t key =
     (* TODO: just go look for the thing directly in the FS,
@@ -165,34 +168,42 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
 
   let digest t key =
     let rec aux ctx t key =
+      Format.eprintf "looking for a value at %a\n%!" Mirage_kv.Key.pp key;
       get t key >>= function
       | Ok v ->
         let digest = Digestif.SHA256.feed_string ctx v in
         Lwt.return @@ Ok digest
       | Error (`Value_expected _) -> begin
-          (* let's see whether we can get a digest for the directory contents *)
-          (* unfortunately we can't just run a digest of the block list,
-           * because CTZs can change file contents without changing
-           * metadata if the length remains the same, and also because
-           * there are many differences possible in the entry list that map to the same
-           * filesystem structure *)
-          list t key >>= function
-          | Error _ as e -> Lwt.return e
-          | Ok l ->
-            (* There's no explicit statement in the mli about whether
-             * we should descend beyond 1 dictionary for `digest`,
-             * but I'm not sure how we can meaningfully have a digest if we don't *)
-            Lwt_list.fold_left_s (fun ctx_result (basename, _) ->
-                match ctx_result with
-                | Ok ctx ->
-                  let path = Mirage_kv.Key.add key basename in
-                  aux ctx t path
-                | e -> Lwt.return e
-              ) (Ok ctx) l
+        Format.eprintf "%a contains a dictionary\n%!" Mirage_kv.Key.pp key;
+        (* let's see whether we can get a digest for the directory contents *)
+        (* unfortunately we can't just run a digest of the block list,
+         * because CTZs can change file contents without changing
+         * metadata if the length remains the same, and also because
+         * there are many differences possible in the entry list that map to the same
+         * filesystem structure *)
+        list t key >>= function
+        | Error e ->
+          Format.eprintf "error listing %a: %a\n%!" Mirage_kv.Key.pp key pp_error e;
+          Lwt.return @@ Error (`Not_found key)
+        | Ok l -> begin
+          Format.eprintf "descending into %a\n%!" Mirage_kv.Key.pp key;
+          (* There's no explicit statement in the mli about whether
+           * we should descend beyond 1 dictionary for `digest`,
+           * but I'm not sure how we can meaningfully have a digest if we don't *)
+          Lwt_list.fold_left_s (fun ctx_result (basename, _) ->
+              match ctx_result with
+              | Error _ as e -> Lwt.return e
+              | Ok ctx ->
+                let path = Mirage_kv.Key.add key basename in
+                Format.eprintf "will descend into %a\n%!" Mirage_kv.Key.pp path;
+                aux ctx t path
+            ) (Ok ctx) l
         end
-      | Error _ as e -> Lwt.return e
+      end
+      | Error _ as e -> Format.eprintf "something bad happened with key %a\n%!" Mirage_kv.Key.pp key ; Lwt.return e
     in
     let ctx = Digestif.SHA256.init () in
+    Log.debug (fun f -> f "context for digest initiated");
     aux ctx t key >|= function
     | Error e -> Error e
     | Ok ctx -> Ok Digestif.SHA256.(to_raw_string @@ get ctx)
