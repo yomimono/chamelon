@@ -420,14 +420,20 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
           let skip_list_size = Littlefs.File.n_pointers index in
           let skip_list_length = skip_list_size * 4 in
           let data_length = min (t.block_size - skip_list_length) ((String.length data) - so_far) in
-          (* TODO: this does not implement writing the full skip list;
-           * rather it writes only the first pointer (the one to the
-           * previous block) and leaves the rest blank *)
+          (* the 0th item in the skip list is always (index - 1). Only exception
+           * is the last block in the list (the first block in the file),
+           * which has no skip list *)
           (match l with
            | [] -> ()
-           | (_, last_pointer)::_ ->
+           | (_last_index, last_pointer)::_ ->
+             (* the first entry in the skip list should be for block _last_index,
+              * which is index - 1 *)
              Cstruct.LE.set_uint32 block_cs 0 last_pointer
           );
+          for n_skip_list = 1 to skip_list_size do
+            let point_index = List.assoc (n_skip_list / (2 lsl n_skip_list)) l in
+            Cstruct.LE.set_uint32 block_cs (n_skip_list * 4) point_index
+          done;
           Cstruct.blit_from_string data so_far block_cs skip_list_length data_length;
           This_Block.write t.block (Int64.of_int32 pointer) [block_cs] >>= function
           | Error _ -> Lwt.return @@ Error `No_space
