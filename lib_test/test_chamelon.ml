@@ -8,7 +8,7 @@ module Tag = struct
     (* set the least significant bit because 0x0l is
      * explicitly an invalid tag *)
     let cs = Cstruct.of_string "\x00\x00\x00\x01" in
-    let t = Littlefs.Tag.of_cstruct ~xor_tag_with:dont_xor cs |> Result.get_ok in
+    let t = Chamelon.Tag.of_cstruct ~xor_tag_with:dont_xor cs |> Result.get_ok in
     Alcotest.(check bool) "valid bit" true t.valid
   
   let test_ones () =
@@ -22,22 +22,22 @@ module Tag = struct
     in
     let tag = Cstruct.create 4 in
     Cstruct.BE.set_uint32 tag 0 repr;
-    match Littlefs.Tag.of_cstruct ~xor_tag_with:dont_xor tag with
+    match Chamelon.Tag.of_cstruct ~xor_tag_with:dont_xor tag with
     | Ok _ -> Alcotest.fail "abstract type 1 was accepted"
     | Error _ -> ()
   
   let read_almost_maxint () =
     let valid = false
-    and abstract_type = Littlefs.Tag.LFS_TYPE_GSTATE
+    and abstract_type = Chamelon.Tag.LFS_TYPE_GSTATE
     and chunk = 0xff
     and id = 0x3ff
     and length = 0x3ef
     in
     let repr = Cstruct.of_string "\xff\xff\xff\xef" in
     let is_gstate t = 
-      Littlefs.Tag.(compare_abstract_type abstract_type t)
+      Chamelon.Tag.(compare_abstract_type abstract_type t)
     in
-    let t = Littlefs.Tag.of_cstruct ~xor_tag_with:dont_xor repr |> Result.get_ok in
+    let t = Chamelon.Tag.of_cstruct ~xor_tag_with:dont_xor repr |> Result.get_ok in
     Alcotest.(check bool) "valid bit" valid t.valid;
     Alcotest.(check int) "abstract type = 7" 0
       (is_gstate (fst t.type3));
@@ -48,31 +48,31 @@ module Tag = struct
 
   let write_maxint () =
     let valid = false
-    and abstract_type = Littlefs.Tag.LFS_TYPE_GSTATE
+    and abstract_type = Chamelon.Tag.LFS_TYPE_GSTATE
     and chunk = 0xff
     and id = 0x3ff
     and length = 0x3ff
     in
-    let t = Littlefs.Tag.{ valid; type3 = (abstract_type, chunk); id; length } in
+    let t = Chamelon.Tag.{ valid; type3 = (abstract_type, chunk); id; length } in
     (* It may be surprising that the expected case here is zero. The tag itself is set to all 1s, but it needs
      * to be XOR'd with the default value, which is also all 1s, so we end up with all 0s. *)
     let cs = Cstruct.of_string "\x00\x00\x00\x00" in
-    Alcotest.(check cstruct) "tag writing: 0xffffffff" cs (Littlefs.Tag.to_cstruct ~xor_tag_with:(Cstruct.of_string "\xff\xff\xff\xff") t)
+    Alcotest.(check cstruct) "tag writing: 0xffffffff" cs (Chamelon.Tag.to_cstruct ~xor_tag_with:(Cstruct.of_string "\xff\xff\xff\xff") t)
 
   let roundtrip () =
     let tag = Cstruct.of_string "\xf0\x0f\xff\xf7" in
-    match Littlefs.Tag.of_cstruct ~xor_tag_with:default_xor tag with
+    match Chamelon.Tag.of_cstruct ~xor_tag_with:default_xor tag with
     | Error (`Msg e) -> Alcotest.fail e
     | Ok parsed ->
-      Alcotest.(check int) "tag has 8 bytes of data" 8 parsed.Littlefs.Tag.length;
+      Alcotest.(check int) "tag has 8 bytes of data" 8 parsed.Chamelon.Tag.length;
       ()
 
 end
 
 module Superblock = struct
   let test_zero () =
-    let cs = Cstruct.(create @@ Littlefs.Superblock.sizeof_superblock) in
-    let sb = Littlefs.Superblock.parse cs in
+    let cs = Cstruct.(create @@ Chamelon.Superblock.sizeof_superblock) in
+    let sb = Chamelon.Superblock.parse cs in
     Alcotest.(check int) "major version" 0 sb.version_major;
     Alcotest.(check int) "minor version" 0 sb.version_minor;
     Alcotest.(check int32) "block size" Int32.zero sb.block_size;
@@ -85,7 +85,7 @@ module Superblock = struct
 end
 
 module Block = struct
-  module Block = Littlefs.Block
+  module Block = Chamelon.Block
 
   (* what's a reasonable block size? let's assume 4Kib *)
   let block_size = 4096
@@ -94,17 +94,17 @@ module Block = struct
   let superblock =
     let revision_count = 1 in
     let block_count = 16 in
-    let name = Littlefs.Superblock.name in
+    let name = Chamelon.Superblock.name in
     let bs = Int32.of_int block_size in
-    let superblock_inline_struct = Littlefs.Superblock.inline_struct bs @@ Int32.of_int block_count in
-    Littlefs.Block.of_entries ~revision_count [name; superblock_inline_struct]
+    let superblock_inline_struct = Chamelon.Superblock.inline_struct bs @@ Int32.of_int block_count in
+    Chamelon.Block.of_entries ~revision_count [name; superblock_inline_struct]
 
   (* mimic the minimal superblock commit made by `mklittlefs` when run on an empty directory, and assert that they match what's expected *)
   let commit_superblock () =
     let block = superblock in
     Alcotest.(check int) "in-memory block structure has 1 commit with 2 entries" 2
-      (List.length @@ Littlefs.Commit.entries @@ List.hd @@ Littlefs.Block.commits block);
-    let cs, _res = Littlefs.Block.to_cstruct ~program_block_size ~block_size block in
+      (List.length @@ Chamelon.Commit.entries @@ List.hd @@ Chamelon.Block.commits block);
+    let cs, _res = Chamelon.Block.to_cstruct ~program_block_size ~block_size block in
     let expected_length = 
         4 (* revision count *)
       + 4 (* superblock name tag *)
@@ -141,22 +141,22 @@ module Block = struct
     let block = superblock in
     let written_block, _res = Block.to_cstruct ~program_block_size ~block_size block in
     let read_block = Block.of_cstruct ~program_block_size written_block |> Result.get_ok in
-    let commits = Littlefs.Block.commits read_block in
+    let commits = Chamelon.Block.commits read_block in
     Alcotest.(check int) "read-back block has a commit" 1 (List.length commits);
     let commit = List.hd commits in
     (* read-back block should have 1 commit with 3 entries in it: the original 2 entries from the superblock, and the CRC tag from the commit *)
-    let entries = Littlefs.Commit.entries commit in
+    let entries = Chamelon.Commit.entries commit in
     Alcotest.(check int) "read-back commit has 2 entries" 2 (List.length entries);
     ()
 
   let revision_count_matters () =
     let block = superblock in
-    let commits = Littlefs.Block.commits block in
-    let revision_count = Littlefs.Block.revision_count block in
+    let commits = Chamelon.Block.commits block in
+    let revision_count = Chamelon.Block.revision_count block in
     let new_rev_count = revision_count + 1 in
-    let revised_block = Littlefs.Block.of_commits ~revision_count:new_rev_count commits in
-    let original_block_serialized, _ = Littlefs.Block.to_cstruct ~program_block_size ~block_size block in
-    let incremented_block_serialized, _ = Littlefs.Block.to_cstruct ~program_block_size ~block_size revised_block in
+    let revised_block = Chamelon.Block.of_commits ~revision_count:new_rev_count commits in
+    let original_block_serialized, _ = Chamelon.Block.to_cstruct ~program_block_size ~block_size block in
+    let incremented_block_serialized, _ = Chamelon.Block.to_cstruct ~program_block_size ~block_size revised_block in
     let orig_crc = Cstruct.(to_string @@ sub original_block_serialized 0x30 4) in
     let incremented_crc = Cstruct.(to_string @@ sub incremented_block_serialized 0x30 4) in
     Alcotest.(check bool) "crcs shouldn't be equal after revision count change" false (String.equal orig_crc incremented_crc)
@@ -172,12 +172,12 @@ module Entry = struct
 
   let roundtrip () =
     let block = Block.superblock in
-    let commit = List.hd @@ Littlefs.Block.commits block in
-    let entries = Littlefs.Commit.entries commit in
+    let commit = List.hd @@ Chamelon.Block.commits block in
+    let entries = Chamelon.Commit.entries commit in
     let default_tag = Cstruct.of_string "\xff\xff\xff\xff" in
-    let (_last_tag, serialized) = Littlefs.Entry.to_cstructv ~starting_xor_tag:default_tag entries in
+    let (_last_tag, serialized) = Chamelon.Entry.to_cstructv ~starting_xor_tag:default_tag entries in
     Stdlib.Format.printf "serialized entry list: %a\n" Cstruct.hexdump_pp serialized;
-    let (parsed, _last_tag, _s) = Littlefs.Entry.of_cstructv ~starting_xor_tag:default_tag serialized in
+    let (parsed, _last_tag, _s) = Chamelon.Entry.of_cstructv ~starting_xor_tag:default_tag serialized in
     Alcotest.(check int) "parsed entry list is same length as original" (List.length entries) (List.length parsed);
     let first_parsed = List.hd parsed in
     (* look it's, polymorphic eq (polymorphic eq), the fn who found, a way to crash stuff *)

@@ -7,7 +7,7 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
   
   type key = Mirage_kv.Key.t
 
-  let log_src = Logs.Src.create "littlefs-kv" ~doc:"littlefs KV layer"
+  let log_src = Logs.Src.create "chamelon-kv" ~doc:"chamelon KV layer"
   module Log = (val Logs.src_log log_src : Logs.LOG)
 
   (* error type definitions straight outta mirage-kv *)
@@ -69,11 +69,11 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       Lwt.return @@ Error (`Not_found key)
 
   let list t key : ((string * [`Dictionary | `Value]) list, error) result Lwt.t =
-    let translate entries = List.filter_map Littlefs.Entry.info_of_entry entries in
+    let translate entries = List.filter_map Chamelon.Entry.info_of_entry entries in
     let ls_in_dir dir_pair =
       Fs.Find.all_entries_in_dir t dir_pair >>= function
       | Error _ -> Lwt.return @@ Error (`Not_found key)
-      | Ok entries -> Lwt.return @@ Ok (translate @@ Littlefs.Entry.compact entries)
+      | Ok entries -> Lwt.return @@ Ok (translate @@ Chamelon.Entry.compact entries)
     in
     match (Mirage_kv.Key.segments key) with
     | [] -> ls_in_dir root_pair
@@ -117,14 +117,14 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         | Error (`No_id k) | Error (`Not_found k) -> Lwt.return @@ Error (`Not_found k)
         | Ok l ->
           match List.find_opt (fun (tag, _data) ->
-              Littlefs.Tag.(fst @@ tag.type3) = LFS_TYPE_USERATTR &&
-              Littlefs.Tag.(snd @@ tag.type3) = 0x74
+              Chamelon.Tag.(fst @@ tag.type3) = LFS_TYPE_USERATTR &&
+              Chamelon.Tag.(snd @@ tag.type3) = 0x74
             ) l with
           | None ->
             Log.warn (fun m -> m "Key %a found but it had no time attributes associated" Mirage_kv.Key.pp key);
             Lwt.return @@ Error (`Not_found key)
           | Some (_tag, data) ->
-            match Littlefs.Entry.ctime_of_cstruct data with
+            match Chamelon.Entry.ctime_of_cstruct data with
             | None ->
               Log.err (fun m -> m "Time attributes (%a) found for %a but they were not parseable" Cstruct.hexdump_pp data Mirage_kv.Key.pp key);
 

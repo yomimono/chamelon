@@ -38,9 +38,6 @@ readmdir BLOCK:
 readtree:
 	readtree.py -a --log {{image}} {{block_size}} 0 1
 
-mklittlefs-list:
-	mklittlefs -d 5 -p {{program_block_size}} -b {{block_size}} -l {{image}}
-
 umount:
 	sudo umount -q /mnt || true
 	sudo losetup -d /dev/loop0 || true

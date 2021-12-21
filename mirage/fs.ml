@@ -13,7 +13,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
 
   type key = Mirage_kv.Key.t
 
-  let log_src = Logs.Src.create "littlefs-fs" ~doc:"littlefs FS layer"
+  let log_src = Logs.Src.create "chamelon-fs" ~doc:"chamelon FS layer"
   module Log = (val Logs.src_log log_src : Logs.LOG)
 
   (* error type definitions straight outta mirage-kv *)
@@ -36,17 +36,17 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       This_Block.read block block_location [cs] >>= function
       | Error b -> Lwt.return @@ Error (`Block b)
       | Ok () ->
-        match Littlefs.Block.of_cstruct ~program_block_size cs with
+        match Chamelon.Block.of_cstruct ~program_block_size cs with
         | Error (`Msg s) ->
           Log.err (fun f -> f "error reading block %Ld : %s"
                       block_location s);
-          Lwt.return @@ Error (`Littlefs `Corrupt)
+          Lwt.return @@ Error (`Chamelon `Corrupt)
         | Ok extant_block -> Lwt.return @@ Ok extant_block
 
     let block_of_block_pair t (l1, l2) =
       let open Lwt_result.Infix in
       Lwt_result.both (block_of_block_number t l1) (block_of_block_number t l2) >>= fun (b1, b2) ->
-      if Littlefs.Block.(compare (revision_count b1) (revision_count b2)) < 0
+      if Chamelon.Block.(compare (revision_count b1) (revision_count b2)) < 0
       then Lwt.return @@ Ok b2
       else Lwt.return @@ Ok b1
           
@@ -60,22 +60,22 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         let open Lwt_result.Infix in
         let data = Cstruct.create t.block_size in
         This_Block.read t.block pointer [data] >>= fun ()->
-        let pointers, _data_region = Littlefs.File.of_block index data in
+        let pointers, _data_region = Chamelon.File.of_block index data in
         match pointers with
         | [] -> Lwt.return @@ Ok (pointer::l)
         | next::_ -> get_ctz_pointers t (Ok (pointer::l)) (index - 1) (Int64.of_int32 next)
 
     let rec follow_links t = function
-      | Littlefs.Entry.Data (pointer, length) -> begin
+      | Chamelon.Entry.Data (pointer, length) -> begin
           let file_size = Int32.to_int length in
-          let index = Littlefs.File.last_block_index ~file_size ~block_size:t.block_size in
+          let index = Chamelon.File.last_block_index ~file_size ~block_size:t.block_size in
           get_ctz_pointers t (Ok []) index (Int64.of_int32 pointer)
         end
-      | Littlefs.Entry.Metadata (a, b) ->
+      | Chamelon.Entry.Metadata (a, b) ->
         Read.block_of_block_pair t (a, b) >>= function
         | Error _ -> Lwt.return @@ Ok []
         | Ok block ->
-          let links = Littlefs.Block.linked_blocks block in
+          let links = Chamelon.Block.linked_blocks block in
           Lwt_list.fold_left_s (fun l link ->
               follow_links t link >>= function
               | Error _ -> Lwt.return @@ l
@@ -89,10 +89,10 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       let open Lwt_result.Infix in
       Read.block_of_block_pair t pair >>= fun block ->
       match List.find_opt (fun e ->
-          Littlefs.Tag.is_hardtail (fst e)
-        ) (Littlefs.Block.entries block) with
+          Chamelon.Tag.is_hardtail (fst e)
+        ) (Chamelon.Block.entries block) with
       | None -> Lwt.return @@ Ok pair
-      | Some entry -> match Littlefs.Dir.hard_tail_links entry with
+      | Some entry -> match Chamelon.Dir.hard_tail_links entry with
         | None -> Lwt.return @@ Ok pair
         | Some next_pair -> last_block t next_pair
   end
@@ -122,11 +122,11 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         t.lookahead := bias, l;
         Lwt.return @@ Ok block
       | bias, [] ->
-        Traverse.follow_links t (Littlefs.Entry.Metadata root_pair) >|= function
-        | Error _ -> Error (`Littlefs `Corrupt) (* TODO: not quite *)
+        Traverse.follow_links t (Chamelon.Entry.Metadata root_pair) >|= function
+        | Error _ -> Error (`Chamelon `Corrupt) (* TODO: not quite *)
         | Ok used_blocks ->
           match unused ~bias t used_blocks with
-          | [] -> Error (`Littlefs_write `Out_of_space)
+          | [] -> Error (`Chamelon_write `Out_of_space)
           | block::l ->
             t.lookahead := (opp bias, l);
             Ok block
@@ -148,7 +148,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     let block_to_block_number t data block_location =
       let {block_size; block; program_block_size; _} = t in
       let cs = Cstruct.create block_size in
-      match Littlefs.Block.into_cstruct ~program_block_size cs data with
+      match Chamelon.Block.into_cstruct ~program_block_size cs data with
       | `Split_emergency -> Lwt.return @@ Error `Split_emergency
       | `Split -> begin
           This_Block.write block block_location [cs] >>= function
@@ -171,7 +171,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
                            b1 b2 a1 a2);
             (* it's not strictly necessary to order these,
              * but it makes it easier for the debugging human to "reason about" *)
-            let old_block, new_block = Littlefs.Block.split data ((min a1 a2), (max a1 a2)) in
+            let old_block, new_block = Chamelon.Block.split data ((min a1 a2), (max a1 a2)) in
             Lwt_result.both
               (block_to_block_pair t old_block (b1, b2))
               (block_to_block_pair t new_block (a1, a2)) >>= function
@@ -192,8 +192,8 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
           Logs.debug (fun m -> m "split required for block write to %Ld, %Ld" b1 b2);
           (* try a compaction first *)
           Lwt_result.both
-            (block_to_block_number t (Littlefs.Block.compact data) b1)
-            (block_to_block_number t (Littlefs.Block.compact data) b2) 
+            (block_to_block_number t (Chamelon.Block.compact data) b1)
+            (block_to_block_number t (Chamelon.Block.compact data) b2) 
           >>= function
           | Ok _ -> Lwt.return @@ Ok ()
           | Error `Split | Error `Split_emergency -> split ()
@@ -204,9 +204,9 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
   end
 
   module Find : sig
-    val all_entries_in_dir : t -> int64 * int64 -> (Littlefs.Entry.t list, error) result Lwt.t
+    val all_entries_in_dir : t -> int64 * int64 -> (Chamelon.Entry.t list, error) result Lwt.t
 
-    val entries_of_name : t -> int64 * int64 -> string -> (Littlefs.Entry.t list, 
+    val entries_of_name : t -> int64 * int64 -> string -> (Chamelon.Entry.t list, 
                                                            [`No_id of key
                                                            | `Not_found of key]
                                                           ) result Lwt.t
@@ -222,8 +222,8 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       Read.block_of_block_pair t block_pair >>= function
       | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v "hard_tail"))
       | Ok block ->
-        let this_blocks_entries = Littlefs.Block.entries block in
-        match List.filter_map Littlefs.Dir.hard_tail_links this_blocks_entries with
+        let this_blocks_entries = Chamelon.Block.entries block in
+        match List.filter_map Chamelon.Dir.hard_tail_links this_blocks_entries with
         | [] -> Lwt.return @@ Ok this_blocks_entries
         | nextpair::_ ->
           all_entries_in_dir t nextpair >>= function
@@ -232,22 +232,22 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
 
     let entries_of_name t block_pair name =
       let entries_of_id entries id =
-        let matches (tag, _) = 0 = compare tag.Littlefs.Tag.id id in
+        let matches (tag, _) = 0 = compare tag.Chamelon.Tag.id id in
         List.find_all matches entries
       in
       let id_of_key entries key =
         let data_matches c = 0 = String.(compare key @@ Cstruct.to_string c) in
-        let tag_matches t = Littlefs.Tag.(fst t.type3 = LFS_TYPE_NAME)
+        let tag_matches t = Chamelon.Tag.(fst t.type3 = LFS_TYPE_NAME)
         in
         match List.find_opt (fun (tag, data) ->
             tag_matches tag && data_matches data
           ) entries with
-        | Some (tag, _) -> Some tag.Littlefs.Tag.id
+        | Some (tag, _) -> Some tag.Chamelon.Tag.id
         | None -> None
       in
       let open Lwt_result in
       all_entries_in_dir t block_pair >>= fun entries ->
-      match id_of_key (Littlefs.Entry.compact entries) name with
+      match id_of_key (Chamelon.Entry.compact entries) name with
       | None ->
         Logs.debug (fun m -> m "id for %s not found in %d entries from %Ld, %Ld"
                        name (List.length entries) (fst block_pair) (snd block_pair));
@@ -256,7 +256,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         Logs.debug (fun m -> m "found %d entries for id %d"
                        (List.length @@ entries_of_id entries id)
                        id);
-        Lwt.return @@ Ok (Littlefs.Entry.compact @@ entries_of_id entries id)
+        Lwt.return @@ Ok (Chamelon.Entry.compact @@ entries_of_id entries id)
 
     let rec find_directory t block key =
       match key with
@@ -265,7 +265,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         entries_of_name t block key >>= function
         | Error _ -> Lwt.return @@ `No_id key
         | Ok l ->
-          match List.filter_map Littlefs.Dir.of_entry l with
+          match List.filter_map Chamelon.Dir.of_entry l with
           | [] -> Lwt.return `No_structs
           | next_blocks::_ -> find_directory t next_blocks remaining
 
@@ -281,7 +281,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         Find.entries_of_name t block_pair key >>= function
         | Error _ -> Lwt.return @@ `Not_found key
         | Ok l ->
-          match List.filter_map Littlefs.Dir.of_entry l with
+          match List.filter_map Chamelon.Dir.of_entry l with
           | [] -> Lwt.return `No_structs
           | next_blocks::_ -> Lwt.return (`Continue (remaining, next_blocks))
     in 
@@ -302,14 +302,14 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
           Read.block_of_block_pair t rootpair >>= function
           | Error _ -> Lwt.return @@ Error (`Not_found dirname)
           | Ok root_block ->
-            let extant_ids = Littlefs.Block.ids root_block in
-            let dir_id = match Littlefs.Block.IdSet.max_elt_opt extant_ids with
+            let extant_ids = Chamelon.Block.ids root_block in
+            let dir_id = match Chamelon.Block.IdSet.max_elt_opt extant_ids with
               | None -> 1
               | Some s -> s + 1
             in
-            let name = Littlefs.Dir.name dirname dir_id in
-            let dirstruct = Littlefs.Dir.mkdir ~to_pair:(dir_block_0, dir_block_1) dir_id in
-            let new_block = Littlefs.Block.add_commit root_block [name; dirstruct] in
+            let name = Chamelon.Dir.name dirname dir_id in
+            let dirstruct = Chamelon.Dir.mkdir ~to_pair:(dir_block_0, dir_block_1) dir_id in
+            let new_block = Chamelon.Block.add_commit root_block [name; dirstruct] in
             Write.block_to_block_pair t new_block rootpair >>= function
             | Error _ -> Lwt.return @@ Error `No_space
             | Ok () -> Lwt.return @@ Ok (dir_block_0, dir_block_1)
@@ -331,14 +331,14 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         This_Block.read t.block pointer [data] >>= function
         | Error _ as e -> Lwt.return e
         | Ok () ->
-          let pointers, data_region = Littlefs.File.of_block index data in
+          let pointers, data_region = Chamelon.File.of_block index data in
           match pointers with
           | next::_ ->
             read_block (data_region :: l) (index - 1) (Int64.of_int32 next)
           | [] ->
             Lwt.return @@ Ok (data_region :: l)
       in
-      let index = Littlefs.File.last_block_index ~file_size:length
+      let index = Chamelon.File.last_block_index ~file_size:length
           ~block_size:t.block_size in
       read_block [] index pointer >>= function
       | Error _ -> Lwt.return @@ Error (`Not_found key)
@@ -353,13 +353,13 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       | Error _ -> Error (`Not_found filename)
       | Ok compacted ->
         let inline_files = List.find_opt (fun (tag, _data) ->
-            Littlefs.Tag.((fst tag.type3) = LFS_TYPE_STRUCT) &&
-            Littlefs.Tag.((snd tag.type3) = 0x01)
+            Chamelon.Tag.((fst tag.type3) = LFS_TYPE_STRUCT) &&
+            Chamelon.Tag.((snd tag.type3) = 0x01)
           )
         in
         let ctz_files = List.find_opt (fun (tag, _block) ->
-            Littlefs.Tag.((fst tag.type3 = LFS_TYPE_STRUCT) &&
-                          Littlefs.Tag.((snd tag.type3 = 0x02)
+            Chamelon.Tag.((fst tag.type3 = LFS_TYPE_STRUCT) &&
+                          Chamelon.Tag.((snd tag.type3 = 0x02)
                                        ))) in
         Log.debug (fun m -> m "found %d entries with name %s" (List.length compacted) filename);
         match inline_files compacted, ctz_files compacted with
@@ -367,14 +367,14 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         | None, None -> begin
           (* is it actually a directory? *)
             match List.find_opt (fun (tag, _data) ->
-                Littlefs.Tag.((fst tag.type3) = LFS_TYPE_STRUCT) &&
-                Littlefs.Tag.((snd tag.type3) = 0x00)
+                Chamelon.Tag.((fst tag.type3) = LFS_TYPE_STRUCT) &&
+                Chamelon.Tag.((snd tag.type3) = 0x00)
               ) compacted with
             | Some _ -> Error (`Value_expected filename)
             | None -> Error (`Not_found filename)
         end
         | _, Some (_, ctz) ->
-          match Littlefs.File.ctz_of_cstruct ctz with
+          match Chamelon.File.ctz_of_cstruct ctz with
           | Some (pointer, length) -> Ok (`Ctz (Int64.of_int32 pointer, Int32.to_int length))
           | None -> Error (`Value_expected filename)
 
@@ -417,7 +417,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         | Ok block_number ->
           let pointer = Int64.to_int32 block_number in
           let block_cs = Cstruct.create t.block_size in
-          let skip_list_size = Littlefs.File.n_pointers index in
+          let skip_list_size = Chamelon.File.n_pointers index in
           let skip_list_length = skip_list_size * 4 in
           let data_length = min (t.block_size - skip_list_length) ((String.length data) - so_far) in
           (* the 0th item in the skip list is always (index - 1). Only exception
@@ -450,18 +450,18 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         | Error _ as e -> Lwt.return e
         | Ok [] -> Lwt.return @@ Error `No_space
         | Ok ((_last_index, last_pointer)::_) ->
-          let next = match Littlefs.Block.(IdSet.max_elt_opt @@ ids root) with
+          let next = match Chamelon.Block.(IdSet.max_elt_opt @@ ids root) with
             | None -> 1
             | Some n -> n + 1
           in
-          let name = Littlefs.File.name filename next in
-          let ctime = Littlefs.Entry.ctime next (Clock.now_d_ps ()) in
-          let ctz = Littlefs.File.create_ctz next
+          let name = Chamelon.File.name filename next in
+          let ctime = Chamelon.Entry.ctime next (Clock.now_d_ps ()) in
+          let ctz = Chamelon.File.create_ctz next
               ~pointer:last_pointer ~file_size:(Int32.of_int file_size)
           in
           let new_entries = entries @ [name; ctime; ctz] in
           Logs.debug (fun m -> m "writing ctz %d entries for ctz for file %s" (List.length new_entries) filename);
-          let new_block = Littlefs.Block.add_commit root new_entries in
+          let new_block = Chamelon.Block.add_commit root new_entries in
           Write.block_to_block_pair t new_block dir_block_pair >>= function
           | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v filename))
           | Ok () -> Lwt.return @@ Ok ()
@@ -473,16 +473,16 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
                      (fst block_pair) (snd block_pair));
         Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v filename))
       | Ok extant_block ->
-        let used_ids = Littlefs.Block.ids extant_block in
-        let next = match Littlefs.Block.IdSet.max_elt_opt used_ids with
+        let used_ids = Chamelon.Block.ids extant_block in
+        let next = match Chamelon.Block.IdSet.max_elt_opt used_ids with
           | None -> 1
           | Some n -> n + 1
         in
-        let ctime = Littlefs.Entry.ctime next (Clock.now_d_ps ()) in
-        let file = Littlefs.File.write_inline filename next (Cstruct.of_string data) in
+        let ctime = Chamelon.Entry.ctime next (Clock.now_d_ps ()) in
+        let file = Chamelon.File.write_inline filename next (Cstruct.of_string data) in
         let commit = entries @ (ctime :: file) in
         Logs.debug (fun m -> m "writing %d entries for inline file %s" (List.length file) filename);
-        let new_block = Littlefs.Block.add_commit extant_block commit in
+        let new_block = Chamelon.Block.add_commit extant_block commit in
         Write.block_to_block_pair t new_block block_pair >>= function
         | Error `No_space -> Lwt.return @@ Error `No_space
         | Error `Split
@@ -506,9 +506,9 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
        * but since we do both the deletion and the new addition
        * in the same commit, I think this saves us some potentially
        * error-prone work *)
-        let id = Littlefs.Tag.((fst hd).id) in
+        let id = Chamelon.Tag.((fst hd).id) in
         Logs.debug (fun m -> m "deleting existing entry %s at id %d" filename id);
-        let delete = (Littlefs.Tag.(delete id), Cstruct.create 0) in
+        let delete = (Chamelon.Tag.(delete id), Cstruct.create 0) in
         if (String.length data) > (t.block_size / 4) then
           write_in_ctz block_pair t filename data [delete]
         else
@@ -528,14 +528,14 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
                        (fst block_pair) (snd block_pair) name);
         Lwt.return @@ Ok ()
       | Ok (hd::_tl) ->
-        let id = Littlefs.Tag.((fst hd).id) in
-        let deletion = Littlefs.Tag.delete id in
+        let id = Chamelon.Tag.((fst hd).id) in
+        let deletion = Chamelon.Tag.delete id in
         Logs.debug (fun m -> m "adding deletion for id %d on block pair %Ld, %Ld"
                        id (fst block_pair) (snd block_pair));
         Read.block_of_block_pair t block_pair >>= function
         | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v name))
         | Ok block ->
-        let new_block = Littlefs.Block.add_commit block [(deletion, Cstruct.empty)] in
+        let new_block = Chamelon.Block.add_commit block [(deletion, Cstruct.empty)] in
         Write.block_to_block_pair t new_block block_pair >>= function
         | Error _ -> Lwt.return @@ Error `No_space
         | Ok () -> Lwt.return @@ Ok ()
@@ -551,7 +551,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
      * in the type system somehow,
      * or have them only take the arguments they need instead of a full `t` *)
     let t = {block; block_size; program_block_size; lookahead = ref (`Before, [])} in
-    Traverse.follow_links t (Littlefs.Entry.Metadata root_pair) >>= function
+    Traverse.follow_links t (Chamelon.Entry.Metadata root_pair) >>= function
     | Error _e -> Lwt.fail_with "couldn't get list of used blocks"
     | Ok used_blocks ->
       let open Allocate in
@@ -562,13 +562,13 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     let program_block_size = t.program_block_size in
     let block_size = t.block_size in
     let write_whole_block n b = This_Block.write t.block n
-        [fst @@ Littlefs.Block.to_cstruct ~program_block_size ~block_size b]
+        [fst @@ Chamelon.Block.to_cstruct ~program_block_size ~block_size b]
     in
-    let name = Littlefs.Superblock.name in
+    let name = Chamelon.Superblock.name in
     let block_count = This_Block.block_count t.block in
-    let superblock_inline_struct = Littlefs.Superblock.inline_struct (Int32.of_int block_size) (Int32.of_int block_count) in
-    let block_0 = Littlefs.Block.of_entries ~revision_count:1 [name; superblock_inline_struct] in
-    let block_1 = Littlefs.Block.of_entries ~revision_count:2 [name; superblock_inline_struct] in
+    let superblock_inline_struct = Chamelon.Superblock.inline_struct (Int32.of_int block_size) (Int32.of_int block_count) in
+    let block_0 = Chamelon.Block.of_entries ~revision_count:1 [name; superblock_inline_struct] in
+    let block_1 = Chamelon.Block.of_entries ~revision_count:2 [name; superblock_inline_struct] in
     Lwt_result.both
     (write_whole_block (fst root_pair) block_0)
     (write_whole_block (snd root_pair) block_1) >>= function

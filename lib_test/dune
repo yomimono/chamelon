@@ -1,10 +1,10 @@
 (executable
-  (public_name test_littlefs)
-  (libraries alcotest cstruct littlefs)
+  (public_name test_chamelon)
+  (libraries alcotest cstruct chamelon)
 )
 (rule
   (alias runtest)
   (action
-    (run ./test_littlefs.exe)
+    (run ./test_chamelon.exe)
   )
 )

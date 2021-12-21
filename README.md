@@ -1,6 +1,6 @@
 # what is this?
 
-An implementation of [LittleFS](https://github.com/littlefs-project/littlefs) for the MirageOS [BLOCK](https://github.com/mirage/mirage-block) API, and exposing the MirageOS [KV](https://github.com/mirage/mirage-kv) interface.
+An implementation of the [mirage-kv](https://github.com/mirage/mirage-kv) module type offering persistence via [mirage-block](https://github.com/mirage/mirage-block), suitable for use in MirageOS unikernels.  It is inspired by [littlefs](https://github.com/littlefs-project/littlefs).
 
 # what isn't this?
 
@@ -16,7 +16,13 @@ Sure, if you want. `littlefs` is released under the ISC license (like many Mirag
 
 # why would I use it over other MirageOS filesystem implementations?
 
-Good question. I'm using it because I didn't want to end up using an unmaintained filesystem implementation or maintaining someone else's filesystem implementation. Obviously that's not going to apply to you (or if it does, you're unlikely to decide `littlefs` is the right choice).
+Good question. I'm using it because I didn't want to end up using an unmaintained filesystem implementation or maintaining someone else's filesystem implementation. Obviously that's not going to apply to you (or if it does, you're unlikely to decide this software is the right choice).
+
+# how does it differ from littlefs?
+
+`littlefs` threads a linked list through its directory tree so the tree can be traversed in constant RAM. This necessitates some extra complexity to ensure that the tree and linked list agree. This implementation does not guarantee constant RAM operations, therefore does not use the threaded linked list (`softlink`s in the parlance of the `littlefs` spec), therefore also does not implement global move state.
+
+The [fuse driver for littlefs](https://github.com/geky/littlefs-fuse) is interoperable with this implementation, to the best of my knowledge.
 
 # how do I thank you for writing and maintaining this software?
 

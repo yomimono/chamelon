@@ -1,5 +1,5 @@
 (library
-  (public_name littlefs)
+  (public_name chamelon)
   (libraries checkseum cstruct ptime)
   (preprocess (pps ppx_cstruct))
   (foreign_stubs

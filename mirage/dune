@@ -1,5 +1,5 @@
 (library
-  (public_name littlefs.kv)
+  (public_name chamelon.kv)
   (name kv)
-  (libraries fmt digestif littlefs mirage-block mirage-clock mirage-kv mirage-logs lwt)
+  (libraries fmt digestif chamelon mirage-block mirage-clock mirage-kv mirage-logs lwt)
 )
