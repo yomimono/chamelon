@@ -430,7 +430,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
               * which is index - 1 *)
              Cstruct.LE.set_uint32 block_cs 0 last_pointer
           );
-          for n_skip_list = 1 to skip_list_size do
+          for n_skip_list = 1 to (skip_list_size - 1) do
             let point_index = List.assoc (n_skip_list / (2 lsl n_skip_list)) l in
             Cstruct.LE.set_uint32 block_cs (n_skip_list * 4) point_index
           done;

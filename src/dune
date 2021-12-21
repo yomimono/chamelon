@@ -6,14 +6,14 @@
 (rule
   (targets colossal)
   (action
-    (run dd if=/dev/urandom of=colossal bs=16K count=1)
+    (run dd if=/dev/urandom of=colossal bs=128K count=1)
   ))
 
 (rule
   (targets test.img)
   (action
     (progn
-      (run dd if=/dev/zero of=test.img bs=64K count=1)
+      (run dd if=/dev/zero of=test.img bs=256K count=1)
       (setenv OCAMLRUNPARAM b (run %{exe:format.exe} test.img))
       (with-stdout-to empty-ls.output (run %{exe:lfs_ls.exe} test.img 4096 /))
       (with-stdout-to empty-ls.expected (run echo -n ""))
