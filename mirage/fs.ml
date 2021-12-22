@@ -9,6 +9,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     block_size : int;
     program_block_size : int;
     lookahead : ([`Before | `After ] * (int64 list)) ref;
+    new_block_mutex : Lwt_mutex.t;
   }
 
   type key = Mirage_kv.Key.t
@@ -54,9 +55,10 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
 
   module Traverse = struct
     let rec get_ctz_pointers t l index pointer =
-      match l with
-      | Error _ as e -> Lwt.return e
-      | Ok l ->
+      match l, index with
+      | Error _ as e, _ -> Lwt.return e
+      | Ok l, 0 -> Lwt.return @@ Ok l
+      | Ok l, index ->
         let open Lwt_result.Infix in
         let data = Cstruct.create t.block_size in
         This_Block.read t.block pointer [data] >>= fun ()->
@@ -110,9 +112,11 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       let set1 = IntSet.of_list l1 in
       let candidates = IntSet.diff all_indices set1 in
       let pivot = Int64.(div (of_int possible_blocks) 2L) in
-      let set = match bias with
-        | `Before -> let s, _, _ = IntSet.split pivot candidates in s
-        | `After -> let _, _, s = IntSet.split pivot candidates in s
+      let set = match bias, IntSet.split pivot candidates with
+        | `After, (_, true, s) -> IntSet.add pivot s
+        | `Before, (s, true, _)
+        | `Before, (s, false, _)
+        | `After, (_, false, s) -> s
       in
       IntSet.elements set
 
@@ -123,10 +127,12 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         Lwt.return @@ Ok block
       | bias, [] ->
         Traverse.follow_links t (Chamelon.Entry.Metadata root_pair) >|= function
-        | Error _ -> Error (`Chamelon `Corrupt) (* TODO: not quite *)
+        | Error e ->
+          Log.err (fun f -> f "error attempting to find unused blocks: %a" This_Block.pp_error e);
+          Error `No_space
         | Ok used_blocks ->
           match unused ~bias t used_blocks with
-          | [] -> Error (`Chamelon_write `Out_of_space)
+          | [] -> Error `No_space
           | block::l ->
             t.lookahead := (opp bias, l);
             Ok block
@@ -293,6 +299,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       | `Continue (_path, next_blocks) -> Lwt.return @@ Ok next_blocks
       | `Basename_on next_blocks -> Lwt.return @@ Ok next_blocks
       | _ ->
+        Lwt_mutex.with_lock t.new_block_mutex @@ fun () ->
         (* for any error case, try making the directory *)
         (* TODO: it's probably wise to put a delete entry first here if we got No_structs
          * or another "something weird happened" case *)
@@ -491,6 +498,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         | Ok () -> Lwt.return @@ Ok ()
 
     let set_in_directory block_pair t (filename : string) data =
+      Lwt_mutex.with_lock t.new_block_mutex @@ fun () ->
       Find.entries_of_name t block_pair filename >>= function
       | Error (`Not_found _ ) as e -> Lwt.return e
       | Ok [] | Error (`No_id _) -> begin
@@ -550,13 +558,15 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
      * make the functions that don't need allocable blocks marked
      * in the type system somehow,
      * or have them only take the arguments they need instead of a full `t` *)
-    let t = {block; block_size; program_block_size; lookahead = ref (`Before, [])} in
+    let t = {block; block_size; program_block_size; lookahead = ref (`Before, []); new_block_mutex = Lwt_mutex.create ()} in
+    Lwt_mutex.lock t.new_block_mutex >>= fun () ->
     Traverse.follow_links t (Chamelon.Entry.Metadata root_pair) >>= function
     | Error _e -> Lwt.fail_with "couldn't get list of used blocks"
     | Ok used_blocks ->
       let open Allocate in
       let lookahead = ref (`After, unused ~bias:`Before t used_blocks) in
-      Lwt.return @@ Ok {lookahead; block; block_size; program_block_size}
+      Lwt_mutex.unlock t.new_block_mutex;
+      Lwt.return @@ Ok {t with lookahead; block; block_size; program_block_size}
 
   let format t =
     let program_block_size = t.program_block_size in
@@ -569,9 +579,10 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     let superblock_inline_struct = Chamelon.Superblock.inline_struct (Int32.of_int block_size) (Int32.of_int block_count) in
     let block_0 = Chamelon.Block.of_entries ~revision_count:1 [name; superblock_inline_struct] in
     let block_1 = Chamelon.Block.of_entries ~revision_count:2 [name; superblock_inline_struct] in
+    Lwt_mutex.with_lock t.new_block_mutex (fun () ->
     Lwt_result.both
     (write_whole_block (fst root_pair) block_0)
-    (write_whole_block (snd root_pair) block_1) >>= function
+    (write_whole_block (snd root_pair) block_1)) >>= function
     | Ok ((), ()) -> Lwt.return @@ Ok ()
     | _ -> Lwt.return @@ Error `No_space
 

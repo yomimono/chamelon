@@ -31,7 +31,7 @@ let test_get_set fs _ () =
 
 let test_set_deep fs _ () =
   let slash = Mirage_kv.Key.v "/" in
-  let key = Mirage_kv.Key.v "/set/deep/fs/way/down/in/the/filesystem" in
+  let key = Mirage_kv.Key.v "/set/deep/fs/filesystem" in
   let contents = "arglebarglefargle" in
   Littlefs.format fs >>= function | Error e -> fail_write e | Ok () ->
   Littlefs.set fs key contents >>= function | Error e -> fail_write e | Ok () ->
@@ -95,19 +95,25 @@ let test_digest_slash fs _ () =
   Alcotest.(check bool) "digest changes after write" false (String.equal post_write_digest digest);
   Lwt.return_unit
 
-let test_digest_deep_key fs _ () =
-  let slash = Mirage_kv.Key.v "/" in
-  let deep = Mirage_kv.Key.v "/digest/deep/dictionary" in
-  let deep_contents = "arglebarglefargle" in
+let test_digest_overwrite fs _ () =
+  let deep = Mirage_kv.Key.v "/digest/deep/dir/dictionary" in
+  let deep_contents_initial = "arglebarglefargle" in
+  let deep_contents_final = "morglemoop" in
   Littlefs.format fs >>= function | Error e -> fail_write e | Ok () ->
-  Littlefs.set fs deep deep_contents >>= function | Error e -> fail_write e | Ok () -> 
+  Littlefs.set fs deep deep_contents_initial >>= function | Error e -> fail_write e | Ok () -> 
   Littlefs.digest fs deep >>= function
-  | Error e -> Lwt.fail_with @@ Format.asprintf "digest of deep directory key failed: %a" Littlefs.pp_error e
-  | Ok digest_key_post_write ->
-    Littlefs.digest fs slash >>= function
-    | Error e -> Lwt.fail_with @@ Format.asprintf "digest of / failed: %a" Littlefs.pp_error e
-    | Ok digest_slash_post_write ->
-      Alcotest.(check string) "digest for fs should be digest of only file" digest_key_post_write digest_slash_post_write;
+  | Error e -> Lwt.fail_with @@ Format.asprintf "digest of deep directory key failed on first write: %a" Littlefs.pp_error e
+  | Ok digest_key_first_write ->
+  Littlefs.set fs deep deep_contents_final >>= function | Error e -> fail_write e | Ok () -> 
+  Littlefs.digest fs deep >>= function
+  | Error e -> Lwt.fail_with @@ Format.asprintf "digest of deep directory key failed on second write: %a" Littlefs.pp_error e
+  | Ok digest_key_second_write ->
+    Alcotest.(check bool) "digest of a file should change after overwrite" false (String.equal digest_key_first_write digest_key_second_write);
+  Littlefs.set fs deep deep_contents_initial >>= function | Error e -> fail_write e | Ok () -> 
+  Littlefs.digest fs deep >>= function
+  | Error e -> Lwt.fail_with @@ Format.asprintf "digest of deep directory key failed on third write: %a" Littlefs.pp_error e
+  | Ok digest_key_third_write ->
+    Alcotest.(check string) "digest of a file should match digest of file with the same contents" digest_key_first_write digest_key_third_write;
       Lwt.return_unit
 
 let test_digest_deep_dictionary fs _ () =
@@ -127,6 +133,25 @@ let test_digest_deep_dictionary fs _ () =
   Alcotest.(check string) "digests of things in the fs hierarchy aren't sensitive to unrelated changes" digest_deep_pre_shallow_write digest_deep_post_shallow_write;
   Lwt.return_unit
 
+let test_no_space fs _ () =
+  let blorp = String.init 4096 (fun _ -> 'a') in
+  let k n = Mirage_kv.Key.v @@ string_of_int n in
+  (* filesystem is 10 * 4K in size, so we should expect to write
+   * 40K - 2*4K (initial metadata blocks) = 32K; if the files are 4K each,
+   * our ninth write should fail *)
+  Littlefs.format fs >>= function | Error e -> fail_write e | Ok () ->
+  let l = List.init 8 (fun n -> n) in
+  Lwt_list.iter_p (fun i ->
+    Littlefs.set fs (k i) blorp >>= function | Error e -> fail_write e | Ok () ->
+    Lwt.return_unit
+  ) l >>= fun () ->
+  Littlefs.list fs (Mirage_kv.Key.empty) >>= function | Error e -> fail_read e | Ok l ->
+  Alcotest.(check int) "all set items are present" 8 @@ List.length l;
+  Littlefs.set fs (k 8) blorp >>= function
+  | Error `No_space -> Lwt.return_unit
+  | Ok _ -> Alcotest.fail "setting 9th key succeeded when we expected No_space"
+  | Error e -> fail_write e
+
 let test img block_size =
   Logs.set_level (Some Logs.Debug);
   let open Alcotest_lwt in
@@ -144,6 +169,7 @@ let test img block_size =
         ("set",
          [ test_case "get/set roundtrip" `Quick (test_get_set fs);
            test_case "mkdir -p" `Quick (test_set_deep fs);
+           test_case "disk full" `Quick (test_no_space fs);
          ]
 
         );
@@ -154,7 +180,7 @@ let test img block_size =
         ("digest",
          [ test_case "digest of empty files w/different keys is identical" `Quick (test_digest_empty fs);
            test_case "slash digest" `Quick (test_digest_slash fs) ;
-           test_case "deep key digest" `Quick (test_digest_deep_key fs) ;
+           test_case "file overwrite digest" `Quick (test_digest_overwrite fs) ;
            test_case "dict digest" `Quick (test_digest_deep_dictionary fs) ;
          ]
         )
