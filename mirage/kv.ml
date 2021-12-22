@@ -69,7 +69,8 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       Lwt.return @@ Error (`Not_found key)
 
   let list t key : ((string * [`Dictionary | `Value]) list, error) result Lwt.t =
-    let translate entries = List.filter_map Chamelon.Entry.info_of_entry entries in
+    let cmp (name1, _) (name2, _) = String.compare name1 name2 in
+    let translate entries = List.filter_map Chamelon.Entry.info_of_entry entries |> List.sort cmp in
     let ls_in_dir dir_pair =
       Fs.Find.all_entries_in_dir t dir_pair >>= function
       | Error _ -> Lwt.return @@ Error (`Not_found key)
