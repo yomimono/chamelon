@@ -39,7 +39,13 @@ let write_inline n id contents =
 let n_pointers = function
   | 0 -> 0
   | 1 -> 1
-  | index -> (Bitwise.ctz (Int32.of_int index) |> Int32.to_int) + 1
+  | n ->
+    (* pricey :/ it'd be better to figure out how to jam the hardware optimization
+     * into a unikernel *)
+    let log2 = Float.log (float_of_int n) /. Float.log (float_of_int 2) in
+    if Float.is_integer log2 then
+      Float.to_int log2
+    else 1
 
 let of_block index cs =
   let sizeof_pointer = 4 in
@@ -52,5 +58,5 @@ let of_block index cs =
 
 let last_block_index ~file_size ~block_size =
   let popcount_arg = (file_size / (block_size - (2 * sizeof_pointer))) - 1 |> Int32.of_int in
-  let numerator = file_size - (sizeof_pointer * (Bitwise.popcount popcount_arg |> Int32.to_int)) + 2 in
+  let numerator = file_size - (sizeof_pointer * (Bitwise.popcount popcount_arg)) + 2 in
   numerator / (block_size - 2 * sizeof_pointer)
