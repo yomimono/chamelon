@@ -563,21 +563,29 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
      * make the functions that don't need allocable blocks marked
      * in the type system somehow,
      * or have them only take the arguments they need instead of a full `t` *)
+    (* TODO: this interface is also weird if we haven't formatted the filesystem yet.
+     *)
     This_Block.get_info block >>= fun info ->
     Logs.debug (fun f -> f "connected to block device with sector size %d (0x%x) and %Ld (0x%Lx) sectors available"
                    info.sector_size info.sector_size
                    info.size_sectors info.size_sectors);
     Logs.debug (fun f -> f "initiating filesystem with block size %d (0x%x)" block_size block_size);
-    let t = {block; block_size; program_block_size; lookahead = ref (`Before, []); new_block_mutex = Lwt_mutex.create ()} in
-    Lwt_mutex.lock t.new_block_mutex >>= fun () ->
-    Traverse.follow_links t (Chamelon.Entry.Metadata root_pair) >>= function
-    | Error _e -> Lwt.fail_with "couldn't get list of used blocks"
-    | Ok used_blocks ->
-      Logs.debug (fun f -> f "found %d used blocks on block-based key-value store" (List.length used_blocks));
-      let open Allocate in
-      let lookahead = ref (`After, unused ~bias:`Before t used_blocks) in
-      Lwt_mutex.unlock t.new_block_mutex;
-      Lwt.return @@ Ok {t with lookahead; block; block_size; program_block_size}
+    let first_block = Cstruct.create block_size in
+    This_Block.read block 0L [first_block] >>= function
+    | Error e ->
+      Logs.err (fun f -> f "first block read failed: %a" This_Block.pp_error e);
+      Lwt.return @@ Error (`Not_found (Mirage_kv.Key.empty))
+    | Ok () ->
+      let t = {block; block_size; program_block_size; lookahead = ref (`Before, []); new_block_mutex = Lwt_mutex.create ()} in
+      Lwt_mutex.lock t.new_block_mutex >>= fun () ->
+      Traverse.follow_links t (Chamelon.Entry.Metadata root_pair) >>= function
+      | Error _e -> Lwt.fail_with "couldn't get list of used blocks"
+      | Ok used_blocks ->
+        Logs.debug (fun f -> f "found %d used blocks on block-based key-value store" (List.length used_blocks));
+        let open Allocate in
+        let lookahead = ref (`After, unused ~bias:`Before t used_blocks) in
+        Lwt_mutex.unlock t.new_block_mutex;
+        Lwt.return @@ Ok {t with lookahead; block; block_size; program_block_size}
 
   let format t =
     let program_block_size = t.program_block_size in
