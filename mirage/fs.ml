@@ -563,6 +563,11 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
      * make the functions that don't need allocable blocks marked
      * in the type system somehow,
      * or have them only take the arguments they need instead of a full `t` *)
+    This_Block.get_info block >>= fun info ->
+    Logs.debug (fun f -> f "connected to block device with sector size %d (0x%x) and %Ld (0x%Lx) sectors available"
+                   info.sector_size info.sector_size
+                   info.size_sectors info.size_sectors);
+    Logs.debug (fun f -> f "initiating filesystem with block size %d (0x%x)" block_size block_size);
     let t = {block; block_size; program_block_size; lookahead = ref (`Before, []); new_block_mutex = Lwt_mutex.create ()} in
     Lwt_mutex.lock t.new_block_mutex >>= fun () ->
     Traverse.follow_links t (Chamelon.Entry.Metadata root_pair) >>= function
