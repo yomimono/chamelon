@@ -75,7 +75,12 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         end
       | Chamelon.Entry.Metadata (a, b) ->
         Read.block_of_block_pair t (a, b) >>= function
-        | Error _ -> Lwt.return @@ Ok []
+        | Error (`Block e) ->
+          Logs.err (fun m -> m "error reading block pair %Ld, %Ld (0x%Lx, 0x%Lx): %a" a b a b This_Block.pp_error e);
+          Lwt.return @@ Error `Disconnected
+        | Error (`Chamelon `Corrupt) ->
+          Logs.err (fun f -> f "filesystem seems corrupted; we couldn't make sense of a block pair");
+          Lwt.return @@ Error `Unimplemented
         | Ok block ->
           let links = Chamelon.Block.linked_blocks block in
           Lwt_list.fold_left_s (fun l link ->
