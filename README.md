@@ -22,6 +22,10 @@ Good question. I'm using it because I didn't want to end up using an unmaintaine
 
 `littlefs` threads a linked list through its directory tree so the tree can be traversed in constant RAM. This necessitates some extra complexity to ensure that the tree and linked list agree. This implementation does not guarantee constant RAM operations, therefore does not use the threaded linked list (`softlink`s in the parlance of the `littlefs` spec), therefore also does not implement global move state.
 
+`littlefs` implements wear leveling strategies aimed at increasing the life of flash-based storage. This implementation does not, because we assume the execution environment does not provide direct access to real storage; we trust the hypervisor's disk driver to handle this if it's appropriate and required.
+
+This implementation also does not detect or track bad blocks, for similar reasons. (This decision would be fairly easy to reverse.)
+
 The [fuse driver for littlefs](https://github.com/geky/littlefs-fuse) is interoperable with this implementation, to the best of my knowledge.
 
 # how do I thank you for writing and maintaining this software?

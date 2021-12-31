@@ -18,9 +18,7 @@ let test_format fs _ () =
       Alcotest.(check int) "no entries in just-formatted filesystem" 0 (List.length l);
       Lwt.return_unit
 
-let test_get_set fs _ () =
-  let path = Mirage_kv.Key.v "get set to get wet" in
-  let contents = "hell yeah let's do this!!!" in
+let test_get_set_general path contents fs _ () =
   Chamelon.format fs >>= function | Error e -> fail_write e | Ok () ->
   Chamelon.set fs path contents >>= function | Error e -> fail_write e | Ok () ->
   Chamelon.get fs path >>= function | Error e -> fail_read e
@@ -30,6 +28,21 @@ let test_get_set fs _ () =
     | Ok l ->
       Alcotest.(check int) "one entry in filesystem" 1 (List.length l);
       Lwt.return_unit
+
+let test_get_set =
+  let path = Mirage_kv.Key.v "get set to get wet" in
+  let contents = "hell yeah let's do this!!!" in
+  test_get_set_general path contents
+
+let test_set_nonascii_data =
+  let path = Mirage_kv.Key.v "camel emoji" in
+  let contents = "🔋" in
+  test_get_set_general path contents
+
+let test_set_nonascii_key =
+  let path = Mirage_kv.Key.v "🔋" in
+  let contents = "camel" in
+  test_get_set_general path contents
 
 let test_set_deep fs _ () =
   let slash = Mirage_kv.Key.v "/" in
@@ -193,7 +206,7 @@ let test img block_size =
   Lwt_main.run @@ (
     Block.connect img >>= fun block ->
     Chamelon.connect block ~program_block_size:16 ~block_size >>= function
-    | Error e -> Alcotest.fail (Format.asprintf "%a" Chamelon.pp_error e)
+    | Error e -> Alcotest.fail (Format.asprintf "error connecting filesystem: %a" Chamelon.pp_error e)
     | Ok fs ->
       run "mirage-kv" [
         ("format",
@@ -202,6 +215,8 @@ let test img block_size =
         );
         ("set",
          [ test_case "get/set roundtrip" `Quick (test_get_set fs);
+           test_case "get/set roundtrip w/non-ascii data" `Quick (test_set_nonascii_data fs);
+           test_case "get/set roundtrip w/non-ascii key" `Quick (test_set_nonascii_key fs);
            test_case "mkdir -p" `Quick (test_set_deep fs);
            test_case "disk full" `Quick (test_no_space fs);
            (* test_overwrite_dictionary is disabled for the moment; we need to confirm the "correct" behavior *)

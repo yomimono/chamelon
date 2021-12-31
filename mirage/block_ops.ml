@@ -23,6 +23,9 @@ end = struct
   let pp_error = Sectors.pp_error
   let pp_write_error = Sectors.pp_write_error
 
+  let log_src = Logs.Src.create "chamelon-shim" ~doc:"chamelon block-to-sector shim"
+  module Log = (val Logs.src_log log_src : Logs.LOG)
+
   let sector_of_block t n =
     let byte_of_n = Int64.(mul n @@ of_int t.block_size) in
     Int64.(div byte_of_n @@ of_int t.sector_size)
@@ -35,6 +38,9 @@ end = struct
     Sectors.get_info sectors >>= fun info ->
     let sector_size = info.sector_size in
     let size_sectors = info.size_sectors in
+    Logs.debug (fun f -> f "got info from a device with sector size %d (0x%x) and %Ld (0x%Lx) sectors available"
+                   info.sector_size info.sector_size
+                   info.size_sectors info.size_sectors);
     Lwt.return @@ 
     {block_size;
      sector_size;

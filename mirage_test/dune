@@ -7,5 +7,5 @@
   (alias runtest)
   (action (progn
             (run dd if=/dev/zero of=emptyfile bs=4K count=10)
-            (run %{exe:test_mirage.exe} )
+            (run %{exe:test_mirage.exe} -e )
             )))
