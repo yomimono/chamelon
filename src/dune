@@ -56,7 +56,7 @@
             (with-stderr-to read-deleted.expected (run echo "key config.sys not found"))
             (setenv OCAMLRUNPARAM b (with-stdout-to read-deleted.output (with-accepted-exit-codes 1 (run %{exe:lfs_read.exe} test.img 4096 "config.sys"))))
             (diff read-deleted.expected read-deleted.output)
-            
+            (setenv OCAMLRUNPARAM b (run %{exe:lfs_rmrf.exe} test.img 4096 "autoexec.bat"))
             )))
 
 (rule
