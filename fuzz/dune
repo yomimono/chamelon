@@ -1,0 +1,13 @@
+(executable
+  (name fuzz)
+  (libraries crowbar)
+)
+
+(rule
+  (alias runtest)
+  (action
+    (progn
+      (run mkdir input output)
+      (run dd if=/dev/zero of=input/zero bs=16 count=1)
+      (run afl-fuzz -i /tmp/input -o /tmp/output ./fuzz.exe -- @@)
+    )))
