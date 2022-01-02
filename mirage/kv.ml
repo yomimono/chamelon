@@ -161,8 +161,9 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         (Ok Ptime.Span.(zero |> to_d_ps)) l
 
   (* TODO: it is extremely unclear to me how the hell this is supposed to work *)
-  let batch t ?(retries=13) f =
-    let _ = retries in f t
+  let batch _t ?(retries=13) _f =
+    let _ = retries in
+    Lwt.return @@ Error (`Too_many_retries 1)
 
   let digest t key =
     let rec aux ctx t key =
