@@ -6,6 +6,18 @@ An implementation of the [mirage-kv](https://github.com/mirage/mirage-kv) module
 
 Performant. Wear-alert. Making big promises. Well-tested. Backed by Big Camel or suitable for Big Data.
 
+# under what circumstances should I definitely not use it?
+
+See "how does it differ from littlefs?" for specific caveats of this implementation compared to other users of `littlefs`.
+
+This implementation is not suitable for use as a large filesystem. Addressing is limited to 32-bit block indices, and currently the solo5 implementation supports blocks of a maximum size of 512 bytes, for a maximum addressible filesystem of 65535 MiB.  Block devices of larger size can be supplied, but only 64 GiB will be usable by `chamelon`.
+
+`littlefs` is most efficient in its space usage with many small ( < 1/4 block size) files in a broad hierarchy (i.e. most directories have many files or other directories in them).
+
+It is least space-efficient with many files of size > 1/4 block size and < 1 block size, and with deeply-nested directory structures.
+
+The above limitations become more alarming with the knowledge that items within a directory are an unordered linked list, so many operations on directories are O(n) in the number of items within the directory.  If performance begins to be of concern, some thought on the filesystem layout is advised.
+
 # why though?
 
 Sometimes you just gotta store some stuff. You don't have to store much stuff and you don't have to do it very often but people are gonna get real mad if you don't do it at least a little.
