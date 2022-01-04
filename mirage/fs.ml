@@ -576,7 +576,9 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       let t = {block; block_size; program_block_size; lookahead = ref (`Before, []); new_block_mutex = Lwt_mutex.create ()} in
       Lwt_mutex.lock t.new_block_mutex >>= fun () ->
       Traverse.follow_links t (Chamelon.Entry.Metadata root_pair) >>= function
-      | Error _e -> Lwt.fail_with "couldn't get list of used blocks"
+      | Error _e ->
+        Lwt_mutex.unlock t.new_block_mutex;
+        Lwt.fail_with "couldn't get list of used blocks"
       | Ok used_blocks ->
         Logs.debug (fun f -> f "found %d used blocks on block-based key-value store" (List.length used_blocks));
         let open Allocate in

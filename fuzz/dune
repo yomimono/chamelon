@@ -1,6 +1,6 @@
 (executable
   (name fuzz)
-  (libraries crowbar)
+  (libraries chamelon.kv crowbar cstruct lwt lwt.unix mirage-block-combinators mirage-clock-unix)
 )
 
 (rule
@@ -8,6 +8,7 @@
   (action
     (progn
       (run mkdir input output)
-      (run dd if=/dev/zero of=input/zero bs=16 count=1)
-      (run afl-fuzz -i /tmp/input -o /tmp/output ./fuzz.exe -- @@)
+      (run dd if=/dev/zero of=input/zero bs=512 count=32)
+      (run format -b 512 input/zero)
+      (run afl-fuzz -i input -o output ./%{exe:fuzz.exe} -- @@)
     )))
