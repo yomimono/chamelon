@@ -58,6 +58,14 @@ let test_set_nonascii_key =
   let contents = "camel" in
   test_get_set_general path contents
 
+let test_set_empty_key block _ () =
+  let path = Mirage_kv.Key.v "" in
+  let contents = "camel" in
+  format_and_mount block >>= fun fs ->
+  Chamelon.set fs path contents >>= function
+  | Ok () -> Alcotest.fail "allowed a write to empty path"
+  | Error _ -> Lwt.return_unit
+
 let test_set_deep block _ () =
   let slash = Mirage_kv.Key.v "/" in
   let key = Mirage_kv.Key.v "/set/deep/fs/filesystem" in
@@ -252,4 +260,5 @@ let test img =
       )
     ]
   )
+
 let () = test "emptyfile"
