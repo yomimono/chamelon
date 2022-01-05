@@ -4,7 +4,7 @@
 )
 
 (rule
-  (alias runtest)
+  (alias fuzztest)
   (action
     (progn
       (run mkdir input output)
