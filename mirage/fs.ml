@@ -503,29 +503,32 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         | Ok () -> Lwt.return @@ Ok ()
 
     let set_in_directory block_pair t (filename : string) data =
-      Lwt_mutex.with_lock t.new_block_mutex @@ fun () ->
-      Find.entries_of_name t block_pair filename >>= function
-      | Error (`Not_found _ ) as e -> Lwt.return e
-      | Ok [] | Error (`No_id _) -> begin
-          Logs.debug (fun m -> m "writing new file %s" filename);
+      if String.length filename < 1 then Lwt.return @@ Error (`Value_expected Mirage_kv.Key.empty)
+      else begin
+        Lwt_mutex.with_lock t.new_block_mutex @@ fun () ->
+        Find.entries_of_name t block_pair filename >>= function
+        | Error (`Not_found _ ) as e -> Lwt.return e
+        | Ok [] | Error (`No_id _) -> begin
+            Logs.debug (fun m -> m "writing new file %s" filename);
+            if (String.length data) > (t.block_size / 4) then
+              write_in_ctz block_pair t filename data []
+            else
+              write_inline block_pair t filename data []
+          end
+        | Ok (hd::_) ->
+          (* we *could* replace the previous ctz/inline entry,
+           * instead of deleting the whole mapping and replacing it,
+           * but since we do both the deletion and the new addition
+           * in the same commit, I think this saves us some potentially
+           * error-prone work *)
+          let id = Chamelon.Tag.((fst hd).id) in
+          Logs.debug (fun m -> m "deleting existing entry %s at id %d" filename id);
+          let delete = (Chamelon.Tag.(delete id), Cstruct.create 0) in
           if (String.length data) > (t.block_size / 4) then
-            write_in_ctz block_pair t filename data []
+            write_in_ctz block_pair t filename data [delete]
           else
-            write_inline block_pair t filename data []
-        end
-      | Ok (hd::_) ->
-      (* we *could* replace the previous ctz/inline entry,
-       * instead of deleting the whole mapping and replacing it,
-       * but since we do both the deletion and the new addition
-       * in the same commit, I think this saves us some potentially
-       * error-prone work *)
-        let id = Chamelon.Tag.((fst hd).id) in
-        Logs.debug (fun m -> m "deleting existing entry %s at id %d" filename id);
-        let delete = (Chamelon.Tag.(delete id), Cstruct.create 0) in
-        if (String.length data) > (t.block_size / 4) then
-          write_in_ctz block_pair t filename data [delete]
-        else
-          write_inline block_pair t filename data [delete]
+            write_inline block_pair t filename data [delete]
+      end
 
   end
 
