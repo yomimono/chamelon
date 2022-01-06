@@ -37,6 +37,10 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
 
   let get = Fs.File_read.get
 
+  (* [set] does a little work on top of the filesystem's set functions, because
+   * we need to make directories if the key has >1 segment in it. *)
+  (* Once we've either found or created the parent directory, we can ask the FS layer
+   * to set the data appropriately there. *)
   let set t key data : (unit, write_error) result Lwt.t =
     let dir = Mirage_kv.Key.parent key in
     Fs.Find.find_directory t root_pair (Mirage_kv.Key.segments dir) >>= function
@@ -79,6 +83,8 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     match (Mirage_kv.Key.segments key) with
     | [] -> ls_in_dir root_pair
     | segments ->
+      (* descend into each segment until we run out, at which point we'll be in the
+       * directory we want to list *)
       Fs.Find.find_directory t root_pair segments >>= function
       | `No_id k -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v k))
       | `No_structs | `No_entry -> Lwt.return @@ Error (`Not_found key)
@@ -99,7 +105,7 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     if Mirage_kv.Key.(equal empty key) then begin
     (* it's impossible to remove the root directory in littlefs, as it's
      * implicitly at the root pair *)
-      Logs.warn (fun m -> m "can't delete %a" Mirage_kv.Key.pp key);
+      Logs.warn (fun m -> m "refusing to delete the root directory");
       Lwt.return @@ Error (`Not_found key)
     end else
       Fs.Find.find_directory t root_pair Mirage_kv.Key.(segments @@ parent key) >>= function
@@ -107,6 +113,8 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       | `No_entry | `No_id _ | `No_structs -> Lwt.return @@ Ok ()
 
   let last_modified t key =
+    (* easy case: `key` represents a value, not a dictionary. Find the associated
+     * metadata for the timestamp at which it was last modified and return it. *)
     let last_modified_value t key =
       Fs.Find.find_directory t root_pair Mirage_kv.Key.(segments @@ parent key) >>= function
       | `No_entry | `No_structs -> Lwt.return @@ Error (`Not_found key)
