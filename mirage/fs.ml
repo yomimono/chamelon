@@ -32,6 +32,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
 
   module Read = struct
 
+    (* get the wodge of data at this block number, and attempt to parse it *)
     let block_of_block_number {block_size; block; program_block_size; _} block_location =
       let cs = Cstruct.create block_size in
       This_Block.read block block_location [cs] >>= function
@@ -44,6 +45,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
           Lwt.return @@ Error (`Chamelon `Corrupt)
         | Ok extant_block -> Lwt.return @@ Ok extant_block
 
+    (* get the blocks at pair (first, second), parse them, and return whichever is more recent *)
     let block_of_block_pair t (l1, l2) =
       let open Lwt_result.Infix in
       Lwt_result.both (block_of_block_number t l1) (block_of_block_number t l2) >>= fun (b1, b2) ->
