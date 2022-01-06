@@ -85,8 +85,6 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       | `Basename_on pair -> ls_in_dir pair
 
   let exists t key =
-    (* TODO: just go look for the thing directly in the FS,
-     * instead of getting a list and then having to sort through it *)
     list t (Mirage_kv.Key.parent key) >>= function
     | Error _ as e -> Lwt.return e
     | Ok l ->
@@ -160,7 +158,9 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         )
         (Ok Ptime.Span.(zero |> to_d_ps)) l
 
-  (* TODO: it is extremely unclear to me how the hell this is supposed to work *)
+  (* this is probably a surprising implementation for `batch`. Concurrent writes are not
+   * supported by this implementation (there's a global write mutex) so we don't have
+   * to do any work to make sure that writes don't get in each other's way. *)
   let batch t ?(retries=13) f =
     let _ = retries in f t
 

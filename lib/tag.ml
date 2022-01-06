@@ -65,7 +65,6 @@ let delete id =
     length = 0;
   }
     
-(* TODO: verify whether all-0/all-1 check is for raw tags or XOR'd tags - currently we check both, but that will probably give us false negatives for select tags *)
 let of_cstruct ~xor_tag_with cs =
   let tag_region = Cstruct.sub cs 0 size in
   let any_invalid = List.exists (Cstruct.equal tag_region) invalid_tags in
@@ -74,9 +73,6 @@ let of_cstruct ~xor_tag_with cs =
     xor ~into:cs xor_tag_with;
     let r32 = Cstruct.BE.get_uint32 cs 0 in
     let r = Int32.to_int r32 in
-    (* CAUTION: this valid-bit read contradicts the spec,
-     * but matches the implementation of lfs_isvalid in the reference implementation.
-     * Seems like a strange choice to me, if I've understood it right. *)
     let valid = (0x01 land (r lsr 31)) = 0x00
     and abstract_type = (r lsr 28) land 0x7 |> int_to_abstract_type
     and chunk = (r lsr 20) land 0xff
