@@ -28,14 +28,17 @@ let init blocks to_write =
   let open Lwt.Infix in
   Lwt_main.run (
     Block.connect "fuzz chamelon" >>= fun block ->
+    (* on start, fill the in-memory block device *)
     write_fs block blocks >>= fun () ->
     (* for now, our assertion is just that we'll either connect or return an error *)
     Chamelon.connect block ~program_block_size:16 ~block_size:512  >>= function
     | Error _ -> Crowbar.bad_test ()
     | Ok fs ->
+      (* for any key/value pair we've been given, we should be able to
+       * write it and then get it back *)
       Lwt_list.iter_p (
         fun (k, v) -> Chamelon.set fs k v >>= function
-          | Error e -> Crowbar.failf "%a" Chamelon.pp_write_error e
+          | Error _ -> Crowbar.bad_test ()
           | Ok () ->
             Chamelon.get fs k >>= function
             | Error e -> Crowbar.failf "%a" Chamelon.pp_error e
@@ -44,7 +47,6 @@ let init blocks to_write =
       ) to_write
   )
 
-(* on start, fill the in-memory block device *)
 let () =
   let open Crowbar in
   Logs.set_level (Some Logs.Debug);
