@@ -42,4 +42,4 @@ The [fuse driver for littlefs](https://github.com/geky/littlefs-fuse) is interop
 
 # how do I thank you for writing and maintaining this software?
 
-[Directly with money](https://ko-fi.com/yomimono), by [donating to a 501c3](https://www.freedom-inc.org/index.php?page=Support-Us) that does important work in my community, or by writing a nice [e-mail](mailto:maintenance at identity-function dot com).
+[Directly with money](https://ko-fi.com/yomimono), by [donating to a 501c3](https://www.freedom-inc.org/index.php?page=Support-Us) that does important work in my community, or by writing a nice e-mail to the address in the commit messages.
