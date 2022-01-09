@@ -556,7 +556,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
   end
 
   (* `device` should be an already-connected block device *)
-  let connect device ~program_block_size ~block_size : (t, error) result Lwt.t =
+  let connect ~program_block_size ~block_size device : (t, error) result Lwt.t =
     This_Block.connect ~block_size device >>= fun block ->
     (* TODO: setting an empty lookahead to generate a good-enough `t`
      * to populate the lookahead buffer
@@ -564,8 +564,6 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
      * make the functions that don't need allocable blocks marked
      * in the type system somehow,
      * or have them only take the arguments they need instead of a full `t` *)
-    (* TODO: this interface is also weird if we haven't formatted the filesystem yet.
-     *)
     Logs.debug (fun f -> f "initiating filesystem with block size %d (0x%x)" block_size block_size);
     let first_block = Cstruct.create block_size in
     This_Block.read block 0L [first_block] >>= function
@@ -586,21 +584,20 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         Lwt_mutex.unlock t.new_block_mutex;
         Lwt.return @@ Ok {t with lookahead; block; block_size; program_block_size}
 
-  let format t =
-    let program_block_size = t.program_block_size in
-    let block_size = t.block_size in
-    let write_whole_block n b = This_Block.write t.block n
+  let format ~program_block_size ~block_size (sectors : Sectors.t) :
+    (unit, write_error) result Lwt.t =
+    This_Block.connect ~block_size sectors >>= fun block ->
+    let write_whole_block n b = This_Block.write block n
         [fst @@ Chamelon.Block.to_cstruct ~program_block_size ~block_size b]
     in
     let name = Chamelon.Superblock.name in
-    let block_count = This_Block.block_count t.block in
+    let block_count = This_Block.block_count block in
     let superblock_inline_struct = Chamelon.Superblock.inline_struct (Int32.of_int block_size) (Int32.of_int block_count) in
     let block_0 = Chamelon.Block.of_entries ~revision_count:1 [name; superblock_inline_struct] in
     let block_1 = Chamelon.Block.of_entries ~revision_count:2 [name; superblock_inline_struct] in
-    Lwt_mutex.with_lock t.new_block_mutex (fun () ->
     Lwt_result.both
     (write_whole_block (fst root_pair) block_0)
-    (write_whole_block (snd root_pair) block_1)) >>= function
+    (write_whole_block (snd root_pair) block_1) >>= function
     | Ok ((), ()) -> Lwt.return @@ Ok ()
     | _ -> Lwt.return @@ Error `No_space
 
