@@ -563,12 +563,6 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
   (* `device` should be an already-connected block device *)
   let connect ~program_block_size ~block_size device : (t, error) result Lwt.t =
     This_Block.connect ~block_size device >>= fun block ->
-    (* TODO: setting an empty lookahead to generate a good-enough `t`
-     * to populate the lookahead buffer
-     * feels very kludgey and error-prone. We should either
-     * make the functions that don't need allocable blocks marked
-     * in the type system somehow,
-     * or have them only take the arguments they need instead of a full `t` *)
     Logs.debug (fun f -> f "initiating filesystem with block size %d (0x%x)" block_size block_size);
     let first_block = Cstruct.create block_size in
     This_Block.read block 0L [first_block] >>= function
