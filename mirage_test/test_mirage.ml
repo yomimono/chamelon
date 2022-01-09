@@ -236,6 +236,7 @@ let test img =
        [ test_case "get/set roundtrip" `Quick (test_get_set block);
          test_case "get/set roundtrip w/non-ascii data" `Quick (test_set_nonascii_data block);
          test_case "get/set roundtrip w/non-ascii key" `Quick (test_set_nonascii_key block);
+         test_case "get/set roundtrip w/empty key" `Quick (test_set_empty_key block);
          test_case "mkdir -p" `Quick (test_set_deep block);
          test_case "disk full" `Quick (test_no_space block);
          (* test_overwrite_dictionary is disabled for the moment; we need to confirm the "correct" behavior *)
@@ -260,5 +261,4 @@ let test img =
       )
     ]
   )
-
 let () = test "emptyfile"
