@@ -204,6 +204,8 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       | Error `Split -> begin
           Logs.debug (fun m -> m "split required for block write to %Ld, %Ld" b1 b2);
           (* try a compaction first *)
+          (* TODO compaction is the right point at which to attempt shedding the hardtail,
+           * if possible. *)
           Lwt_result.both
             (block_to_block_number t (Chamelon.Block.compact data) b1)
             (block_to_block_number t (Chamelon.Block.compact data) b2) 
