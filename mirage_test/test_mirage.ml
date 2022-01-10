@@ -221,6 +221,25 @@ let test_get_dictionary block _ () =
   | Ok s -> Alcotest.fail (Format.asprintf "getting a dictionary succeeded and returned %S" s)
   | Error e -> Alcotest.fail (Format.asprintf "getting a dictionary failed with an unexpected error type: %a" Chamelon.pp_error e)
 
+let test_many_files block _ () =
+  format_and_mount block >>= fun fs ->
+  let write i =
+    Chamelon.set fs (Mirage_kv.Key.v @@ string_of_int i) @@ "number " ^ (string_of_int i) >>= function
+    | Error `No_space -> Lwt.return false
+    | Ok () -> Lwt.return true
+    | Error e -> Alcotest.failf "unexpected error: %a" Chamelon.pp_write_error e
+  in
+  let rec write_until_full fs n =
+    write n >>= function
+    | false -> Lwt.return n
+    | true -> write_until_full fs (n+1)
+  in
+  write_until_full fs 0 >>= fun last_written ->
+  Chamelon.list fs Mirage_kv.Key.empty >>= function | Error e -> fail_read e | Ok l ->
+    Alcotest.(check int) "ls contains all written files" last_written (List.length l);
+    Lwt.return_unit
+
+
 let test img =
   Logs.set_level (Some Logs.Debug);
   let open Alcotest_lwt in
@@ -258,7 +277,11 @@ let test img =
          test_case "file overwrite digest" `Quick (test_digest_overwrite block) ;
          test_case "dict digest" `Quick (test_digest_deep_dictionary block) ;
        ]
-      )
+      );
+      ("split",
+       [
+         test_case "we can write files until we run out of space" `Quick (test_many_files block);
+       ]);
     ]
   )
 let () = test "emptyfile"
