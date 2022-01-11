@@ -189,19 +189,6 @@ let test_no_space block _ () =
   | Ok _ -> Alcotest.fail "setting 9th key succeeded when we expected No_space"
   | Error e -> fail_write e
 
-(* we should be able to overwrite dictionaries with values and vice versa *)
-let test_overwrite_dictionary block _ () =
-  let deep_key = Mirage_kv.Key.v "/fleep/dorp" in
-  let key = Mirage_kv.Key.parent deep_key in
-  format_and_mount block >>= fun fs ->
-  Chamelon.set fs deep_key "" >>= function | Error e -> fail_write e | Ok () -> 
-  Chamelon.set fs key "" >>= function
-  | Error e -> Alcotest.fail (Format.asprintf "failed to overwrite a dictionary with a value: %a" Chamelon.pp_write_error e)
-  | Ok () ->
-    Chamelon.set fs deep_key "" >>= function
-    | Error e -> Alcotest.fail (Format.asprintf "failed to overwrite a value with a dictionary: %a" Chamelon.pp_write_error e)
-    | Ok () -> Lwt.return_unit
-
 let test_nonexistent_value block _ () =
   format_and_mount block >>= fun fs ->
   let key = Mirage_kv.Key.v "/snapglefring" in
@@ -229,19 +216,33 @@ let test_many_files block _ () =
     | Ok () -> Lwt.return true
     | Error e -> Alcotest.failf "unexpected error: %a" Chamelon.pp_write_error e
   in
+  let readback i =
+    Chamelon.get fs (Mirage_kv.Key.v @@ string_of_int i) >>= function
+    | Error e -> Alcotest.failf "unexpected error fetching %d: %a" i Chamelon.pp_error e
+    | Ok v ->
+      Alcotest.(check string) "file contents match what's expected" ("number " ^ (string_of_int i)) v;
+      Lwt.return_unit
+  in
   let rec write_until_full fs n =
     write n >>= function
     | false -> Lwt.return n
     | true -> write_until_full fs (n+1)
   in
+  let rec read_all fs max n =
+    readback n >>= fun () ->
+    if (n + 1) > max then Lwt.return_unit else read_all fs max (n+1)
+  in
   write_until_full fs 0 >>= fun last_written ->
   Chamelon.list fs Mirage_kv.Key.empty >>= function | Error e -> fail_read e | Ok l ->
-    Alcotest.(check int) "ls contains all written files" last_written (List.length l);
-    Lwt.return_unit
-
+  let names = List.map (fun (n, _) -> n) l |> List.fast_sort (fun a b -> Int.compare (int_of_string a) (int_of_string b)) in
+  Logs.debug (fun f -> f "%a" Fmt.(list ~sep:sp string) names);
+  Alcotest.(check int) "ls contains all written files" last_written (List.length l);
+  read_all fs last_written 0 >>= fun () ->
+  Lwt.return_unit
 
 let test img =
   Logs.set_level (Some Logs.Debug);
+  Logs.set_reporter @@ Logs_fmt.reporter ();
   let open Alcotest_lwt in
   let open Lwt.Infix in
   Lwt_main.run @@ (
@@ -258,8 +259,6 @@ let test img =
          test_case "get/set roundtrip w/empty key" `Quick (test_set_empty_key block);
          test_case "mkdir -p" `Quick (test_set_deep block);
          test_case "disk full" `Quick (test_no_space block);
-         (* test_overwrite_dictionary is disabled for the moment; we need to confirm the "correct" behavior *)
-         (* test_case "overwrite dictionary" `Quick (test_overwrite_dictionary block); *)
        ]
       );
       ("last modified",

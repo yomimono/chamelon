@@ -78,7 +78,12 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     let ls_in_dir dir_pair =
       Fs.Find.all_entries_in_dir t dir_pair >>= function
       | Error _ -> Lwt.return @@ Error (`Not_found key)
-      | Ok entries -> Lwt.return @@ Ok (translate @@ Chamelon.Entry.compact entries)
+      | Ok entries_by_block ->
+        (* we have to compact first, because IDs are unique per *block*, not directory.
+         * If we compact after flattening the list, we might wrongly conflate multiple
+         * entries in the same directory, but on different blocks. *)
+        let compacted = List.map Chamelon.Entry.compact entries_by_block in
+        Lwt.return @@ Ok (translate @@ List.flatten compacted)
     in
     match (Mirage_kv.Key.segments key) with
     | [] -> ls_in_dir root_pair

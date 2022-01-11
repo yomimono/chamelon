@@ -64,6 +64,17 @@ let add_commit {revision_count; commits} entries =
     let commit = Commit.commit_after last entries in
     of_commits ~revision_count (l @ [commit])
 
+let hardtail t =
+  match List.filter_map (fun (tag, data) ->
+      match Tag.is_hardtail tag with
+      | false -> None
+      | true -> match Entry.links (tag, data) with
+        | Some Entry.Metadata block_pair -> Some block_pair
+        | _ -> None
+    ) (entries t) with
+  | [] -> None
+  | block_pair::_ -> Some block_pair
+
 (* return variants `Split and `Ok are successful; `Split warns that the block
  * took up more than 1/2 of the block size and the metadata block
  * should be split into two pairs.
@@ -104,23 +115,46 @@ let ids t =
   let block_ids = List.(flatten @@ map commit_ids t.commits) in
   IdSet.of_list block_ids
 
+let split_by_id block =
+  let module IntMap = Map.Make(Int) in
+  match entries block with
+  | [] -> block, of_entries ~revision_count:0 []
+  | entries ->
+    let id_of_entry e = (fst e).Tag.id in
+    let bucketed = List.fold_left (fun acc e ->
+        let id = id_of_entry e in
+        if id = 0x3ff then acc else begin
+          match IntMap.find_opt id acc with
+          | Some l -> IntMap.add id (e::l) acc
+          | None   -> IntMap.add id [e] acc
+        end
+      ) IntMap.empty entries in
+    match IntMap.max_binding_opt bucketed with
+    | None -> block, of_entries ~revision_count:0 []
+    | Some (n, _) ->
+      (* we want to leave all of the entries with id 0x3ff intact in the old block,
+       * and not preserve any of them in the new block.
+       * The most straightforward way to do this is remove any entry in the new block
+       * from the old block,
+       * rather than rewriting the new block,
+       * so we don't overwrite anything we don't understand *)
+      let _, for_new_block = IntMap.partition (fun a _ -> (a < (n / 2))) bucketed in
+      let delete_from_old, new_block_entries = List.split @@ IntMap.bindings for_new_block in
+      let delete_all_new_block_ids = List.map (fun id -> (Tag.delete id, Cstruct.empty)) delete_from_old in
+      let old_block_without_new_entries = compact @@ add_commit block delete_all_new_block_ids in
+      let new_block = of_entries ~revision_count:0 @@ List.flatten new_block_entries in
+      old_block_without_new_entries, new_block
+
 let split block next_blockpair =
   match block.commits with
   | [] -> (* trivial case - just add the hardtail to block,
              since we have no commits to move *)
-    (* we'll overwhelmingly more often end up in this case, because
-     * in most situations we'll compact before we split,
-     * meaning that there will be only 1 commit on the block *)
     let block = add_commit block [Dir.hard_tail_at next_blockpair] in
     (block, of_entries ~revision_count:0 [])
   | _ ->
-    let entries = entries block |> Entry.compact in
-    let length = List.length entries in
-    let half = length / 2 in
-    let first_half = List.init half (fun i -> List.nth entries i) in
-    let second_half = List.init (length - half) (fun i -> List.nth entries (half + i)) in
-    let new_block = of_entries ~revision_count:0 second_half in
-    let old_block = of_entries ~revision_count:(revision_count block) first_half in
+    (* bucket the entries by id number, so we can make sure
+     * that all entries for a given id end up in the same block *)
+    let old_block, new_block = split_by_id block in
     let old_block = add_commit old_block [Dir.hard_tail_at next_blockpair] in
     (old_block, new_block)
 
