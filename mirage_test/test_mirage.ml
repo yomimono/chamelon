@@ -225,7 +225,7 @@ let test_many_files block _ () =
   in
   let rec write_until_full fs n =
     write n >>= function
-    | false -> Lwt.return n
+    | false -> Lwt.return (n - 1)
     | true -> write_until_full fs (n+1)
   in
   let rec read_all fs max n =
@@ -236,7 +236,7 @@ let test_many_files block _ () =
   Chamelon.list fs Mirage_kv.Key.empty >>= function | Error e -> fail_read e | Ok l ->
   let names = List.map (fun (n, _) -> n) l |> List.fast_sort (fun a b -> Int.compare (int_of_string a) (int_of_string b)) in
   Logs.debug (fun f -> f "%a" Fmt.(list ~sep:sp string) names);
-  Alcotest.(check int) "ls contains all written files" last_written (List.length l);
+  Alcotest.(check int) "ls contains all written files" (last_written + 1) (List.length l);
   read_all fs last_written 0 >>= fun () ->
   Lwt.return_unit
 
