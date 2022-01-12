@@ -128,7 +128,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       let pivot = Int64.(div (of_int possible_blocks) 2L) in
       let set = match bias, IntSet.split pivot candidates with
         | `After, (_, true, s) -> IntSet.add pivot s
-        | `Before, (s, true, _) -> IntSet.add pivot s
+        | `Before, (s, true, _)
         | `Before, (s, false, _)
         | `After, (_, false, s) -> s
       in
