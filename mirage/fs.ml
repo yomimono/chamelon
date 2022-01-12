@@ -347,7 +347,9 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       | [] -> begin
         (* if this block has a hardtail, follow it *)
         Read.block_of_block_pair t block_pair >>= function
-        | Error _ -> Lwt.return @@ `No_structs
+        | Error _ ->
+          Logs.debug (fun f -> f "couldn't read a block where we think a directory is present. Assuming it doesn't have a hardtail");
+          Lwt.return (`Basename_on block_pair)
         | Ok block ->
           match Chamelon.Block.hardtail block with
           | None -> Lwt.return (`Basename_on block_pair)
