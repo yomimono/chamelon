@@ -12,6 +12,8 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     new_block_mutex : Lwt_mutex.t;
   }
 
+  type write_result = [ `No_space | `Split | `Split_emergency ]
+
   type key = Mirage_kv.Key.t
 
   let log_src = Logs.Src.create "chamelon-fs" ~doc:"chamelon FS layer"
@@ -193,7 +195,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
      * we're probably writing to a file on another filesystem
      * managed by an OS with its own bad block detection.
      * That's my excuse for punting on it for now, anyway. *)
-    let block_to_block_number t data block_location =
+    let block_to_block_number t data block_location : (unit, write_result) result Lwt.t =
       let {block_size; block; program_block_size; _} = t in
       let cs = Cstruct.create block_size in
       Logs.debug (fun f -> f "writing block %Ld (0x%Lx)..." block_location block_location);
@@ -202,19 +204,25 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         Logs.debug (fun f -> f "we need to split this block or we won't be able to write it");
         Lwt.return @@ Error `Split_emergency
       | `Split ->
-        Logs.debug (fun f -> f "we need to split this, but not urgently");
-        Lwt.return @@ Error `Split
+        begin
+          Logs.debug (fun f -> f "we need to split this, but not urgently");
+          This_Block.write block block_location [cs] >>= function
+          | Ok () -> Lwt.return @@ Error `Split
+          | Error e ->
+            Log.err (fun m -> m "block write error: %a" This_Block.pp_write_error e);
+            Lwt.return @@ Error `No_space
+        end
       | `Ok ->
         This_Block.write block block_location [cs] >>= function
-        | Ok () -> Lwt.return @@ Ok `Done
+        | Ok () -> Lwt.return @@ Ok ()
         | Error e ->
           Log.err (fun m -> m "block write error: %a" This_Block.pp_write_error e);
           Lwt.return @@ Error `No_space
 
-    let rec block_to_block_pair t data (b1, b2) =
+    let rec block_to_block_pair t data (b1, b2) : (unit, write_result) result Lwt.t =
       let split () =
         Allocate.get_block_pair t >>= function
-        | Error _ as e -> Lwt.return e
+        | Error `No_space -> Lwt.return @@ Error `No_space
         | Ok (new_block_1, new_block_2) when Int64.equal new_block_1 new_block_2 ->
           (* if there is only 1 block remaining, we'll get the same one twice.
            * That's not enough for the split. *)
@@ -222,16 +230,26 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         | Ok (new_block_1, new_block_2) -> begin
             Logs.debug (fun m -> m "splitting block pair %Ld, %Ld to %Ld, %Ld"
                            b1 b2 new_block_1 new_block_2);
-            (* it's not strictly necessary to order these,
-             * but it makes it easier for the debugging human to "reason about" *)
             let old_block, new_block = Chamelon.Block.split data (new_block_1, new_block_2) in
-            Lwt_result.both
-              (block_to_block_pair t old_block (b1, b2))
-              (block_to_block_pair t new_block (new_block_1, new_block_2)) >>= function
-            | Error `Split | Error `Split_emergency ->
+            Logs.debug (fun m -> m "keeping %d entries in the old block, and putting %d in the new one"
+                           (List.length @@ Chamelon.Block.entries old_block)
+                           (List.length @@ Chamelon.Block.entries new_block));
+            if List.length @@ Chamelon.Block.entries new_block < 1 then begin
+              Log.debug (fun f -> f "can't move any entries to the new block; giving up on splitting");
               Lwt.return @@ Error `No_space
-            | Error _ as e -> Lwt.return e
-            | Ok ((), ()) -> Lwt.return @@ Ok ()
+            end else begin
+              (* be very explicit about writing the new block first, and only overwriting
+               * the old block pair if the new block pair write succeeded *)
+              block_to_block_pair t new_block (new_block_1, new_block_2) >>= function
+              | Error `Split | Error `Split_emergency | Error `No_space ->
+                Lwt.return @@ Error `No_space
+              | Ok () -> begin
+                  block_to_block_pair t old_block (b1, b2) >>= function
+                  | Error `Split | Error `Split_emergency | Error `No_space ->
+                    Lwt.return @@ Error `No_space
+                  | Ok () -> Lwt.return @@ Ok ()
+                end
+            end
           end
       in
       Lwt_result.both
@@ -583,8 +601,8 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         let new_block = Chamelon.Block.add_commit extant_block commit in
         Write.block_to_block_pair t new_block block_pair >>= function
         | Error `No_space -> Lwt.return @@ Error `No_space
-        | Error `Split
-        | Error `Split_emergency -> Logs.err (fun m -> m "couldn't write a block, because it got too big");
+        | Error `Split | Error `Split_emergency ->
+          Logs.err (fun m -> m "couldn't write a block, because it got too big");
           Lwt.return @@ Error `No_space
         | Ok () -> Lwt.return @@ Ok ()
 

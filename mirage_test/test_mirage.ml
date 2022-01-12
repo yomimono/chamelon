@@ -9,7 +9,7 @@ let fail_write = fail Chamelon.pp_write_error
 let testable_key = Alcotest.testable Mirage_kv.Key.pp Mirage_kv.Key.equal
 
 let program_block_size = 16
-let block_size = 4096
+let block_size = 512
 
 let format_and_mount block =
   Chamelon.format ~program_block_size ~block_size block >>= function
@@ -171,22 +171,22 @@ let test_digest_deep_dictionary block _ () =
   Lwt.return_unit
 
 let test_no_space block _ () =
-  let blorp = String.init 4096 (fun _ -> 'a') in
+  let blorp = String.init block_size (fun _ -> 'a') in
   let k n = Mirage_kv.Key.v @@ string_of_int n in
-  (* filesystem is 10 * 4K in size, so we should expect to write
-   * 40K - 2*4K (initial metadata blocks) = 32K; if the files are 4K each,
-   * our ninth write should fail *)
+  let blocks = 4096 * 10 / block_size in
   format_and_mount block >>= fun fs ->
-  let l = List.init 8 (fun n -> n) in
+  let l = List.init (blocks - 2) (fun n -> n) in
+  Logs.debug (fun f -> f "writing %d blocks of nonsense..." (blocks - 2));
   Lwt_list.iter_p (fun i ->
     Chamelon.set fs (k i) blorp >>= function | Error e -> fail_write e | Ok () ->
+      Logs.debug (fun f -> f "wrote block number %d" i);
     Lwt.return_unit
   ) l >>= fun () ->
   Chamelon.list fs (Mirage_kv.Key.empty) >>= function | Error e -> fail_read e | Ok l ->
-  Alcotest.(check int) "all set items are present" 8 @@ List.length l;
-  Chamelon.set fs (k 8) blorp >>= function
+  Alcotest.(check int) "all set items are present" (blocks - 2) @@ List.length l;
+  Chamelon.set fs (k (blocks - 1)) blorp >>= function
   | Error `No_space -> Lwt.return_unit
-  | Ok _ -> Alcotest.fail "setting 9th key succeeded when we expected No_space"
+  | Ok _ -> Alcotest.fail "setting last key succeeded when we expected No_space"
   | Error e -> fail_write e
 
 let test_nonexistent_value block _ () =

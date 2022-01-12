@@ -51,7 +51,7 @@ let of_entries ~revision_count entries =
   of_commits ~revision_count (commit::[])
 
 let compact t =
-  let revision_count = t.revision_count in
+  let revision_count = t.revision_count + 1 in
   let entries = List.map Commit.entries t.commits |> List.flatten |> Entry.compact in
   of_entries ~revision_count entries
 
@@ -115,35 +115,41 @@ let ids t =
   let block_ids = List.(flatten @@ map commit_ids t.commits) in
   IdSet.of_list block_ids
 
-let split_by_id block =
+let split_by_id original_block =
   let module IntMap = Map.Make(Int) in
-  match entries block with
-  | [] -> block, of_entries ~revision_count:0 []
+  match entries original_block with
+  | [] -> original_block, of_entries ~revision_count:0 []
   | entries ->
     let id_of_entry e = (fst e).Tag.id in
     let bucketed = List.fold_left (fun acc e ->
         let id = id_of_entry e in
-        if id = 0x3ff then acc else begin
+        if id = 0x3ff || id = 0x00 then acc else begin
           match IntMap.find_opt id acc with
           | Some l -> IntMap.add id (e::l) acc
           | None   -> IntMap.add id [e] acc
         end
       ) IntMap.empty entries in
-    match IntMap.max_binding_opt bucketed with
-    | None -> block, of_entries ~revision_count:0 []
-    | Some (n, _) ->
-      (* we want to leave all of the entries with id 0x3ff intact in the old block,
-       * and not preserve any of them in the new block.
-       * The most straightforward way to do this is remove any entry in the new block
-       * from the old block,
-       * rather than rewriting the new block,
-       * so we don't overwrite anything we don't understand *)
-      let _, for_new_block = IntMap.partition (fun a _ -> (a < (n / 2))) bucketed in
-      let delete_from_old, new_block_entries = List.split @@ IntMap.bindings for_new_block in
-      let delete_all_new_block_ids = List.map (fun id -> (Tag.delete id, Cstruct.empty)) delete_from_old in
-      let old_block_without_new_entries = compact @@ add_commit block delete_all_new_block_ids in
-      let new_block = of_entries ~revision_count:0 @@ List.flatten new_block_entries in
-      old_block_without_new_entries, new_block
+    (* we want to leave all of the entries with id 0x00 and 0x3ff intact in the old block,
+     * and not preserve any of them in the new block.
+     * The most straightforward way to do this is remove any entry in the new block
+     * from the old block,
+     * rather than rewriting the new block,
+     * so we don't overwrite anything we don't understand *)
+    (* take every other id discovered in the bucketing process,
+     * so we can put it in the new block *)
+    let _, for_new_block =
+      IntMap.fold (fun k v (dir, right) -> match dir with
+          | `Left -> `Right, right
+          | `Right -> `Left, (k, v)::right
+        ) bucketed (`Right, [])
+    in
+    let ids_in_new_block, new_block_entries = List.split @@ for_new_block in
+    let delete_all_ids_in_new_block = List.map (fun id -> (Tag.delete id, Cstruct.empty)) ids_in_new_block in
+    let old_block_without_new_entries = compact @@
+      add_commit original_block delete_all_ids_in_new_block
+    in
+    let new_block = of_entries ~revision_count:0 @@ List.(rev @@ flatten new_block_entries) in
+    old_block_without_new_entries, new_block
 
 let split block next_blockpair =
   match block.commits with

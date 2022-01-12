@@ -75,7 +75,7 @@ let compact entries =
       match Tag.((fst e).type3) with
       | Tag.LFS_TYPE_SPLICE, 0xff -> remove_entries_matching Tag.((fst e).id) new_list
       | _ -> e :: new_list
-    ) [] entries
+    ) [] entries |> List.rev
 
 let lenv l =
   List.fold_left (fun sum t -> sum + sizeof t) 0 l

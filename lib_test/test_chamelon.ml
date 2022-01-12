@@ -99,6 +99,17 @@ module Block = struct
     let superblock_inline_struct = Chamelon.Superblock.inline_struct bs @@ Int32.of_int block_count in
     Chamelon.Block.of_entries ~revision_count [name; superblock_inline_struct]
 
+  let example_block =
+    let entries = [
+      Chamelon.File.name "one" 1;
+      Chamelon.File.create_ctz 1 ~pointer:2l ~file_size:1024l;
+      Chamelon.File.name "two" 2;
+      Chamelon.File.create_inline 2 (Cstruct.create 8), Cstruct.create 8;
+      Chamelon.File.name "three" 3;
+      Chamelon.Dir.mkdir ~to_pair:(2L, 3L) 3;
+    ] in
+    Chamelon.Block.add_commit superblock entries
+
   (* mimic the minimal superblock commit made by `mklittlefs` when run on an empty directory, and assert that they match what's expected *)
   let commit_superblock () =
     let block = superblock in
@@ -161,6 +172,48 @@ module Block = struct
     let incremented_crc = Cstruct.(to_string @@ sub incremented_block_serialized 0x30 4) in
     Alcotest.(check bool) "crcs shouldn't be equal after revision count change" false (String.equal orig_crc incremented_crc)
 
+  let compact_not_lossy () =
+    let pp_entry fmt (tag, cs) =
+      Format.fprintf fmt "%a: data length %d" Chamelon.Tag.pp tag (Cstruct.length cs) in
+    let eq entry1 entry2 =
+      Cstruct.equal
+        (Chamelon.Entry.to_cstruct ~xor_tag_with:default_xor entry1)
+        (Chamelon.Entry.to_cstruct ~xor_tag_with:default_xor entry2)
+    in
+    let pre_split = example_block in
+    let entry = Alcotest.testable pp_entry eq in
+    Alcotest.(check @@ list entry) "compact should have no effect on the entry list in a block with no deletes" (Chamelon.Block.entries pre_split) Chamelon.Block.(entries @@ compact pre_split);
+    ()
+
+  let split_splits () =
+    let pp_entry fmt (tag, cs) =
+      Format.fprintf fmt "%a: data length %d" Chamelon.Tag.pp tag (Cstruct.length cs) in
+    let pre_split = example_block in
+    let new_block_address = (4L, 5L) in
+    Format.printf "entries in the pre-split block: %a\n" Fmt.(list pp_entry) (Chamelon.Block.entries pre_split);
+
+    let old_block, new_block = Chamelon.Block.split pre_split new_block_address in
+    (* old block should have 2 entries for the superblock plus
+     * two entries for ID 2, plus hardtail *)
+    Format.printf "entries in old block: %a\n" Fmt.(list pp_entry) (Chamelon.Block.entries old_block);
+    Alcotest.(check int) "old block should have entries" 5 (List.length @@ Chamelon.Block.entries old_block);
+    (* new block should have two entries each for IDs 1 and 3 *)
+    Format.printf "entries in new block: %a\n" Fmt.(list pp_entry) (Chamelon.Block.entries new_block);
+    Alcotest.(check int) "new block should have entries" 4 (List.length @@ Chamelon.Block.entries new_block);
+
+    let tail = List.filter (Chamelon.Entry.is_type Chamelon.Tag.LFS_TYPE_TAIL) (Chamelon.Block.entries old_block) in
+    match tail with
+    | [] -> Alcotest.fail "no tail in the old block"
+    | _::_::_ -> Alcotest.fail "more than 1 tail in the old block"
+    | hd::[] ->
+      Alcotest.(check bool) "old block should have hardtail"
+        true @@ Chamelon.Tag.is_hardtail @@ fst hd;
+      Alcotest.(check @@ option @@ pair int64 int64) "old block hardtail points to new block"
+        (Some new_block_address) @@ Chamelon.Dir.hard_tail_links hd;
+      match List.filter (Chamelon.Entry.is_type Chamelon.Tag.LFS_TYPE_TAIL) (Chamelon.Block.entries new_block) with
+      | _::_ -> Alcotest.fail "new block has a tail, and it shouldn't"
+      | _ -> ()
+
 end
 
 module Entry = struct
@@ -204,6 +257,8 @@ let () =
     ( "block", [
           tc "write a superblock commit to a block" `Quick Block.commit_superblock;
           tc "writing a block with different revision count gives different CRC" `Quick Block.revision_count_matters;
+          tc "compacting a block with no deletes has no effect on contents" `Quick Block.compact_not_lossy;
+          tc "splitting a block puts some data in each side" `Quick Block.split_splits;
       ]);
     ( "entry", [
           tc "entry roundtrip" `Quick Entry.roundtrip;
