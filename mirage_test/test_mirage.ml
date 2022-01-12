@@ -9,7 +9,7 @@ let fail_write = fail Chamelon.pp_write_error
 let testable_key = Alcotest.testable Mirage_kv.Key.pp Mirage_kv.Key.equal
 
 let program_block_size = 16
-let block_size = 512
+let block_size = 4096
 
 let format_and_mount block =
   Chamelon.format ~program_block_size ~block_size block >>= function
@@ -233,6 +233,7 @@ let test_many_files block _ () =
     if (n + 1) > max then Lwt.return_unit else read_all fs max (n+1)
   in
   write_until_full fs 0 >>= fun last_written ->
+  Logs.debug (fun f -> f "last written file was %d" last_written);
   Chamelon.list fs Mirage_kv.Key.empty >>= function | Error e -> fail_read e | Ok l ->
   let names = List.map (fun (n, _) -> n) l |> List.fast_sort (fun a b -> Int.compare (int_of_string a) (int_of_string b)) in
   Logs.debug (fun f -> f "%a" Fmt.(list ~sep:sp string) names);

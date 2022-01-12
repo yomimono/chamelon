@@ -278,14 +278,24 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
             | Ok _ ->
               Logs.debug (fun f -> f "compaction of the data was sufficient; not splitting");
               Lwt.return @@ Ok ()
-            | Error `Split | Error `Split_emergency ->
+            | Error `Split -> begin
+              Logs.debug (fun f -> f "compaction was insufficient; splitting");
+              split () >>= function
+              | Error _ -> Logs.warn (fun f -> f "split operation failed. disk is approaching full");
+                Lwt.return @@ Ok ()
+              | Ok () -> Lwt.return @@ Ok ()
+            end
+            | Error `Split_emergency ->
               Logs.debug (fun f -> f "compaction was insufficient; splitting");
               split ()
             | Error `No_space -> Lwt.return @@ Error `No_space
           end else begin
             (* if we didn't drop any entries by compacting, don't bother and just split *)
             Logs.debug (fun f -> f "not compacting. Will begin splitting");
-            split ()
+            split () >>= function
+            | Error _ -> Logs.warn (fun f -> f "split operation failed. disk is approaching full");
+              Lwt.return @@ Ok ()
+            | Ok () -> Lwt.return @@ Ok ()
           end
         end
       | Error `Split_emergency -> split ()
