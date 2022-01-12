@@ -358,6 +358,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       | key::remaining ->
         entries_of_name t block_pair key >>= function
         | Error _ -> Lwt.return @@ `No_id key
+        | Ok [] -> Lwt.return @@ `No_id key
         | Ok l ->
           match List.filter_map Chamelon.Dir.of_entry l with
           | [] -> Lwt.return `No_structs
