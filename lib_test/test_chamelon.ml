@@ -193,13 +193,10 @@ module Block = struct
     Format.printf "entries in the pre-split block: %a\n" Fmt.(list pp_entry) (Chamelon.Block.entries pre_split);
 
     let old_block, new_block = Chamelon.Block.split pre_split new_block_address in
-    (* old block should have 2 entries for the superblock plus
-     * two entries for ID 2, plus hardtail *)
     Format.printf "entries in old block: %a\n" Fmt.(list pp_entry) (Chamelon.Block.entries old_block);
-    Alcotest.(check int) "old block should have entries" 5 (List.length @@ Chamelon.Block.entries old_block);
-    (* new block should have two entries each for IDs 1 and 3 *)
+    Alcotest.(check int) "old block should have its existing entries plus hardtail" 9 (List.length @@ Chamelon.Block.entries old_block);
     Format.printf "entries in new block: %a\n" Fmt.(list pp_entry) (Chamelon.Block.entries new_block);
-    Alcotest.(check int) "new block should have entries" 4 (List.length @@ Chamelon.Block.entries new_block);
+    Alcotest.(check int) "new block should have its first CRC" 0 (List.length @@ Chamelon.Block.entries new_block);
 
     let tail = List.filter (Chamelon.Entry.is_type Chamelon.Tag.LFS_TYPE_TAIL) (Chamelon.Block.entries old_block) in
     match tail with
@@ -258,7 +255,7 @@ let () =
           tc "write a superblock commit to a block" `Quick Block.commit_superblock;
           tc "writing a block with different revision count gives different CRC" `Quick Block.revision_count_matters;
           tc "compacting a block with no deletes has no effect on contents" `Quick Block.compact_not_lossy;
-          tc "splitting a block puts some data in each side" `Quick Block.split_splits;
+          tc "splitting a block gets the hardtail right" `Quick Block.split_splits;
       ]);
     ( "entry", [
           tc "entry roundtrip" `Quick Entry.roundtrip;

@@ -106,7 +106,7 @@ let into_cstruct ~program_block_size cs block =
              (pointer + bytes_written, raw_crc_tag, 0)
           ) (4, (Cstruct.of_string "\xff\xff\xff\xff"), 4) block.commits
       in
-      if after_last_crc > (Cstruct.length cs / 2) then `Split else `Ok
+      if after_last_crc > ((Cstruct.length cs) / 2) then `Split else `Ok
     with Invalid_argument _ -> `Split_emergency
 
 let ids t =
@@ -115,54 +115,8 @@ let ids t =
   let block_ids = List.(flatten @@ map commit_ids t.commits) in
   IdSet.of_list block_ids
 
-let split_by_id original_block =
-  let module IntMap = Map.Make(Int) in
-  match entries original_block with
-  | [] -> original_block, of_entries ~revision_count:0 []
-  | entries ->
-    let id_of_entry e = (fst e).Tag.id in
-    let bucketed = List.fold_left (fun acc e ->
-        let id = id_of_entry e in
-        if id = 0x3ff || id = 0x00 then acc else begin
-          match IntMap.find_opt id acc with
-          | Some l -> IntMap.add id (e::l) acc
-          | None   -> IntMap.add id [e] acc
-        end
-      ) IntMap.empty entries in
-    (* we want to leave all of the entries with id 0x00 and 0x3ff intact in the old block,
-     * and not preserve any of them in the new block.
-     * The most straightforward way to do this is remove any entry in the new block
-     * from the old block,
-     * rather than rewriting the new block,
-     * so we don't overwrite anything we don't understand *)
-    (* take every other id discovered in the bucketing process,
-     * so we can put it in the new block *)
-    let _, for_new_block =
-      IntMap.fold (fun k v (dir, right) -> match dir with
-          | `Left -> `Right, right
-          | `Right -> `Left, (k, v)::right
-        ) bucketed (`Right, [])
-    in
-    let ids_in_new_block, new_block_entries = List.split @@ for_new_block in
-    let delete_all_ids_in_new_block = List.map (fun id -> (Tag.delete id, Cstruct.empty)) ids_in_new_block in
-    let old_block_without_new_entries = compact @@
-      add_commit original_block delete_all_ids_in_new_block
-    in
-    let new_block = of_entries ~revision_count:0 @@ List.(rev @@ flatten new_block_entries) in
-    old_block_without_new_entries, new_block
-
 let split block next_blockpair =
-  match block.commits with
-  | [] -> (* trivial case - just add the hardtail to block,
-             since we have no commits to move *)
-    let block = add_commit block [Dir.hard_tail_at next_blockpair] in
-    (block, of_entries ~revision_count:0 [])
-  | _ ->
-    (* bucket the entries by id number, so we can make sure
-     * that all entries for a given id end up in the same block *)
-    let old_block, new_block = split_by_id block in
-    let old_block = add_commit old_block [Dir.hard_tail_at next_blockpair] in
-    (old_block, new_block)
+  (add_commit block [Dir.hard_tail_at next_blockpair], of_entries ~revision_count:1 [])
 
 let to_cstruct ~program_block_size ~block_size block =
   let cs = Cstruct.create block_size in

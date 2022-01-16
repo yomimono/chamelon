@@ -221,23 +221,23 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
 
     let rec block_to_block_pair t data (b1, b2) : (unit, write_result) result Lwt.t =
       let split () =
-        Allocate.get_block_pair t >>= function
-        | Error `No_space -> Lwt.return @@ Error `No_space
-        | Ok (new_block_1, new_block_2) when Int64.equal new_block_1 new_block_2 ->
-          (* if there is only 1 block remaining, we'll get the same one twice.
-           * That's not enough for the split. *)
+        match Chamelon.Block.hardtail data with
+        | Some _ -> Logs.err (fun f -> f "tried to split the blockpair %Ld, %Ld (0x%Lx, 0x%Lx), which already has a hardtail - refusing to continue" b1 b2 b1 b2);
           Lwt.return @@ Error `No_space
-        | Ok (new_block_1, new_block_2) -> begin
-            Logs.debug (fun m -> m "splitting block pair %Ld, %Ld to %Ld, %Ld"
-                           b1 b2 new_block_1 new_block_2);
-            let old_block, new_block = Chamelon.Block.split data (new_block_1, new_block_2) in
-            Logs.debug (fun m -> m "keeping %d entries in the old block, and putting %d in the new one"
-                           (List.length @@ Chamelon.Block.entries old_block)
-                           (List.length @@ Chamelon.Block.entries new_block));
-            if List.length @@ Chamelon.Block.entries new_block < 1 then begin
-              Log.debug (fun f -> f "can't move any entries to the new block; giving up on splitting");
-              Lwt.return @@ Error `No_space
-            end else begin
+        | None ->
+          Allocate.get_block_pair t >>= function
+          | Error `No_space -> Lwt.return @@ Error `No_space
+          | Ok (new_block_1, new_block_2) when Int64.equal new_block_1 new_block_2 ->
+            (* if there is only 1 block remaining, we'll get the same one twice.
+             * That's not enough for the split. *)
+            Lwt.return @@ Error `No_space
+          | Ok (new_block_1, new_block_2) -> begin
+              Logs.debug (fun m -> m "splitting block pair %Ld, %Ld to %Ld, %Ld"
+                             b1 b2 new_block_1 new_block_2);
+              let old_block, new_block = Chamelon.Block.split data (new_block_1, new_block_2) in
+              Logs.debug (fun m -> m "keeping %d entries in the old block, and putting %d in the new one"
+                             (List.length @@ Chamelon.Block.entries old_block)
+                             (List.length @@ Chamelon.Block.entries new_block));
               (* be very explicit about writing the new block first, and only overwriting
                * the old block pair if the new block pair write succeeded *)
               block_to_block_pair t new_block (new_block_1, new_block_2) >>= function
@@ -248,9 +248,8 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
                   | Error `Split | Error `Split_emergency | Error `No_space ->
                     Lwt.return @@ Error `No_space
                   | Ok () -> Lwt.return @@ Ok ()
-                end
             end
-          end
+  end
       in
       Lwt_result.both
         (block_to_block_number t data b1)
@@ -279,12 +278,12 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
               Logs.debug (fun f -> f "compaction of the data was sufficient; not splitting");
               Lwt.return @@ Ok ()
             | Error `Split -> begin
-              Logs.debug (fun f -> f "compaction was insufficient; splitting");
-              split () >>= function
-              | Error _ -> Logs.warn (fun f -> f "split operation failed. disk is approaching full");
-                Lwt.return @@ Ok ()
-              | Ok () -> Lwt.return @@ Ok ()
-            end
+                Logs.debug (fun f -> f "compaction was insufficient; splitting");
+                split () >>= function
+                | Error _ -> Logs.warn (fun f -> f "split operation failed. disk is approaching full");
+                  Lwt.return @@ Ok ()
+                | Ok () -> Lwt.return @@ Ok ()
+              end
             | Error `Split_emergency ->
               Logs.debug (fun f -> f "compaction was insufficient; splitting");
               split ()
@@ -372,7 +371,9 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
 
     let rec find_directory t block_pair key =
       match key with
-      | [] -> begin
+      | [] ->
+        Logs.debug (fun f -> f "descended through all the key segments on block pair %Ld, %Ld; checking for hardtail" (fst block_pair) (snd block_pair));
+        begin
         (* if this block has a hardtail, follow it *)
         Read.block_of_block_pair t block_pair >>= function
         | Error _ ->
@@ -380,8 +381,12 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
           Lwt.return (`Basename_on block_pair)
         | Ok block ->
           match Chamelon.Block.hardtail block with
-          | None -> Lwt.return (`Basename_on block_pair)
-          | Some next_blockpair -> find_directory t next_blockpair key
+          | None ->
+            Logs.debug (fun f -> f "no hardtail on %Ld, %Ld - returning this blockpair" (fst block_pair) (snd block_pair));
+            Lwt.return (`Basename_on block_pair)
+          | Some next_blockpair ->
+            Logs.debug (fun f -> f "hardtail pointing to %Ld, %Ld for this directory - let's follow it" (fst next_blockpair) (snd next_blockpair));
+            find_directory t next_blockpair key
       end
       | key::remaining ->
         entries_of_name t block_pair key >>= function
@@ -567,54 +572,60 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
             write_ctz_block t ((index, pointer)::l) (index + 1) (so_far + data_length) data
       end
 
-    let write_in_ctz dir_block_pair t filename data entries =
+    let rec write_in_ctz dir_block_pair t filename data entries =
       Read.block_of_block_pair t dir_block_pair >>= function
       | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v filename))
       | Ok root ->
-        let file_size = String.length data in
-        write_ctz_block t [] 0 0 data >>= function
-        | Error _ as e -> Lwt.return e
-        | Ok [] -> Lwt.return @@ Error `No_space
-        | Ok ((_last_index, last_pointer)::_) ->
-          let next = match Chamelon.Block.(IdSet.max_elt_opt @@ ids root) with
-            | None -> 1
-            | Some n -> n + 1
-          in
-          let name = Chamelon.File.name filename next in
-          let ctime = Chamelon.Entry.ctime next (Clock.now_d_ps ()) in
-          let ctz = Chamelon.File.create_ctz next
-              ~pointer:last_pointer ~file_size:(Int32.of_int file_size)
-          in
-          let new_entries = entries @ [name; ctime; ctz] in
-          Logs.debug (fun m -> m "writing ctz %d entries for ctz for file %s" (List.length new_entries) filename);
-          let new_block = Chamelon.Block.add_commit root new_entries in
-          Write.block_to_block_pair t new_block dir_block_pair >>= function
-          | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v filename))
-          | Ok () -> Lwt.return @@ Ok ()
+        match Chamelon.Block.hardtail root with
+        | Some next_blockpair -> write_in_ctz next_blockpair t filename data entries
+        | None ->
+          let file_size = String.length data in
+          write_ctz_block t [] 0 0 data >>= function
+          | Error _ as e -> Lwt.return e
+          | Ok [] -> Lwt.return @@ Error `No_space
+          | Ok ((_last_index, last_pointer)::_) ->
+            let next = match Chamelon.Block.(IdSet.max_elt_opt @@ ids root) with
+              | None -> 1
+              | Some n -> n + 1
+            in
+            let name = Chamelon.File.name filename next in
+            let ctime = Chamelon.Entry.ctime next (Clock.now_d_ps ()) in
+            let ctz = Chamelon.File.create_ctz next
+                ~pointer:last_pointer ~file_size:(Int32.of_int file_size)
+            in
+            let new_entries = entries @ [name; ctime; ctz] in
+            Logs.debug (fun m -> m "writing ctz %d entries for ctz for file %s" (List.length new_entries) filename);
+            let new_block = Chamelon.Block.add_commit root new_entries in
+            Write.block_to_block_pair t new_block dir_block_pair >>= function
+            | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v filename))
+            | Ok () -> Lwt.return @@ Ok ()
 
-    let write_inline block_pair t filename data entries =
+    let rec write_inline block_pair t filename data entries =
       Read.block_of_block_pair t block_pair >>= function
       | Error _ ->
         Logs.err (fun m -> m "error reading block pair %Ld, %Ld"
                      (fst block_pair) (snd block_pair));
         Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v filename))
       | Ok extant_block ->
-        let used_ids = Chamelon.Block.ids extant_block in
-        let next = match Chamelon.Block.IdSet.max_elt_opt used_ids with
-          | None -> 1
-          | Some n -> n + 1
-        in
-        let ctime = Chamelon.Entry.ctime next (Clock.now_d_ps ()) in
-        let file = Chamelon.File.write_inline filename next (Cstruct.of_string data) in
-        let commit = entries @ (ctime :: file) in
-        Logs.debug (fun m -> m "writing %d entries for inline file %s" (List.length file) filename);
-        let new_block = Chamelon.Block.add_commit extant_block commit in
-        Write.block_to_block_pair t new_block block_pair >>= function
-        | Error `No_space -> Lwt.return @@ Error `No_space
-        | Error `Split | Error `Split_emergency ->
-          Logs.err (fun m -> m "couldn't write a block, because it got too big");
-          Lwt.return @@ Error `No_space
-        | Ok () -> Lwt.return @@ Ok ()
+        match Chamelon.Block.hardtail extant_block with
+        | Some next_blockpair -> write_inline next_blockpair t filename data entries
+        | None ->
+          let used_ids = Chamelon.Block.ids extant_block in
+          let next = match Chamelon.Block.IdSet.max_elt_opt used_ids with
+            | None -> 1
+            | Some n -> n + 1
+          in
+          let ctime = Chamelon.Entry.ctime next (Clock.now_d_ps ()) in
+          let file = Chamelon.File.write_inline filename next (Cstruct.of_string data) in
+          let commit = entries @ (ctime :: file) in
+          Logs.debug (fun m -> m "writing %d entries for inline file %s" (List.length file) filename);
+          let new_block = Chamelon.Block.add_commit extant_block commit in
+          Write.block_to_block_pair t new_block block_pair >>= function
+          | Error `No_space -> Lwt.return @@ Error `No_space
+          | Error `Split | Error `Split_emergency ->
+            Logs.err (fun m -> m "couldn't write a block, because it got too big");
+            Lwt.return @@ Error `No_space
+          | Ok () -> Lwt.return @@ Ok ()
 
     let set_in_directory block_pair t (filename : string) data =
       if String.length filename < 1 then Lwt.return @@ Error (`Value_expected Mirage_kv.Key.empty)
@@ -623,7 +634,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         Find.entries_of_name t block_pair filename >>= function
         | Error (`Not_found _ ) as e -> Lwt.return e
         | Ok [] | Error (`No_id _) -> begin
-            Logs.debug (fun m -> m "writing new file %s" filename);
+            Logs.debug (fun m -> m "writing new file %s, size %d" filename (String.length data));
             if (String.length data) > (t.block_size / 4) then
               write_in_ctz block_pair t filename data []
             else

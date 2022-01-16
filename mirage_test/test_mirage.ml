@@ -9,7 +9,7 @@ let fail_write = fail Chamelon.pp_write_error
 let testable_key = Alcotest.testable Mirage_kv.Key.pp Mirage_kv.Key.equal
 
 let program_block_size = 16
-let block_size = 4096
+let block_size = 512
 
 let format_and_mount block =
   Chamelon.format ~program_block_size ~block_size block >>= function
@@ -174,17 +174,18 @@ let test_no_space block _ () =
   let blorp = String.init block_size (fun _ -> 'a') in
   let k n = Mirage_kv.Key.v @@ string_of_int n in
   let blocks = 4096 * 10 / block_size in
+  let blocks_for_metadata = 20 in
   format_and_mount block >>= fun fs ->
-  let l = List.init (blocks - 2) (fun n -> n) in
-  Logs.debug (fun f -> f "writing %d blocks of nonsense..." (blocks - 2));
-  Lwt_list.iter_p (fun i ->
+  let l = List.init (blocks - blocks_for_metadata) (fun n -> n) in
+  Logs.debug (fun f -> f "writing %d blocks of nonsense..." (blocks - blocks_for_metadata));
+  Lwt_list.iter_s (fun i ->
     Chamelon.set fs (k i) blorp >>= function | Error e -> fail_write e | Ok () ->
-      Logs.debug (fun f -> f "wrote block number %d" i);
-    Lwt.return_unit
+      Logs.debug (fun f -> f "wrote a block's worth of 'a' to the key /%d" i);
+      Lwt.return_unit
   ) l >>= fun () ->
   Chamelon.list fs (Mirage_kv.Key.empty) >>= function | Error e -> fail_read e | Ok l ->
-  Alcotest.(check int) "all set items are present" (blocks - 2) @@ List.length l;
-  Chamelon.set fs (k (blocks - 1)) blorp >>= function
+  Alcotest.(check int) "all set items are present" (blocks - blocks_for_metadata) @@ List.length l;
+  Chamelon.set fs (k (blocks - blocks_for_metadata + 1)) blorp >>= function
   | Error `No_space -> Lwt.return_unit
   | Ok _ -> Alcotest.fail "setting last key succeeded when we expected No_space"
   | Error e -> fail_write e
@@ -210,8 +211,10 @@ let test_get_dictionary block _ () =
 
 let test_many_files block _ () =
   format_and_mount block >>= fun fs ->
+  let contents i = "number " ^ string_of_int i in
   let write i =
-    Chamelon.set fs (Mirage_kv.Key.v @@ string_of_int i) @@ "number " ^ (string_of_int i) >>= function
+    Logs.debug (fun f -> f "setting key %d" i);
+    Chamelon.set fs (Mirage_kv.Key.v @@ string_of_int i) (contents i) >>= function
     | Error `No_space -> Lwt.return false
     | Ok () -> Lwt.return true
     | Error e -> Alcotest.failf "unexpected error: %a" Chamelon.pp_write_error e
@@ -220,7 +223,7 @@ let test_many_files block _ () =
     Chamelon.get fs (Mirage_kv.Key.v @@ string_of_int i) >>= function
     | Error e -> Alcotest.failf "unexpected error fetching %d: %a" i Chamelon.pp_error e
     | Ok v ->
-      Alcotest.(check string) "file contents match what's expected" ("number " ^ (string_of_int i)) v;
+      Alcotest.(check string) "file contents match what's expected" (contents i) v;
       Lwt.return_unit
   in
   let rec write_until_full fs n =
