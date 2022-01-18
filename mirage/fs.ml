@@ -143,6 +143,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         Log.err (fun f -> f "error attempting to find unused blocks: %a" This_Block.pp_error e);
         Error `No_space
       | Ok used_blocks ->
+        Log.debug (fun f -> f "%d blocks used: %a" (List.length used_blocks) Fmt.(list ~sep:sp int64) used_blocks);
         Ok (unused ~bias t used_blocks)
 
     let get_block t =
@@ -700,7 +701,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         Lwt_mutex.unlock t.new_block_mutex;
         Lwt.fail_with "couldn't get list of used blocks"
       | Ok used_blocks ->
-        Logs.debug (fun f -> f "found %d used blocks on block-based key-value store" (List.length used_blocks));
+        Logs.debug (fun f -> f "found %d used blocks on block-based key-value store: %a" (List.length used_blocks) Fmt.(list ~sep:sp int64) used_blocks);
         let open Allocate in
         let lookahead = ref (`After, unused ~bias:`Before t used_blocks) in
         Lwt_mutex.unlock t.new_block_mutex;
