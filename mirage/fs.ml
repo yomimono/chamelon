@@ -61,7 +61,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     let rec get_ctz_pointers t l index pointer =
       match l, index with
       | Error _ as e, _ -> Lwt.return e
-      | Ok l, 0 -> Lwt.return @@ Ok l
+      | Ok l, 0 -> Lwt.return @@ Ok (pointer :: l)
       | Ok l, index ->
         let open Lwt_result.Infix in
         let data = Cstruct.create t.block_size in
@@ -75,6 +75,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       | Chamelon.Entry.Data (pointer, length) -> begin
           let file_size = Int32.to_int length in
           let index = Chamelon.File.last_block_index ~file_size ~block_size:t.block_size in
+          Log.debug (fun f -> f "last block index %d found starting at %ld (0x%lx)" index pointer pointer);
           get_ctz_pointers t (Ok []) index (Int64.of_int32 pointer)
         end
       | Chamelon.Entry.Metadata (a, b) ->
