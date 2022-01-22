@@ -1,3 +1,7 @@
+# v0.0.3 (2022-01-22)
+
+* follow hardtails when making new directories
+
 # v0.0.2 (2022-01-18)
 
 * used block detection now correctly finds the last block in a CTZ list
