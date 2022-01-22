@@ -102,8 +102,8 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
           | Ok list -> Lwt.return @@ Ok (a :: b :: list)
           | e -> Lwt.return e
 
-(* [last_block t pair] returns the last blockpair in the hardtail
- * linked list starting at [pair], which may well be [pair] itself *)
+    (* [last_block t pair] returns the last blockpair in the hardtail
+     * linked list starting at [pair], which may well be [pair] itself *)
     let rec last_block t pair =
       let open Lwt_result.Infix in
       Read.block_of_block_pair t pair >>= fun block ->
@@ -406,7 +406,14 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
      * because we want to make anything that's missing along the way,
      * rather than having to get an error, mkdir, get another error, mkdir... *)
     let follow_directory_pointers t block_pair = function
-      | [] -> Lwt.return (`Basename_on block_pair)
+      | [] -> begin
+        Traverse.last_block t block_pair >>= function
+        | Ok pair -> Lwt.return @@ `Basename_on pair
+        | Error _ ->
+          Log.err (fun f -> f "error finding last block from blockpair %Ld, %Ld"
+                      (fst block_pair) (snd block_pair));
+          Lwt.return @@ `Basename_on block_pair
+      end
       | key::remaining ->
         Find.entries_of_name t block_pair key >>= function
         | Error _ -> Lwt.return @@ `Not_found key
@@ -422,7 +429,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       follow_directory_pointers t rootpair [dirname] >>= function
       | `Continue (_path, next_blocks) -> Lwt.return @@ Ok next_blocks
       | `Basename_on next_blocks -> Lwt.return @@ Ok next_blocks
-      | _ ->
+      | `No_structs | `Not_found _ ->
         Lwt_mutex.with_lock t.new_block_mutex @@ fun () ->
         (* for any error case, try making the directory *)
         (* TODO: it's probably wise to put a delete entry first here if we got No_structs
@@ -430,20 +437,23 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         Allocate.get_block_pair t >>= function
         | Error _ -> Lwt.return @@ Error (`No_space)
         | Ok (dir_block_0, dir_block_1) ->
-          Read.block_of_block_pair t rootpair >>= function
+          Traverse.last_block t rootpair >>= function
           | Error _ -> Lwt.return @@ Error (`Not_found dirname)
-          | Ok root_block ->
-            let extant_ids = Chamelon.Block.ids root_block in
-            let dir_id = match Chamelon.Block.IdSet.max_elt_opt extant_ids with
-              | None -> 1
-              | Some s -> s + 1
-            in
-            let name = Chamelon.Dir.name dirname dir_id in
-            let dirstruct = Chamelon.Dir.mkdir ~to_pair:(dir_block_0, dir_block_1) dir_id in
-            let new_block = Chamelon.Block.add_commit root_block [name; dirstruct] in
-            Write.block_to_block_pair t new_block rootpair >>= function
-            | Error _ -> Lwt.return @@ Error `No_space
-            | Ok () -> Lwt.return @@ Ok (dir_block_0, dir_block_1)
+          | Ok last_pair_in_dir ->
+            Read.block_of_block_pair t last_pair_in_dir >>= function
+            | Error _ -> Lwt.return @@ Error (`Not_found dirname)
+            | Ok block_to_write ->
+              let extant_ids = Chamelon.Block.ids block_to_write in
+              let dir_id = match Chamelon.Block.IdSet.max_elt_opt extant_ids with
+                | None -> 1
+                | Some s -> s + 1
+              in
+              let name = Chamelon.Dir.name dirname dir_id in
+              let dirstruct = Chamelon.Dir.mkdir ~to_pair:(dir_block_0, dir_block_1) dir_id in
+              let new_block = Chamelon.Block.add_commit block_to_write [name; dirstruct] in
+              Write.block_to_block_pair t new_block last_pair_in_dir >>= function
+              | Error _ -> Lwt.return @@ Error `No_space
+              | Ok () -> Lwt.return @@ Ok (dir_block_0, dir_block_1)
     in
     match key with
     | [] -> Lwt.return @@ Ok rootpair
