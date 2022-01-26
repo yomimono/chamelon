@@ -1,5 +1,5 @@
-module Mirage_block = Block (* disambiguate this from Littlefs.Block *)
-module Littlefs = Kv.Make(Mirage_block)(Pclock)
+module Mirage_block = Block (* disambiguate this from Chamelon.Block *)
+module Chamelon = Kv.Make(Mirage_block)(Pclock)
 
 let image =
   let doc = "path to the filesystem image" in
@@ -20,21 +20,21 @@ let ls image block_size path =
   let open Lwt.Infix in
   Lwt_main.run @@ (
   Mirage_block.connect image >>= fun block ->
-  Littlefs.connect block ~program_block_size:16 ~block_size >>= function
+  Chamelon.connect block ~program_block_size:16 ~block_size >>= function
   | Error _ -> Stdlib.Format.eprintf "Error doing the initial filesystem ls\n%!"; exit 1
   | Ok t ->
-    Littlefs.list t (Mirage_kv.Key.v path) >>= function
+    Chamelon.list t (Mirage_kv.Key.v path) >>= function
     | Error (`Value_expected _key) -> Stdlib.Format.eprintf "%s isn't bound to a key\n%!" path; exit 1
     | Error (`Not_found key) -> begin
-      Littlefs.exists t (Mirage_kv.Key.v path) >>= function
+      Chamelon.exists t (Mirage_kv.Key.v path) >>= function
       | Ok None -> 
         Stdlib.Format.eprintf "key %a not found\n%!" Mirage_kv.Key.pp key; exit 1
       | Error _ ->
         Stdlib.Format.eprintf "error attempting to find %a\n%!" Mirage_kv.Key.pp key; exit 2
       | Ok (Some ty) ->
-        Littlefs.last_modified t (Mirage_kv.Key.v path) >>= function
+        Chamelon.last_modified t (Mirage_kv.Key.v path) >>= function
         | Error _ ->
-          Stdlib.Format.printf "%a : %s\n%!" pp_ty ty path;
+          Stdlib.Format.printf "%a : %s (no last modified info) \n%!" pp_ty ty path;
           Lwt.return_unit
         | Ok (d, ps) ->
           match Ptime.Span.of_d_ps (d, ps) with
