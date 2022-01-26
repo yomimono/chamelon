@@ -223,35 +223,31 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
 
     let rec block_to_block_pair t data (b1, b2) : (unit, write_result) result Lwt.t =
       let split () =
-        match Chamelon.Block.hardtail data with
-        | Some _ -> Logs.err (fun f -> f "tried to split the blockpair %Ld, %Ld (0x%Lx, 0x%Lx), which already has a hardtail - refusing to continue" b1 b2 b1 b2);
+        Allocate.get_block_pair t >>= function
+        | Error `No_space -> Lwt.return @@ Error `No_space
+        | Ok (new_block_1, new_block_2) when Int64.equal new_block_1 new_block_2 ->
+          (* if there is only 1 block remaining, we'll get the same one twice.
+           * That's not enough for the split. *)
           Lwt.return @@ Error `No_space
-        | None ->
-          Allocate.get_block_pair t >>= function
-          | Error `No_space -> Lwt.return @@ Error `No_space
-          | Ok (new_block_1, new_block_2) when Int64.equal new_block_1 new_block_2 ->
-            (* if there is only 1 block remaining, we'll get the same one twice.
-             * That's not enough for the split. *)
-            Lwt.return @@ Error `No_space
-          | Ok (new_block_1, new_block_2) -> begin
-              Logs.debug (fun m -> m "splitting block pair %Ld, %Ld to %Ld, %Ld"
-                             b1 b2 new_block_1 new_block_2);
-              let old_block, new_block = Chamelon.Block.split data (new_block_1, new_block_2) in
-              Logs.debug (fun m -> m "keeping %d entries in the old block, and putting %d in the new one"
-                             (List.length @@ Chamelon.Block.entries old_block)
-                             (List.length @@ Chamelon.Block.entries new_block));
-              (* be very explicit about writing the new block first, and only overwriting
-               * the old block pair if the new block pair write succeeded *)
-              block_to_block_pair t new_block (new_block_1, new_block_2) >>= function
-              | Error `Split | Error `Split_emergency | Error `No_space ->
-                Lwt.return @@ Error `No_space
-              | Ok () -> begin
-                  block_to_block_pair t old_block (b1, b2) >>= function
-                  | Error `Split | Error `Split_emergency | Error `No_space ->
-                    Lwt.return @@ Error `No_space
-                  | Ok () -> Lwt.return @@ Ok ()
-            end
-  end
+        | Ok (new_block_1, new_block_2) -> begin
+            Logs.debug (fun m -> m "splitting block pair %Ld, %Ld to %Ld, %Ld"
+                           b1 b2 new_block_1 new_block_2);
+            let old_block, new_block = Chamelon.Block.split data (new_block_1, new_block_2) in
+            Logs.debug (fun m -> m "keeping %d entries in the old block, and putting %d in the new one"
+                           (List.length @@ Chamelon.Block.entries old_block)
+                           (List.length @@ Chamelon.Block.entries new_block));
+            (* be very explicit about writing the new block first, and only overwriting
+             * the old block pair if the new block pair write succeeded *)
+            block_to_block_pair t new_block (new_block_1, new_block_2) >>= function
+            | Error `Split | Error `Split_emergency | Error `No_space ->
+              Lwt.return @@ Error `No_space
+            | Ok () -> begin
+                block_to_block_pair t old_block (b1, b2) >>= function
+                | Error `Split | Error `Split_emergency | Error `No_space ->
+                  Lwt.return @@ Error `No_space
+                | Ok () -> Lwt.return @@ Ok ()
+              end
+          end
       in
       Lwt_result.both
         (block_to_block_number t data b1)
@@ -261,43 +257,49 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       (* `Split happens when the write did succeed, but a split operation
        * needs to happen to provide future problems *)
       | Error `Split -> begin
-          Logs.debug (fun m -> m "split required for block write to %Ld, %Ld" b1 b2);
-          let compacted = Chamelon.Block.compact data in
-          Logs.debug (fun m -> m "need to split %d entries. compacted, we had %d"
-                         (List.length @@ Chamelon.Block.entries data)
-                         (List.length @@ Chamelon.Block.entries compacted)
-                     );
-          (* try a compaction first *)
-          if (List.length @@ Chamelon.Block.entries data) > (List.length @@ Chamelon.Block.entries compacted) then begin
-            Logs.debug (fun m -> m "beginning compaction...");
-            (* TODO compaction is the right point at which to attempt shedding the hardtail,
-             * if possible. *)
-            Lwt_result.both
-              (block_to_block_number t compacted b1)
-              (block_to_block_number t compacted b2) 
-            >>= function
-            | Ok _ ->
-              Logs.debug (fun f -> f "compaction of the data was sufficient; not splitting");
-              Lwt.return @@ Ok ()
-            | Error `Split -> begin
+          (* if we have a "split recommended" but we already did it, don't do it again *)
+          match Chamelon.Block.hardtail data with
+          | Some _ ->
+            Logs.debug (fun m -> m "split recommended, but there's already a hardtail on %a" Fmt.(pair int64 int64) (b1, b2));
+            Lwt.return @@ Ok ()
+          | _ ->
+            Logs.debug (fun m -> m "split required for block write to %Ld, %Ld" b1 b2);
+            let compacted = Chamelon.Block.compact data in
+            Logs.debug (fun m -> m "need to split %d entries. compacted, we had %d"
+                           (List.length @@ Chamelon.Block.entries data)
+                           (List.length @@ Chamelon.Block.entries compacted)
+                       );
+            (* try a compaction first *)
+            if (List.length @@ Chamelon.Block.entries data) > (List.length @@ Chamelon.Block.entries compacted) then begin
+              Logs.debug (fun m -> m "beginning compaction...");
+              (* TODO compaction is the right point at which to attempt shedding the hardtail,
+               * if possible. *)
+              Lwt_result.both
+                (block_to_block_number t compacted b1)
+                (block_to_block_number t compacted b2)
+              >>= function
+              | Ok _ ->
+                Logs.debug (fun f -> f "compaction of the data was sufficient; not splitting");
+                Lwt.return @@ Ok ()
+              | Error `Split -> begin
+                  Logs.debug (fun f -> f "compaction was insufficient; splitting");
+                  split () >>= function
+                  | Error _ -> Logs.warn (fun f -> f "split operation failed. disk is approaching full");
+                    Lwt.return @@ Ok ()
+                  | Ok () -> Lwt.return @@ Ok ()
+                end
+              | Error `Split_emergency ->
                 Logs.debug (fun f -> f "compaction was insufficient; splitting");
-                split () >>= function
-                | Error _ -> Logs.warn (fun f -> f "split operation failed. disk is approaching full");
-                  Lwt.return @@ Ok ()
-                | Ok () -> Lwt.return @@ Ok ()
-              end
-            | Error `Split_emergency ->
-              Logs.debug (fun f -> f "compaction was insufficient; splitting");
-              split ()
-            | Error `No_space -> Lwt.return @@ Error `No_space
-          end else begin
-            (* if we didn't drop any entries by compacting, don't bother and just split *)
-            Logs.debug (fun f -> f "not compacting. Will begin splitting");
-            split () >>= function
-            | Error _ -> Logs.warn (fun f -> f "split operation failed. disk is approaching full");
-              Lwt.return @@ Ok ()
-            | Ok () -> Lwt.return @@ Ok ()
-          end
+                split ()
+              | Error `No_space -> Lwt.return @@ Error `No_space
+            end else begin
+              (* if we didn't drop any entries by compacting, don't bother and just split *)
+              Logs.debug (fun f -> f "not compacting. Will begin splitting");
+              split () >>= function
+              | Error _ -> Logs.warn (fun f -> f "split operation failed. disk is approaching full");
+                Lwt.return @@ Ok ()
+              | Ok () -> Lwt.return @@ Ok ()
+            end
         end
       | Error `Split_emergency -> split ()
       | Error `No_space -> Lwt.return @@ Error `No_space
