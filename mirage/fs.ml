@@ -434,12 +434,18 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         (* for any error case, try making the directory *)
         (* TODO: it's probably wise to put a delete entry first here if we got No_structs
          * or another "something weird happened" case *)
+        (* first off, get a block pair for our new directory *)
         Allocate.get_block_pair t >>= function
         | Error _ -> Lwt.return @@ Error (`No_space)
         | Ok (dir_block_0, dir_block_1) ->
+          (* we want to write the entry for our new subdirectory to
+           * the *last* blockpair in the parent directory, so follow
+           * all the hardtails *)
           Traverse.last_block t rootpair >>= function
           | Error _ -> Lwt.return @@ Error (`Not_found dirname)
           | Ok last_pair_in_dir ->
+            Logs.debug (fun f -> f "found last pair %a in directory starting at 
+                           %a" Fmt.(pair int64 int64) last_pair_in_dir Fmt.(pair int64 int64) rootpair);
             Read.block_of_block_pair t last_pair_in_dir >>= function
             | Error _ -> Lwt.return @@ Error (`Not_found dirname)
             | Ok block_to_write ->
