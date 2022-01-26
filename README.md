@@ -24,7 +24,7 @@ Sometimes you just gotta store some stuff. You don't have to store much stuff an
 
 # can I use it?
 
-Sure, if you want. `littlefs` is released under the ISC license (like many MirageOS libraries and its core tooling). Prospective users are encouraged to remember that THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE.
+Sure, if you want. `chamelon` is released under the ISC license (like many MirageOS libraries and its core tooling). Prospective users are encouraged to remember that THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE.
 
 # why would I use it over other MirageOS filesystem implementations?
 
