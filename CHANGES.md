@@ -1,3 +1,8 @@
+# v0.0.4 (2022-01-26)
+
+* always start processing a directory at its first blockpair, not its last
+* add timestamp output to lfs_ls
+
 # v0.0.3 (2022-01-22)
 
 * follow hardtails when making new directories
