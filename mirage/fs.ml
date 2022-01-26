@@ -316,7 +316,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
                                                            | `Not_found of key]
                                                           ) result Lwt.t
 
-    val find_directory : t -> int64 * int64 -> string list ->
+    val find_first_blockpair_of_directory : t -> int64 * int64 -> string list ->
       [`Basename_on of int64 * int64 | `No_entry | `No_id of string | `No_structs] Lwt.t
 
   end = struct
@@ -373,25 +373,9 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       | [] -> Lwt.return @@ Ok []
       | last_block_with_entries::_ -> Lwt.return @@ Ok last_block_with_entries
 
-    let rec find_directory t block_pair key =
+    let rec find_first_blockpair_of_directory t block_pair key =
       match key with
-      | [] ->
-        Logs.debug (fun f -> f "descended through all the key segments on block pair %Ld, %Ld; checking for hardtail" (fst block_pair) (snd block_pair));
-        begin
-        (* if this block has a hardtail, follow it *)
-        Read.block_of_block_pair t block_pair >>= function
-        | Error _ ->
-          Logs.debug (fun f -> f "couldn't read a block where we think a directory is present. Assuming it doesn't have a hardtail");
-          Lwt.return (`Basename_on block_pair)
-        | Ok block ->
-          match Chamelon.Block.hardtail block with
-          | None ->
-            Logs.debug (fun f -> f "no hardtail on %Ld, %Ld - returning this blockpair" (fst block_pair) (snd block_pair));
-            Lwt.return (`Basename_on block_pair)
-          | Some next_blockpair ->
-            Logs.debug (fun f -> f "hardtail pointing to %Ld, %Ld for this directory - let's follow it" (fst next_blockpair) (snd next_blockpair));
-            find_directory t next_blockpair key
-      end
+      | [] -> Lwt.return @@ `Basename_on block_pair
       | key::remaining ->
         entries_of_name t block_pair key >>= function
         | Error _ -> Lwt.return @@ `No_id key
@@ -399,7 +383,8 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         | Ok l ->
           match List.filter_map Chamelon.Dir.of_entry l with
           | [] -> Lwt.return `No_structs
-          | next_blocks::_ -> find_directory t next_blocks remaining
+          | next_blocks::_ ->
+            find_first_blockpair_of_directory t next_blocks remaining
 
   end
 
@@ -541,7 +526,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       | basename::[] -> get_value t root_pair basename >>= map_errors
       | _ ->
         let dirname = Mirage_kv.Key.(parent key |> segments) in
-        Find.find_directory t root_pair dirname >>= function
+        Find.find_first_blockpair_of_directory t root_pair dirname >>= function
         | `Basename_on pair -> begin
             get_value t pair (Mirage_kv.Key.basename key) >>= map_errors
           end

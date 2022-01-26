@@ -43,7 +43,8 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
    * to set the data appropriately there. *)
   let set t key data : (unit, write_error) result Lwt.t =
     let dir = Mirage_kv.Key.parent key in
-    Fs.Find.find_directory t root_pair (Mirage_kv.Key.segments dir) >>= function
+    Fs.Find.find_first_blockpair_of_directory t root_pair
+      (Mirage_kv.Key.segments dir) >>= function
     | `Basename_on block_pair ->
       Logs.debug (fun m -> m "found basename of path %a on block pair %Ld, %Ld"
                      Mirage_kv.Key.pp key
@@ -90,7 +91,7 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     | segments ->
       (* descend into each segment until we run out, at which point we'll be in the
        * directory we want to list *)
-      Fs.Find.find_directory t root_pair segments >>= function
+      Fs.Find.find_first_blockpair_of_directory t root_pair segments >>= function
       | `No_id k -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v k))
       | `No_structs | `No_entry -> Lwt.return @@ Error (`Not_found key)
       | `Basename_on pair -> ls_in_dir pair
@@ -113,7 +114,7 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       Logs.warn (fun m -> m "refusing to delete the root directory");
       Lwt.return @@ Error (`Not_found key)
     end else
-      Fs.Find.find_directory t root_pair Mirage_kv.Key.(segments @@ parent key) >>= function
+      Fs.Find.find_first_blockpair_of_directory t root_pair Mirage_kv.Key.(segments @@ parent key) >>= function
       | `Basename_on pair -> Fs.Delete.delete_in_directory pair t (Mirage_kv.Key.basename key)
       | `No_entry | `No_id _ | `No_structs -> Lwt.return @@ Ok ()
 
@@ -121,7 +122,7 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     (* easy case: `key` represents a value, not a dictionary. Find the associated
      * metadata for the timestamp at which it was last modified and return it. *)
     let last_modified_value t key =
-      Fs.Find.find_directory t root_pair Mirage_kv.Key.(segments @@ parent key) >>= function
+      Fs.Find.find_first_blockpair_of_directory t root_pair Mirage_kv.Key.(segments @@ parent key) >>= function
       | `No_entry | `No_structs -> Lwt.return @@ Error (`Not_found key)
       | `No_id k -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v k))
       | `Basename_on block_pair ->
@@ -143,7 +144,7 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
               Lwt.return @@ Error (`Not_found key)
             | Some k -> Lwt.return @@ Ok k
     in
-    Fs.Find.find_directory t root_pair (Mirage_kv.Key.segments key) >>= function
+    Fs.Find.find_first_blockpair_of_directory t root_pair (Mirage_kv.Key.segments key) >>= function
     | `No_id _ | `No_entry | `No_structs -> last_modified_value t key
     | `Basename_on _block_pair ->
       let open Lwt_result.Infix in
