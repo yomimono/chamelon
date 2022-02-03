@@ -5,26 +5,28 @@ module Chamelon = Kv.Make(Block)(Pclock)
 open Bechamel
 open Toolkit
  
-let lwt_test =
-  Staged.stage @@ fun () ->
-  Lwt_main.run @@ Lwt.return_unit
-
-let block_connect_test =
-  Staged.stage @@ fun () ->
-  Lwt_main.run @@ (
-    let open Lwt.Infix in
-    Block.connect "bench chamelon" >>= fun _block ->
-    Lwt.return_unit
-  )
-
-let format_test =
-  Staged.stage @@ fun () ->
-  Lwt_main.run @@ (
-    let open Lwt.Infix in
-    Block.connect "bench chamelon" >>= fun block ->
-    Chamelon.format ~program_block_size:16 ~block_size:512 block >>= function
+let mount =
+  let open Lwt.Infix in
+  Block.connect "mount chamelon" >>= fun block ->
+  Chamelon.format ~program_block_size:16 ~block_size:512 block >>= function
+  | Error _ -> assert false
+  | Ok () ->
+    Chamelon.connect ~program_block_size:16 ~block_size:512 block >>= function
     | Error _ -> assert false
-    | Ok _fs -> Lwt.return_unit
+    | Ok fs -> Lwt.return fs
+
+let write n =
+  Staged.stage @@ fun () ->
+  Lwt_main.run @@ (
+    let open Lwt.Infix in
+    mount >>= fun kv ->
+    let rec write_one = function
+      | n when n < 0 -> Lwt.return_unit
+      | n -> Chamelon.set kv (Mirage_kv.Key.v (string_of_int n)) (string_of_int n) >>= function
+        | Error _ -> assert false
+        | Ok () -> write_one (n - 1)
+    in
+    write_one n
   )
 
 let benchmark () =
@@ -33,10 +35,9 @@ let benchmark () =
   in
   let cfg = Benchmark.cfg ~stabilize:true () in
   let instances = Instance.[monotonic_clock] in
-  let test0 = Test.make ~name:"lwt" lwt_test in
-  let test1 = Test.make ~name:"block connection" block_connect_test in 
-  let test2 = Test.make ~name:"format blocks" format_test in 
-  let test = Test.make_grouped ~name:"return unit" [test0; test1; test2] in
+  let args = List.init 5 (fun n -> n * 10) in
+  let test_writes = Test.make_indexed ~name:"root directory writes" ~args write in
+  let test = Test.make_grouped ~name:"baseline" [test_writes] in
   let raw_results = Benchmark.all cfg instances test in
   let results =
     List.map (fun instance -> Analyze.all ols instance raw_results) instances
