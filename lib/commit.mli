@@ -5,7 +5,7 @@ val seed_tag : t -> Cstruct.t
 val last_tag : t -> Cstruct.t
 val entries : t -> Entry.t list
 
-(** [of_entries xor_first_tag_with crc l] creates a new commit [t] representing the entries [l].  CRC entries are ommitted. *)
+(** [of_entries_filter_crc starting_xor_tag crc l] creates a new commit [t] representing the entries [l].  CRC entries are ommitted. *)
 val of_entries_filter_crc : Cstruct.t -> Optint.t -> Entry.t list -> t
 
 (** [commit_after last_commit entries] makes a new commit containing [entries]

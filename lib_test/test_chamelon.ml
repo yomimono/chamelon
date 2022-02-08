@@ -165,7 +165,7 @@ module Block = struct
     let commits = Chamelon.Block.commits block in
     let revision_count = Chamelon.Block.revision_count block in
     let new_rev_count = revision_count + 1 in
-    let revised_block = Chamelon.Block.of_commits ~revision_count:new_rev_count commits in
+    let revised_block = Chamelon.Block.of_commits ~hardtail:None ~revision_count:new_rev_count commits in
     let original_block_serialized, _ = Chamelon.Block.to_cstruct ~program_block_size ~block_size block in
     let incremented_block_serialized, _ = Chamelon.Block.to_cstruct ~program_block_size ~block_size revised_block in
     let orig_crc = Cstruct.(to_string @@ sub original_block_serialized 0x30 4) in
@@ -194,22 +194,11 @@ module Block = struct
 
     let old_block, new_block = Chamelon.Block.split pre_split new_block_address in
     Format.printf "entries in old block: %a\n" Fmt.(list pp_entry) (Chamelon.Block.entries old_block);
-    Alcotest.(check int) "old block should have its existing entries plus hardtail" 9 (List.length @@ Chamelon.Block.entries old_block);
+    Alcotest.(check int) "old block should have its existing entries" 8 (List.length @@ Chamelon.Block.entries old_block);
+    Alcotest.(check @@ option @@ pair int64 int64) "old block should now have a correct hardtail" (Some new_block_address) (Chamelon.Block.hardtail old_block);
     Format.printf "entries in new block: %a\n" Fmt.(list pp_entry) (Chamelon.Block.entries new_block);
     Alcotest.(check int) "new block should have its first CRC" 0 (List.length @@ Chamelon.Block.entries new_block);
-
-    let tail = List.filter (Chamelon.Entry.is_type Chamelon.Tag.LFS_TYPE_TAIL) (Chamelon.Block.entries old_block) in
-    match tail with
-    | [] -> Alcotest.fail "no tail in the old block"
-    | _::_::_ -> Alcotest.fail "more than 1 tail in the old block"
-    | hd::[] ->
-      Alcotest.(check bool) "old block should have hardtail"
-        true @@ Chamelon.Tag.is_hardtail @@ fst hd;
-      Alcotest.(check @@ option @@ pair int64 int64) "old block hardtail points to new block"
-        (Some new_block_address) @@ Chamelon.Dir.hard_tail_links hd;
-      match List.filter (Chamelon.Entry.is_type Chamelon.Tag.LFS_TYPE_TAIL) (Chamelon.Block.entries new_block) with
-      | _::_ -> Alcotest.fail "new block has a tail, and it shouldn't"
-      | _ -> ()
+    Alcotest.(check @@ option @@ pair int64 int64) "new block shouldn't have a hardtail" None (Chamelon.Block.hardtail new_block);
 
 end
 

@@ -11,6 +11,11 @@ let testable_key = Alcotest.testable Mirage_kv.Key.pp Mirage_kv.Key.equal
 let program_block_size = 16
 let block_size = 512
 
+let rec write_until_full ~write fs n =
+  write n >>= function
+  | false -> Lwt.return (n - 1)
+  | true -> write_until_full ~write fs (n+1)
+
 let format_and_mount block =
   Chamelon.format ~program_block_size ~block_size block >>= function
   | Error e -> fail_write e
@@ -226,16 +231,11 @@ let test_many_files block _ () =
       Alcotest.(check string) "file contents match what's expected" (contents i) v;
       Lwt.return_unit
   in
-  let rec write_until_full fs n =
-    write n >>= function
-    | false -> Lwt.return (n - 1)
-    | true -> write_until_full fs (n+1)
-  in
   let rec read_all fs max n =
     readback n >>= fun () ->
     if (n + 1) > max then Lwt.return_unit else read_all fs max (n+1)
   in
-  write_until_full fs 0 >>= fun last_written ->
+  write_until_full ~write fs 0 >>= fun last_written ->
   Logs.debug (fun f -> f "last written file was %d" last_written);
   Chamelon.list fs Mirage_kv.Key.empty >>= function | Error e -> fail_read e | Ok l ->
   let names = List.map (fun (n, _) -> n) l |> List.fast_sort (fun a b -> Int.compare (int_of_string a) (int_of_string b)) in
@@ -243,6 +243,39 @@ let test_many_files block _ () =
   Alcotest.(check int) "ls contains all written files" (last_written + 1) (List.length l);
   read_all fs last_written 0 >>= fun () ->
   Lwt.return_unit
+
+let test_recursive_rm block _ () =
+  let common_key = Mirage_kv.Key.v "state" in
+  format_and_mount block >>= fun fs ->
+  let write i =
+    Chamelon.set fs (Mirage_kv.Key.((v @@ string_of_int i) // common_key)) "i'm a key :D" >>= function
+    | Error `No_space -> Lwt.return false
+    | Ok () -> Lwt.return true
+    | Error e -> Alcotest.failf "unexpected error: %a" Chamelon.pp_write_error e
+  in
+  let isnt_there key =
+    Chamelon.exists fs key >>= function
+    | Ok (Some _) -> Alcotest.failf "exists said %a existed after it was deleted" Mirage_kv.Key.pp key
+    | Ok None -> Lwt.return_unit
+    | Error (`Not_found k) when Mirage_kv.Key.(equal k @@ parent key) -> Lwt.return_unit
+    | Error e -> Alcotest.failf "unexpected error: %a" Chamelon.pp_error e
+  in
+  write_until_full ~write fs 0 >>= fun last_written ->
+  Alcotest.(check bool) "wrote more than one entry" true (last_written > 0);
+  Logs.debug (fun f -> f "wrote %d entries" last_written);
+  let dir_key = Mirage_kv.Key.(v @@ string_of_int last_written) in
+  Chamelon.list fs Mirage_kv.Key.empty >>= function | Error e -> fail_read e | Ok l ->
+  let items = List.length l in
+  Chamelon.remove fs dir_key >>= function
+  | Error e -> fail_write e
+  | Ok () ->
+    Logs.debug (fun f -> f "deleting %a reported success" Mirage_kv.Key.pp dir_key);
+    isnt_there dir_key >>= fun () ->
+    isnt_there Mirage_kv.Key.(dir_key // common_key) >>= fun () ->
+    (* we should have one fewer item in the list of / *)
+    Chamelon.list fs Mirage_kv.Key.empty >>= function | Error e -> fail_read e | Ok l ->
+    Alcotest.(check int) "removing an item means it doesn't show up in list" items ((+) 1 @@ List.length l);
+    Lwt.return_unit
 
 let test img =
   Logs.set_level (Some Logs.Debug);
@@ -284,6 +317,10 @@ let test img =
       ("split",
        [
          test_case "we can write files until we run out of space" `Quick (test_many_files block);
+       ]);
+      ("rm",
+       [
+         test_case "removals are recursive" `Quick (test_recursive_rm block);
        ]);
     ]
   )

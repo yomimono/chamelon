@@ -1,10 +1,13 @@
 (* a block is, physically, a revision count and series of commits *)
+(* it can also have a hardtail, pointing at another blockpair where
+ * the directory continues *)
 
 module IdSet = Set.Make(Int)
 
 type t = {
   revision_count : int;
   commits : Commit.t list;
+  hardtail : Entry.t option;
 }
 
 type write_result = [ `Ok | `Split | `Split_emergency ]
@@ -30,7 +33,7 @@ let linked_blocks t =
    * deleted entries *)
   List.filter_map Entry.links @@ Entry.compact @@ entries t
 
-let of_commits ~revision_count commits =
+let of_commits ~hardtail ~revision_count commits =
   (* we have to redo the crc for the first commit when the revision count changes :( *)
   (* we don't have to recalculate CRCs for any subsequent commits because the only data
    * dependency on a previous commit for later commits in a block
@@ -39,41 +42,35 @@ let of_commits ~revision_count commits =
    * and changes to the revision count are changes to a fixed-width field that
    * doesn't affect the chunk. *)
   match commits with
-  | [] -> { commits; revision_count; }
+  | [] -> { commits; revision_count; hardtail}
   | commit :: l ->
     let crc = crc_of_revision_count revision_count in
     let new_commit = Commit.(of_entries_filter_crc (seed_tag commit) crc (entries commit)) in
-    {commits = (new_commit :: l); revision_count}
+    {commits = (new_commit :: l); revision_count; hardtail}
 
 let of_entries ~revision_count entries =
   let crc = crc_of_revision_count revision_count in
   let commit = Commit.of_entries_filter_crc (Cstruct.of_string "\xff\xff\xff\xff") crc entries in
-  of_commits ~revision_count (commit::[])
+  of_commits ~hardtail:None ~revision_count (commit::[])
 
 let compact t =
   let revision_count = t.revision_count + 1 in
   let entries = List.map Commit.entries t.commits |> List.flatten |> Entry.compact in
   of_entries ~revision_count entries
 
-let add_commit {revision_count; commits} entries =
+let add_commit {revision_count; commits; hardtail} entries =
   let revision_count = revision_count + 1 in
   match commits with
   | [] -> of_entries ~revision_count entries
   | l ->
     let last = List.(nth l ((length l) - 1)) in
     let commit = Commit.commit_after last entries in
-    of_commits ~revision_count (l @ [commit])
+    of_commits ~hardtail ~revision_count (l @ [commit])
 
 let hardtail t =
-  match List.filter_map (fun (tag, data) ->
-      match Tag.is_hardtail tag with
-      | false -> None
-      | true -> match Entry.links (tag, data) with
-        | Some Entry.Metadata block_pair -> Some block_pair
-        | _ -> None
-    ) (entries t) with
-  | [] -> None
-  | block_pair::_ -> Some block_pair
+  match t.hardtail with
+  | None -> None
+  | Some e -> Dir.hard_tail_links e
 
 (* return variants `Split and `Ok are successful; `Split warns that the block
  * took up more than 1/2 of the block size and the metadata block
@@ -83,15 +80,23 @@ let hardtail t =
  * and the data *cannot* be written. A partial serialization remains in [cs] in
  * this case. *)
 let into_cstruct ~program_block_size cs block =
-  match block.commits with
-  | [] -> (* this is a somewhat degenerate case, but
-             not pathological enough to throw an error IMO.
-             Since there's nothing to write, write nothing *)
-    `Ok
-  | _ ->
+  (* the hardtail is handled specially since its presence alters our next_commit_valid
+   * and all entries need to be before it. *)
+  let write_hardtail ~after ~starting_xor_tag ~starting_offset t cs =
+    match t.hardtail with
+    | None -> (0, starting_xor_tag)
+    | Some entry ->
+      let commit = Commit.commit_after after [entry] in
+      Commit.into_cstruct ~starting_offset ~program_block_size ~starting_xor_tag
+        ~next_commit_valid:false cs commit
+  in
+  (* if there's nothing to write, just return *)
+  match block.commits, block.hardtail with
+  | [], None -> `Ok
+  | _, _ ->
     Cstruct.LE.set_uint32 cs 0 (Int32.of_int block.revision_count);
     try
-      let after_last_crc, _last_tag, _ =
+      let after_last_crc, starting_xor_tag, starting_offset =
         List.fold_left
           (fun (pointer, prev_commit_last_tag, starting_offset) commit ->
              (* it may be a bit surprising that we don't use `last_tag` from `commit` as the previous tag here.
@@ -106,7 +111,11 @@ let into_cstruct ~program_block_size cs block =
              (pointer + bytes_written, raw_crc_tag, 0)
           ) (4, (Cstruct.of_string "\xff\xff\xff\xff"), 4) block.commits
       in
-      if after_last_crc > ((Cstruct.length cs) / 2) then `Split else `Ok
+      let hardtail_region = Cstruct.shift cs after_last_crc in
+      let hardtail_bytes, _raw_crc =
+        write_hardtail ~after:List.(hd @@ rev block.commits) ~starting_xor_tag ~starting_offset block hardtail_region
+      in
+      if (after_last_crc + hardtail_bytes) > ((Cstruct.length cs) / 2) then `Split else `Ok
     with Invalid_argument _ -> `Split_emergency
 
 let ids t =
@@ -116,7 +125,9 @@ let ids t =
   IdSet.of_list block_ids
 
 let split block next_blockpair =
-  (add_commit block [Dir.hard_tail_at next_blockpair], of_entries ~revision_count:1 [])
+  let entry = Dir.hard_tail_at next_blockpair in
+  {block with hardtail = Some entry},
+  of_entries ~revision_count:1 []
 
 let to_cstruct ~program_block_size ~block_size block =
   let cs = Cstruct.create block_size in
@@ -136,5 +147,8 @@ let of_cstruct ~program_block_size cs =
         ~starting_offset:4 ~starting_xor_tag ~program_block_size
         commit_list
     in
-    Ok {revision_count; commits}
+    (* TODO: we need to also remove the hardtail entry from its commit, should we find one *)
+    let entries = List.(flatten @@ map Commit.entries commits) in
+    let hardtail = List.find_opt (fun (t, _d) -> Tag.is_hardtail t) entries in
+    Ok {revision_count; commits; hardtail }
   end

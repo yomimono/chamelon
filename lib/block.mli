@@ -12,8 +12,8 @@ val split : t -> int64 * int64 -> t * t
 val linked_blocks : t -> Entry.link list
 val hardtail : t -> (int64 * int64) option
 
-(* given a list of commits, assemble a block *)
-val of_commits : revision_count:int -> Commit.t list -> t
+(* given a list of commits and a hardtail entry, assemble a block *)
+val of_commits : hardtail:Entry.t option -> revision_count:int -> Commit.t list -> t
 
 (* start a new block with one commit containing these entries *)
 val of_entries : revision_count:int -> Entry.t list -> t

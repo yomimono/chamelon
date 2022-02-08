@@ -83,7 +83,7 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         (* we have to compact first, because IDs are unique per *block*, not directory.
          * If we compact after flattening the list, we might wrongly conflate multiple
          * entries in the same directory, but on different blocks. *)
-        let compacted = List.map Chamelon.Entry.compact entries_by_block in
+        let compacted = List.map (fun (_block, entries) -> Chamelon.Entry.compact entries) entries_by_block in
         Lwt.return @@ Ok (translate @@ List.flatten compacted)
     in
     match (Mirage_kv.Key.segments key) with
@@ -129,6 +129,8 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         Fs.Find.entries_of_name t block_pair @@ Mirage_kv.Key.basename key >>= function
         | Error (`No_id k) | Error (`Not_found k) -> Lwt.return @@ Error (`Not_found k)
         | Ok l ->
+          (* we only care about the last block with entries, and don't care about its block number *)
+          let l = snd @@ List.(hd @@ rev l) in
           match List.find_opt (fun (tag, _data) ->
               Chamelon.Tag.(fst @@ tag.type3) = LFS_TYPE_USERATTR &&
               Chamelon.Tag.(snd @@ tag.type3) = 0x74

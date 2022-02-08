@@ -16,6 +16,8 @@ type abstract_type =
 type chunk = int
 type type3 = abstract_type * chunk
 
+let hardtail = (LFS_TYPE_TAIL, 0x01)
+
 type t = {
   valid : bool;
   type3 : (abstract_type * Cstruct.uint8);
