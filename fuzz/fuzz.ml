@@ -1,5 +1,5 @@
+open Lwt.Infix
 module Block = Mirage_block_combinators.Mem
-
 module Chamelon = Kv.Make(Block)(Pclock)
 
 (* we'll assume 512-sized blocks, since that's both
@@ -25,7 +25,6 @@ let key = Crowbar.(map [bytes] Mirage_kv.Key.v)
 let kv = Crowbar.(pair key bytes)
 
 let init blocks to_write =
-  let open Lwt.Infix in
   Lwt_main.run (
     Block.connect "fuzz chamelon" >>= fun block ->
     (* on start, fill the in-memory block device *)
@@ -47,7 +46,25 @@ let init blocks to_write =
       ) to_write
   )
 
+let format_clears blocks =
+  Lwt_main.run @@ (
+    Block.connect "fuzz chamelon" >>= fun block ->
+    (* on start, fill the in-memory block device *)
+    write_fs block blocks >>= fun () ->
+    Chamelon.format ~program_block_size:16 ~block_size:512 block >>= function
+    | Error _ -> Crowbar.bad_test ()
+    | Ok () ->
+      Chamelon.connect block ~program_block_size:16 ~block_size:512 >>= function
+      | Error _ -> Crowbar.bad_test ()
+      | Ok fs ->
+        Chamelon.list fs Mirage_kv.Key.empty >>= function
+        | Error e -> Crowbar.failf "failure listing freshly formatted and mounted filesystem: %a" Chamelon.pp_error e
+        | Ok l -> Crowbar.check_eq 0 (List.length l);
+          Lwt.return_unit
+  )
+
 let () =
   let open Crowbar in
   Logs.set_level (Some Logs.Debug);
-  add_test ~name:"initialize" [list block_gen; list kv] init
+  add_test ~name:"initialize" [list block_gen; list kv] init;
+  add_test ~name:"format" [list block_gen] format_clears
