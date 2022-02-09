@@ -451,28 +451,36 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         Allocate.get_block_pair t >>= function
         | Error _ -> Lwt.return @@ Error (`No_space)
         | Ok (dir_block_0, dir_block_1) ->
-          (* we want to write the entry for our new subdirectory to
-           * the *last* blockpair in the parent directory, so follow
-           * all the hardtails *)
-          Traverse.last_block t rootpair >>= function
-          | Error _ -> Lwt.return @@ Error (`Not_found dirname)
-          | Ok last_pair_in_dir ->
-            Logs.debug (fun f -> f "found last pair %a in directory starting at 
-                           %a" Fmt.(pair int64 int64) last_pair_in_dir Fmt.(pair int64 int64) rootpair);
-            Read.block_of_block_pair t last_pair_in_dir >>= function
+          (* first, write empty commits to the new blockpair; if that fails,
+           * we want to bail before making any more structure *)
+          Write.block_to_block_pair t (Chamelon.Block.of_entries ~revision_count:1 []) (dir_block_0, dir_block_1) >>= function
+          | Error _ ->
+            Logs.err (fun f -> f "error initializing a directory at a fresh block pair (%Ld, %Ld)"
+                         dir_block_0 dir_block_1);
+            Lwt.return @@ Error `No_space
+          | Ok () ->
+            (* we want to write the entry for our new subdirectory to
+             * the *last* blockpair in the parent directory, so follow
+             * all the hardtails *)
+            Traverse.last_block t rootpair >>= function
             | Error _ -> Lwt.return @@ Error (`Not_found dirname)
-            | Ok block_to_write ->
-              let extant_ids = Chamelon.Block.ids block_to_write in
-              let dir_id = match Chamelon.Block.IdSet.max_elt_opt extant_ids with
-                | None -> 1
-                | Some s -> s + 1
-              in
-              let name = Chamelon.Dir.name dirname dir_id in
-              let dirstruct = Chamelon.Dir.mkdir ~to_pair:(dir_block_0, dir_block_1) dir_id in
-              let new_block = Chamelon.Block.add_commit block_to_write [name; dirstruct] in
-              Write.block_to_block_pair t new_block last_pair_in_dir >>= function
-              | Error _ -> Lwt.return @@ Error `No_space
-              | Ok () -> Lwt.return @@ Ok (dir_block_0, dir_block_1)
+            | Ok last_pair_in_dir ->
+              Logs.debug (fun f -> f "found last pair %a in directory starting at 
+                           %a" Fmt.(pair int64 int64) last_pair_in_dir Fmt.(pair int64 int64) rootpair);
+              Read.block_of_block_pair t last_pair_in_dir >>= function
+              | Error _ -> Lwt.return @@ Error (`Not_found dirname)
+              | Ok block_to_write ->
+                let extant_ids = Chamelon.Block.ids block_to_write in
+                let dir_id = match Chamelon.Block.IdSet.max_elt_opt extant_ids with
+                  | None -> 1
+                  | Some s -> s + 1
+                in
+                let name = Chamelon.Dir.name dirname dir_id in
+                let dirstruct = Chamelon.Dir.mkdir ~to_pair:(dir_block_0, dir_block_1) dir_id in
+                let new_block = Chamelon.Block.add_commit block_to_write [name; dirstruct] in
+                Write.block_to_block_pair t new_block last_pair_in_dir >>= function
+                | Error _ -> Lwt.return @@ Error `No_space
+                | Ok () -> Lwt.return @@ Ok (dir_block_0, dir_block_1)
     in
     match key with
     | [] -> Lwt.return @@ Ok rootpair
