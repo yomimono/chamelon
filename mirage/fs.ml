@@ -81,11 +81,12 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       | Chamelon.Entry.Metadata (a, b) ->
         Read.block_of_block_pair t (a, b) >>= function
         | Error (`Block e) ->
-          Logs.err (fun m -> m "error reading block pair %Ld, %Ld (0x%Lx, 0x%Lx): %a" a b a b This_Block.pp_error e);
-          Lwt.return @@ Error `Disconnected
+          Logs.err (fun m -> m "error reading block pair %Ld, %Ld (0x%Lx, 0x%Lx): %a"
+                       a b a b This_Block.pp_error e);
+          Lwt.return @@ Error e
         | Error (`Chamelon `Corrupt) ->
           Logs.err (fun f -> f "filesystem seems corrupted; we couldn't make sense of a block pair");
-          Lwt.return @@ Error `Unimplemented
+          Lwt.return @@ Error `Disconnected
         | Ok block ->
           let links = Chamelon.Block.linked_blocks block in
           Lwt_list.fold_left_s (fun so_far link ->
@@ -95,7 +96,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
                 follow_links t link >>= function
                 | Error e ->
                   Logs.err (fun f -> f "filesystem seems corrupted; we couldn't get a list of unused blocks: %a" This_Block.pp_error e);
-                  Lwt.return @@ Error `Unimplemented
+                  Lwt.return @@ Error `Disconnected
                 | Ok new_links -> Lwt.return @@ Ok (new_links @ l)
             ) (Ok []) links
           >>= function

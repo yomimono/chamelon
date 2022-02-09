@@ -30,7 +30,7 @@ depends: [
   "fpath"
   "logs"
   "lwt"
-  "mirage-block"
+  "mirage-block" {>= "3.0.0"}
   "mirage-clock"
   "mirage-kv"
   "mirage-logs"
