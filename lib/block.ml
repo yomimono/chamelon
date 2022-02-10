@@ -87,13 +87,13 @@ let into_cstruct ~program_block_size cs block =
     | None -> (0, starting_xor_tag)
     | Some entry ->
       let commit = Commit.commit_after after [entry] in
-      Commit.into_cstruct ~starting_offset ~program_block_size ~starting_xor_tag
+      Commit.into_cstruct ~filter_hardtail:false ~starting_offset ~program_block_size ~starting_xor_tag
         ~next_commit_valid:false cs commit
   in
   (* if there's nothing to write, just return *)
   match block.commits, block.hardtail with
   | [], None -> `Ok
-  | _, _ ->
+  | commits, _ ->
     Cstruct.LE.set_uint32 cs 0 (Int32.of_int block.revision_count);
     try
       let after_last_crc, starting_xor_tag, starting_offset =
@@ -103,7 +103,7 @@ let into_cstruct ~program_block_size cs block =
               * as serialized, the last tag in the commit is the tag for the CRC, so we need to XOR with that
               * rather than the last non-CRC tag, which is what's represented in `commit.last_tag`. *)
              let this_commit_region = Cstruct.shift cs pointer in
-             let (bytes_written, raw_crc_tag) = Commit.into_cstruct ~next_commit_valid:true
+             let (bytes_written, raw_crc_tag) = Commit.into_cstruct ~filter_hardtail:true ~next_commit_valid:true
                  ~program_block_size ~starting_xor_tag:prev_commit_last_tag ~starting_offset
                  this_commit_region commit in
              (* only the first commit has nonzero offset; all subsequent ones have an offset of 0,
@@ -113,10 +113,11 @@ let into_cstruct ~program_block_size cs block =
       in
       let hardtail_region = Cstruct.shift cs after_last_crc in
       let hardtail_bytes, _raw_crc =
-        write_hardtail ~after:List.(hd @@ rev block.commits) ~starting_xor_tag ~starting_offset block hardtail_region
+        write_hardtail ~after:List.(hd @@ rev commits) ~starting_xor_tag ~starting_offset block hardtail_region
       in
       if (after_last_crc + hardtail_bytes) > ((Cstruct.length cs) / 2) then `Split else `Ok
-    with Invalid_argument _ -> `Split_emergency
+    with
+    | Invalid_argument _ -> `Split_emergency
 
 let ids t =
   let id_of_entry e = (fst e).Tag.id in
@@ -147,8 +148,7 @@ let of_cstruct ~program_block_size cs =
         ~starting_offset:4 ~starting_xor_tag ~program_block_size
         commit_list
     in
-    (* TODO: we need to also remove the hardtail entry from its commit, should we find one *)
     let entries = List.(flatten @@ map Commit.entries commits) in
     let hardtail = List.find_opt (fun (t, _d) -> Tag.is_hardtail t) entries in
-    Ok {revision_count; commits; hardtail }
+    Ok {revision_count; commits; hardtail}
   end

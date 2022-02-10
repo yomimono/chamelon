@@ -61,15 +61,21 @@ let of_entries_filter_crc starting_xor_tag preceding_crc entries =
  * not provided, because the caller is expected to be writing into
  * a larger buffer as part of a block write of a set of commits.
  * *)
-let into_cstruct ~starting_offset ~program_block_size ~starting_xor_tag ~next_commit_valid cs t =
-  let entries_length = Entry.lenv t.entries in
+let into_cstruct ~filter_hardtail ~starting_offset ~program_block_size ~starting_xor_tag ~next_commit_valid cs t =
+  (* we would like to be sure that we don't write any hardtail entries,
+   * since the block level will be handling that *)
+  let entries =
+    if filter_hardtail then List.filter (fun (t, _d) -> not @@ Tag.is_hardtail t) t.entries
+    else t.entries
+  in
+  let entries_length = Entry.lenv_less_hardtail entries in
   let unpadded_length = starting_offset + entries_length + Tag.size + sizeof_crc in
   let overhang = unpadded_length mod program_block_size in
   let padding = (program_block_size - overhang) mod program_block_size in
   
   (* for a lot of future calculation, we'll need to know where writing the (non-CRC) entries
    * into the buffer completed. *)
-  let crc_tag_pointer, last_tag = Entry.into_cstructv ~starting_xor_tag cs t.entries in
+  let crc_tag_pointer, last_tag = Entry.into_cstructv ~starting_xor_tag cs entries in
   let crc_pointer = crc_tag_pointer + Tag.size in
   let crc_chunk = if next_commit_valid then 0x00 else 0x01 in
   let crc_tag = Tag.({

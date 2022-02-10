@@ -198,7 +198,22 @@ module Block = struct
     Alcotest.(check @@ option @@ pair int64 int64) "old block should now have a correct hardtail" (Some new_block_address) (Chamelon.Block.hardtail old_block);
     Format.printf "entries in new block: %a\n" Fmt.(list pp_entry) (Chamelon.Block.entries new_block);
     Alcotest.(check int) "new block should have its first CRC" 0 (List.length @@ Chamelon.Block.entries new_block);
-    Alcotest.(check @@ option @@ pair int64 int64) "new block shouldn't have a hardtail" None (Chamelon.Block.hardtail new_block);
+    Alcotest.(check @@ option @@ pair int64 int64) "new block shouldn't have a hardtail" None (Chamelon.Block.hardtail new_block)
+
+  let roundtrip_hardtail () =
+    let pre_split = example_block in
+    let new_block_address = (4L, 5L) in
+    let old_block, _new_block = Chamelon.Block.split pre_split new_block_address in
+    let cs = Cstruct.create block_size in
+    match Chamelon.Block.into_cstruct ~program_block_size cs old_block with
+    | `Split -> Alcotest.fail "it's not split time now"
+    | `Split_emergency -> Alcotest.fail "it's not emergency split time now"
+    | `Ok ->
+      match Chamelon.Block.of_cstruct ~program_block_size cs with
+      | Error _ -> Alcotest.fail "error rereading the block we wrote"
+      | Ok reread_old_block ->
+        Alcotest.(check @@ option @@ pair int64 int64) "old block should have a correct hardtail when we reread it" (Some new_block_address) (Chamelon.Block.hardtail reread_old_block)
+
 
 end
 
@@ -245,6 +260,7 @@ let () =
           tc "writing a block with different revision count gives different CRC" `Quick Block.revision_count_matters;
           tc "compacting a block with no deletes has no effect on contents" `Quick Block.compact_not_lossy;
           tc "splitting a block gets the hardtail right" `Quick Block.split_splits;
+          tc "roundtrip hardtail conservation" `Quick Block.roundtrip_hardtail;
       ]);
     ( "entry", [
           tc "entry roundtrip" `Quick Entry.roundtrip;

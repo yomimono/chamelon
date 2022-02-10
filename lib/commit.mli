@@ -14,5 +14,6 @@ val of_entries_filter_crc : Cstruct.t -> Optint.t -> Entry.t list -> t
 val commit_after : t -> Entry.t list -> t
 
 (* serialization and deserialization *)
-val into_cstruct : starting_offset:int -> program_block_size:int -> starting_xor_tag:Cstruct.t -> next_commit_valid:bool -> Cstruct.t -> t -> (int * Cstruct.t)
+
+val into_cstruct : filter_hardtail:bool -> starting_offset:int -> program_block_size:int -> starting_xor_tag:Cstruct.t -> next_commit_valid:bool -> Cstruct.t -> t -> (int * Cstruct.t)
 val of_cstructv : starting_offset:int -> program_block_size:int -> starting_xor_tag:Cstruct.t -> preceding_crc:Optint.t -> Cstruct.t -> t list

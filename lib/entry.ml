@@ -77,8 +77,16 @@ let compact entries =
       | _ -> e :: new_list
     ) [] entries |> List.rev
 
-let lenv l =
-  List.fold_left (fun sum t -> sum + sizeof t) 0 l
+let lenv_with_hardtail l =
+  List.fold_left (fun sum t ->
+      sum + sizeof t
+      ) 0 l
+
+let lenv_less_hardtail l =
+  List.fold_left (fun sum t ->
+      if (not @@ Tag.is_hardtail @@ fst t) then
+      sum + sizeof t
+      else sum) 0 l
 
 let into_cstructv ~starting_xor_tag cs l =
   (* currently this takes a `t list`, and therefore is pretty straightforward.
@@ -90,7 +98,9 @@ let into_cstructv ~starting_xor_tag cs l =
     ) (0, starting_xor_tag) l
 
 let to_cstructv ~starting_xor_tag l =
-  let cs = Cstruct.create @@ lenv l in
+  (* TODO: this is also not quite right; in cases where we filter out a
+   * hardtail, we'll have a gap at the end of the cstruct *)
+  let cs = Cstruct.create @@ lenv_with_hardtail l in
   let (_, last_tag) = into_cstructv ~starting_xor_tag cs l in
   last_tag, cs
 
