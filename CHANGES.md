@@ -1,3 +1,8 @@
+# v0.0.5 (2022-02-09)
+
+* fix several problems with `remove`
+* fix problem where making new directories could get exciting unexpected contents
+
 # v0.0.4 (2022-01-26)
 
 * always start processing a directory at its first blockpair, not its last
