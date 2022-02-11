@@ -1,19 +1,12 @@
 opam-version: "2.0"
-name: "chamelon"
+name: "chamelon-unix"
 maintainer: [ "yomimono <maintenance@identity-function.com>" ]
 authors: [ "yomimono <maintenance@identity-function.com>" ]
 homepage: "https://github.com/yomimono/chamelon"
 bug-reports: "https://github.com/yomimono/chamelon/issues"
 dev-repo: "git+https://github.com/yomimono/chamelon.git"
 license: "ISC"
-synopsis: "Subset of littlefs filesystem fulfilling MirageOS KV"
-description: """
-Chamelon implements a subset of the littlefs filesystem,
-which was originally designed for microcontroller use.  It exposes
-an interface matching the Mirage_kv.RW module type and operates
-on top of a block device matching Mirage_block.S .
-
-It is extremely not POSIX."""
+synopsis: "Command-line Unix utilities for chamelon filesystems"
 
 build: [
  [ "dune" "build" "-p" name "-j" jobs ]
@@ -23,17 +16,17 @@ build: [
 depends: [
   "ocaml" {>= "4.06.0"}
   "dune" {>= "2.0.0"}
-  "alcotest" {with-test}
-  "mirage-block-unix" {with-test}
-  "checkseum"
-  "digestif"
+  "bos"
+  "chamelon"
+  "cmdliner"
   "fmt"
   "fpath"
   "logs"
   "lwt"
   "mirage-block" {>= "3.0.0"}
+  "mirage-block-unix"
   "mirage-clock"
+  "mirage-clock-unix"
   "mirage-kv"
   "mirage-logs"
-  "optint"
 ]

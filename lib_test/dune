@@ -1,4 +1,5 @@
 (executable
+  (package chamelon)
   (public_name test_chamelon)
   (libraries alcotest cstruct chamelon)
 )
