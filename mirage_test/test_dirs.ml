@@ -56,7 +56,7 @@ let write fs n =
 
 let delete_dir fs n =
   let s = string_of_int n in
-  let key = Mirage_kv.Key.(v s / s) in
+  let key = Mirage_kv.Key.(v s) in
   Chamelon.remove fs key >|= Result.get_ok
 
 let delete fs n =
