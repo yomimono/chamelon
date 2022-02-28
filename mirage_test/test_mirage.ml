@@ -189,11 +189,12 @@ let test_no_space block _ () =
       Lwt.return_unit
   ) l >>= fun () ->
   Chamelon.list fs (Mirage_kv.Key.empty) >>= function | Error e -> fail_read e | Ok l ->
+  Logs.debug (fun f -> f "%d items in the list for /" (List.length l));
   Alcotest.(check int) "all set items are present" (blocks - blocks_for_metadata) @@ List.length l;
   Chamelon.set fs (k (blocks - blocks_for_metadata + 1)) blorp >>= function
   | Error `No_space -> Lwt.return_unit
   | Ok _ -> Alcotest.fail "setting last key succeeded when we expected No_space"
-  | Error e -> fail_write e
+  | Error e -> Alcotest.failf "setting last key failed with %a instead of No_space" Chamelon.pp_write_error e
 
 let test_nonexistent_value block _ () =
   format_and_mount block >>= fun fs ->

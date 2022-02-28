@@ -66,7 +66,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     let rec get_ctz_pointers t l index pointer =
       match l, index with
       | Error _ as e, _ -> Lwt.return e
-      | Ok l, 0 -> Lwt.return @@ Ok (pointer :: l)
+      | Ok l, 1 -> Lwt.return @@ Ok (pointer :: l)
       | Ok l, index ->
         let open Lwt_result.Infix in
         let data = Cstruct.create t.block_size in
@@ -80,7 +80,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       | Chamelon.Entry.Data (pointer, length) -> begin
           let file_size = Int32.to_int length in
           let index = Chamelon.File.last_block_index ~file_size ~block_size:t.block_size in
-          Log.debug (fun f -> f "last block index %d found starting at %ld (0x%lx)" index pointer pointer);
+          Log.debug (fun f -> f "data block: last block index %d found starting at %ld (0x%lx)" index pointer pointer);
           get_ctz_pointers t (Ok []) index (Int64.of_int32 pointer)
         end
       | Chamelon.Entry.Metadata (a, b) ->
@@ -93,6 +93,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
           Logs.err (fun f -> f "filesystem seems corrupted; we couldn't make sense of a block pair");
           Lwt.return @@ Error `Disconnected
         | Ok block ->
+          Logs.debug (fun f -> f "finding blocks linked from %a" pp_blockpair (a, b));
           let links = Chamelon.Block.linked_blocks block in
           Lwt_list.fold_left_s (fun so_far link ->
               match so_far with
@@ -134,7 +135,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       let all_indices = IntSet.of_list (List.init possible_blocks (fun a -> Int64.of_int a)) in
       let set1 = IntSet.of_list l1 in
       let candidates = IntSet.diff all_indices set1 in
-      let pivot = Int64.(div (of_int possible_blocks) 2L) in
+      let pivot = Int64.(unsigned_div (of_int possible_blocks) 2L) in
       let set = match bias, IntSet.split pivot candidates with
         | `After, (_, true, s) -> IntSet.add pivot s
         | `Before, (s, true, _)
@@ -150,7 +151,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         Log.err (fun f -> f "error attempting to find unused blocks: %a" This_Block.pp_error e);
         Error `No_space
       | Ok used_blocks ->
-        Log.debug (fun f -> f "%d blocks used: %a" (List.length used_blocks) Fmt.(list ~sep:sp int64) used_blocks);
+        Log.debug (fun f -> f "%d blocks used: %a" (List.length used_blocks) Fmt.(list ~sep:sp uint64) used_blocks);
         Ok (unused ~bias t used_blocks)
 
     let get_block t =
@@ -204,45 +205,15 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
      * managed by an OS with its own bad block detection.
      * That's my excuse for punting on it for now, anyway. *)
     let block_to_block_number t data block_location : (unit, write_result) result Lwt.t =
-      let {block_size; block; program_block_size; _} = t in
-      let cs = Cstruct.create block_size in
-      Logs.debug (fun f -> f "writing block %Ld (0x%Lx)..." block_location block_location);
-      match Chamelon.Block.into_cstruct ~program_block_size cs data, Chamelon.Block.hardtail data with
-      | `Split_emergency, None ->
-        Logs.debug (fun f -> f "we need to split this block or we won't be able to write it");
-        Lwt.return @@ Error `Split_emergency
-      | `Split, None -> begin
-          Logs.debug (fun f -> f "we need to split this, but not urgently");
-          This_Block.write block block_location [cs] >>= function
-          | Ok () -> Lwt.return @@ Error `Split
-          | Error e ->
-            Log.err (fun m -> m "block write error: %a" This_Block.pp_write_error e);
-            Lwt.return @@ Error `No_space
-        end
-      | `Split, Some _ -> begin
-        Logs.debug (fun f -> f "split recommended on a block that already has a hardtail");
-        Cstruct.memset cs 0x00;
-        Logs.debug (fun f -> f "compacting it, since that's the best we can do");
-        let _ = Chamelon.Block.into_cstruct ~program_block_size cs (Chamelon.Block.compact data) in
-        This_Block.write block block_location [cs] >>= function
-        | Ok () -> Lwt.return @@ Ok ()
-        | Error e ->
-          Log.err (fun m -> m "block write error: %a" This_Block.pp_write_error e);
-          Lwt.return @@ Error `No_space
-      end
-      | `Split_emergency, Some _ ->
-        Log.err (fun m -> m "commit list too big and block already has a hardtail; failing: %Ld (0x%Lx)" block_location block_location);
+      let block_device = t.block in
+      This_Block.write block_device block_location [data] >>= function
+      | Ok () -> Lwt.return @@ Ok ()
+      | Error e ->
+        Log.err (fun m -> m "block write error: %a" This_Block.pp_write_error e);
         Lwt.return @@ Error `No_space
-      | `Ok, _ -> begin
-        This_Block.write block block_location [cs] >>= function
-        | Ok () -> Lwt.return @@ Ok ()
-        | Error e ->
-          Log.err (fun m -> m "block write error: %a" This_Block.pp_write_error e);
-          Lwt.return @@ Error `No_space
-      end
 
     let rec block_to_block_pair t data (b1, b2) : (unit, write_result) result Lwt.t =
-      let split () =
+      let split data  =
         Allocate.get_block_pair t >>= function
         | Error `No_space -> Lwt.return @@ Error `No_space
         | Ok (new_block_1, new_block_2) when Int64.equal new_block_1 new_block_2 ->
@@ -263,70 +234,63 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
               Lwt.return @@ Error `No_space
             | Ok () -> begin
                 Logs.debug (fun f -> f "wrote new pair; overwriting old pair");
-                block_to_block_pair t old_block (b1, b2) >>= function
-                | Error `Split | Error `Split_emergency | Error `No_space ->
-                  Lwt.return @@ Error `No_space
-                | Ok () -> Lwt.return @@ Ok ()
+                (* ignore any warnings about needing to split, etc *)
+                let cs1 = Cstruct.create t.block_size in
+                let serialize = Chamelon.Block.into_cstruct ~program_block_size:t.program_block_size in
+                let _ = serialize cs1 old_block in
+                Lwt_result.both
+                  (block_to_block_number t cs1 b1)
+                  (block_to_block_number t cs1 b2) >>= function
+                | Ok _ -> Lwt.return @@ Ok ()
+                | Error _ as e -> Lwt.return e
               end
           end
       in
-      Lwt_result.both
-        (block_to_block_number t data b1)
-        (block_to_block_number t data b2)
-      >>= function
-      | Ok _ -> Lwt.return @@ Ok ()
-      (* `Split happens when the write did succeed, but a split operation
-       * needs to happen to provide future problems *)
-      | Error `Split -> begin
+      let cs1 = Cstruct.create t.block_size in
+      let serialize = Chamelon.Block.into_cstruct ~program_block_size:t.program_block_size in
+      match serialize cs1 data with
+      | `Ok -> begin
+        Lwt_result.both
+          (block_to_block_number t cs1 b1)
+          (block_to_block_number t cs1 b2)
+        >>= function
+        | Ok _ -> Lwt.return @@ Ok ()
+        | Error _ as e -> Lwt.return e
+      end
+      | `Split | `Split_emergency ->
         (* try a compaction first *)
+        Cstruct.memset cs1 0x00;
         let compacted = Chamelon.Block.compact data in
         Logs.debug (fun m -> m "split requested for a block with %d entries. compacted, we had %d"
                        (List.length @@ Chamelon.Block.entries data)
                        (List.length @@ Chamelon.Block.entries compacted)
                    );
-        if (List.length @@ Chamelon.Block.commits data) > (List.length @@ Chamelon.Block.commits compacted) then begin
-          Logs.debug (fun m -> m "beginning compaction...");
-          (* if we have a "split recommended" but we already did it, don't do it again *)
-          match Chamelon.Block.hardtail data with
-          | Some _ -> begin
-              Lwt_result.both
-                (block_to_block_number t compacted b1)
-                (block_to_block_number t compacted b2) >>= function
-              | Ok ((),()) | Error `Split -> Lwt.return @@ Ok ()
-              | Error _ as e -> Lwt.return e
-            end
-          | None ->
+        match serialize cs1 compacted, Chamelon.Block.hardtail compacted with
+        | `Ok, _ -> begin
+            Logs.debug (fun f -> f "compaction was sufficient. Will not split %a" pp_blockpair (b1, b2));
             Lwt_result.both
-              (block_to_block_number t compacted b1)
-              (block_to_block_number t compacted b2)
-              >>= function
-              | Ok _ ->
-                Logs.debug (fun f -> f "compaction of the data was sufficient; not splitting");
-                Lwt.return @@ Ok ()
-              | Error `Split -> begin
-                  Logs.debug (fun f -> f "compaction was insufficient; splitting");
-                  split () >>= function
-                  | Error _ -> Logs.warn (fun f -> f "split operation failed. disk is approaching full");
-                    Lwt.return @@ Ok ()
-                  | Ok () -> Lwt.return @@ Ok ()
-                end
-              | Error `Split_emergency ->
-                Logs.debug (fun f -> f "compaction was insufficient; splitting");
-                split ()
-              | Error `No_space -> Lwt.return @@ Error `No_space
-            end else begin
-              (* if we didn't drop any entries by compacting, don't bother and just split *)
-              Logs.debug (fun f -> f "not compacting. Will begin splitting");
-              split () >>= function
-              | Error _ -> Logs.warn (fun f -> f "split operation failed. disk is approaching full");
-                Lwt.return @@ Ok ()
-              | Ok () ->
-                Logs.debug (fun f -> f "split operation successful");
-                Lwt.return @@ Ok ()
-            end
-        end
-      | Error `Split_emergency -> split ()
-      | Error `No_space -> Lwt.return @@ Error `No_space
+              (block_to_block_number t cs1 b1)
+              (block_to_block_number t cs1 b2)
+            >>= function
+            | Ok _ -> Lwt.return @@ Ok ()
+            | Error _ as e -> Lwt.return e
+          end
+        | `Split, None | `Split_emergency, None -> begin
+            Logs.debug (fun f -> f "compaction was insufficient and the block has no hardtail. Splitting %a" pp_blockpair (b1, b2));
+            split compacted
+          end
+        | `Split, _ -> begin
+            Logs.debug (fun f -> f "split needed, but the block's already split. Writing the compacted block");
+            Lwt_result.both
+              (block_to_block_number t cs1 b1)
+              (block_to_block_number t cs1 b2)
+            >>= function
+            | Ok _ -> Lwt.return @@ Ok ()
+            | Error _ as e -> Lwt.return e
+          end
+        | `Split_emergency, _ ->
+          Logs.err (fun f -> f "Couldn't write to block %a" pp_blockpair (b1, b2));
+          Lwt.return @@ Error `No_space
   end
 
   module Find : sig
@@ -449,8 +413,8 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     (* [find_or_mkdir t parent_blockpair dirname] will:
      * attempt to find [dirname] in the directory starting at [parent_blockpair] or any other blockpairs in its hardtail linked list
      * if no valid entries corresponding to [dirname] are found:
-        * allocate new blocks for [dirname] 
-        * find the last blockpair (q, r) in [parent_blockpair]'s hardtail linked list 
+        * allocate new blocks for [dirname]
+        * find the last blockpair (q, r) in [parent_blockpair]'s hardtail linked list
         * create a directory entry for [dirname] in (q, r)
      *)
     let find_or_mkdir t parent_blockpair (dirname : string) =
@@ -657,6 +621,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
             Logs.debug (fun m -> m "writing ctz %d entries for ctz for file %s" (List.length new_entries) filename);
             let new_block = Chamelon.Block.add_commit root new_entries in
             Write.block_to_block_pair t new_block dir_block_pair >>= function
+            | Error `No_space -> Lwt.return @@ Error `No_space
             | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v filename))
             | Ok () -> Lwt.return @@ Ok ()
 
