@@ -115,7 +115,11 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       Lwt.return @@ Error (`Not_found key)
     end else
       Fs.Find.find_first_blockpair_of_directory t root_pair Mirage_kv.Key.(segments @@ parent key) >>= function
-      | `Basename_on pair -> Fs.Delete.delete_in_directory pair t (Mirage_kv.Key.basename key)
+      | `Basename_on pair ->
+        Logs.debug (fun f -> f "found %a in a directory starting at %a, will delete"
+                       Mirage_kv.Key.pp key Fmt.(pair ~sep:comma int64 int64) 
+                       pair);
+        Fs.Delete.delete_in_directory pair t (Mirage_kv.Key.basename key)
       | `No_entry | `No_id _ | `No_structs -> Lwt.return @@ Ok ()
 
   let last_modified t key =

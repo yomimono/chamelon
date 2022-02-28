@@ -30,7 +30,9 @@ let format_and_mount block =
 let assert_slash_empty fs =
   Chamelon.list fs Mirage_kv.Key.empty >>= function
   | Error e -> fail_read e
-  | Ok l -> Alcotest.(check int) "fs should be empty after deleting everything" 0 (List.length l); Lwt.return_unit
+  | Ok l ->
+    Format.printf "%a\n%!" Fmt.(list ~sep:comma string) (List.map fst l);
+    Alcotest.(check int) "fs should be empty after deleting everything" 0 (List.length l); Lwt.return_unit
 
 (* root *)
 let test_root block _ () =

@@ -1,4 +1,9 @@
+type blockpair = int64 * int64
+type directory_head = blockpair
+
 let root_pair = (0L, 1L)
+
+let pp_blockpair = Fmt.(pair ~sep:comma int64 int64)
 
 open Lwt.Infix
 
@@ -216,6 +221,9 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         end
       | `Split, Some _ -> begin
         Logs.debug (fun f -> f "split recommended on a block that already has a hardtail");
+        Cstruct.memset cs 0x00;
+        Logs.debug (fun f -> f "compacting it, since that's the best we can do");
+        let _ = Chamelon.Block.into_cstruct ~program_block_size cs (Chamelon.Block.compact data) in
         This_Block.write block block_location [cs] >>= function
         | Ok () -> Lwt.return @@ Ok ()
         | Error e ->
@@ -276,7 +284,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
                        (List.length @@ Chamelon.Block.entries data)
                        (List.length @@ Chamelon.Block.entries compacted)
                    );
-        if (List.length @@ Chamelon.Block.entries data) > (List.length @@ Chamelon.Block.entries compacted) then begin
+        if (List.length @@ Chamelon.Block.commits data) > (List.length @@ Chamelon.Block.commits compacted) then begin
           Logs.debug (fun m -> m "beginning compaction...");
           (* if we have a "split recommended" but we already did it, don't do it again *)
           match Chamelon.Block.hardtail data with
@@ -322,30 +330,28 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
   end
 
   module Find : sig
-    type blockpair = int64 * int64
-    type blockwise_entry_list = (int64 * int64) * (Chamelon.Entry.t list)
+    type blockwise_entry_list = blockpair * (Chamelon.Entry.t list)
 
     (** entries in the directory are split up by block,
      * so the caller can distinguish between re-uses of the same ID number
      * when the directory spans multiple block numbers *)
-    val all_entries_in_dir : t -> blockpair ->
+    val all_entries_in_dir : t -> directory_head ->
       (blockwise_entry_list list, error) result Lwt.t
 
-    val entries_of_name : t -> blockpair -> string -> (blockwise_entry_list list,
+    val entries_of_name : t -> directory_head -> string -> (blockwise_entry_list list,
                                                            [`No_id of key
                                                            | `Not_found of key]
                                                           ) result Lwt.t
 
-    val find_first_blockpair_of_directory : t -> int64 * int64 -> string list ->
-      [`Basename_on of int64 * int64 | `No_entry | `No_id of string | `No_structs] Lwt.t
+    val find_first_blockpair_of_directory : t -> directory_head -> string list ->
+      [`Basename_on of directory_head | `No_entry | `No_id of string | `No_structs] Lwt.t
 
   end = struct
-    type blockpair = int64 * int64
-    type blockwise_entry_list = (int64 * int64) * Chamelon.Entry.t list
+    type blockwise_entry_list = blockpair * (Chamelon.Entry.t list)
 
     (* nb: all does mean *all* here; the list is returned uncompacted,
      * so the caller may have to compact to avoid reporting on expired state *)
-    let rec all_entries_in_dir t (block_pair : int64 * int64) =
+    let rec all_entries_in_dir t block_pair =
       Read.block_of_block_pair t block_pair >>= function
       | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v "hard_tail"))
       | Ok block ->
@@ -377,14 +383,19 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       let entries_matching_name (block, entries) =
         match id_of_key (Chamelon.Entry.compact entries) name with
         | None ->
-          Logs.debug (fun m -> m "id for %s not found in %d entries from %Ld, %Ld"
-                         name (List.length entries) (fst block_pair) (snd block_pair));
+          Logs.debug (fun m -> m "id for %s not found in %d entries from %a"
+                         name (List.length entries) pp_blockpair block);
           Error (`No_id (Mirage_kv.Key.v name))
         | Some id ->
-          Logs.debug (fun m -> m "found %d entries for id %d"
-                         (List.length @@ entries_of_id entries id)
-                         id);
-          Ok (block, Chamelon.Entry.compact @@ entries_of_id entries id)
+          Logs.debug (fun m -> m "name %s is associated with id %d on blockpair %a"
+                         name id pp_blockpair block);
+          let entries = entries_of_id entries id in
+          Logs.debug (fun m -> m "found %d entries for id %d in %a"
+                         (List.length entries) id pp_blockpair block);
+          let compacted = Chamelon.Entry.compact entries in
+          Logs.debug (fun m -> m "after compaction, there were %d entries for id %d in %a"
+                         (List.length compacted) id pp_blockpair block);
+          Ok (block, compacted)
       in
       let blockwise_matches = List.filter_map (fun es ->
           match entries_matching_name es with
@@ -410,18 +421,18 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
 
   end
 
-  let rec mkdir t rootpair key =
+  let rec mkdir t parent_blockpair key =
     (* mkdir has its own function for traversing the directory structure
      * because we want to make anything that's missing along the way,
      * rather than having to get an error, mkdir, get another error, mkdir... *)
     let follow_directory_pointers t block_pair = function
       | [] -> begin
         Traverse.last_block t block_pair >>= function
-        | Ok pair -> Lwt.return @@ `Basename_on pair
+        | Ok pair -> Lwt.return @@ `New_writes_to pair
         | Error _ ->
           Log.err (fun f -> f "error finding last block from blockpair %Ld, %Ld"
                       (fst block_pair) (snd block_pair));
-          Lwt.return @@ `Basename_on block_pair
+          Lwt.return @@ `New_writes_to block_pair
       end
       | key::remaining ->
         Find.entries_of_name t block_pair key >>= function
@@ -435,13 +446,17 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
           | [] -> Lwt.return `No_structs
           | next_blocks::_ -> Lwt.return (`Continue (remaining, next_blocks))
     in 
-    (* `dirname` is the name of the directory relative to `rootpair`. It should be
-     * a value that could be returned from `Mirage_kv.Key.basename` - in other words
-     * it should contain no separators. *)
-    let find_or_mkdir t rootpair (dirname : string) =
-      follow_directory_pointers t rootpair [dirname] >>= function
+    (* [find_or_mkdir t parent_blockpair dirname] will:
+     * attempt to find [dirname] in the directory starting at [parent_blockpair] or any other blockpairs in its hardtail linked list
+     * if no valid entries corresponding to [dirname] are found:
+        * allocate new blocks for [dirname] 
+        * find the last blockpair (q, r) in [parent_blockpair]'s hardtail linked list 
+        * create a directory entry for [dirname] in (q, r)
+     *)
+    let find_or_mkdir t parent_blockpair (dirname : string) =
+      follow_directory_pointers t parent_blockpair [dirname] >>= function
       | `Continue (_path, next_blocks) -> Lwt.return @@ Ok next_blocks
-      | `Basename_on next_blocks -> Lwt.return @@ Ok next_blocks
+      | `New_writes_to next_blocks -> Lwt.return @@ Ok next_blocks
       | `No_structs | `Not_found _ ->
         Lwt_mutex.with_lock t.new_block_mutex @@ fun () ->
         (* for any error case, try making the directory *)
@@ -462,11 +477,12 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
             (* we want to write the entry for our new subdirectory to
              * the *last* blockpair in the parent directory, so follow
              * all the hardtails *)
-            Traverse.last_block t rootpair >>= function
+            Traverse.last_block t parent_blockpair >>= function
             | Error _ -> Lwt.return @@ Error (`Not_found dirname)
             | Ok last_pair_in_dir ->
-              Logs.debug (fun f -> f "found last pair %a in directory starting at 
-                           %a" Fmt.(pair int64 int64) last_pair_in_dir Fmt.(pair int64 int64) rootpair);
+              Logs.debug (fun f -> f "found last pair %a in directory starting at %a"
+                             pp_blockpair last_pair_in_dir
+                             pp_blockpair parent_blockpair);
               Read.block_of_block_pair t last_pair_in_dir >>= function
               | Error _ -> Lwt.return @@ Error (`Not_found dirname)
               | Ok block_to_write ->
@@ -483,10 +499,13 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
                 | Ok () -> Lwt.return @@ Ok (dir_block_0, dir_block_1)
     in
     match key with
-    | [] -> Lwt.return @@ Ok rootpair
+    | [] -> Lwt.return @@ Ok parent_blockpair
     | dirname::more ->
       let open Lwt_result in
-      find_or_mkdir t rootpair dirname >>= fun newpair ->
+      (* finally, the recursive bit: when we've successfully found or made a directory
+       * but we have more components in the path,
+       * find or make the next component relative to the juts-returned blockpair *)
+      find_or_mkdir t parent_blockpair dirname >>= fun newpair ->
       mkdir t newpair more
 
   module File_read : sig
@@ -516,8 +535,8 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         let s = Cstruct.(to_string cs) in
         Lwt.return @@ Ok s
 
-    let get_value t block_pair filename =
-      Find.entries_of_name t block_pair filename >|= function
+    let get_value t parent_dir_head filename =
+      Find.entries_of_name t parent_dir_head filename >|= function
       | Error _ | Ok [] -> Error (`Not_found filename)
       | Ok compacted ->
         (* if there are >1 block with entries, we only care about the last one *)
@@ -571,9 +590,9 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
   end
 
   module File_write : sig
-    (** [set_in_directory block_pair t filename data] creates entries in
-     * [block_pair] for [filename] pointing to [data] *)
-    val set_in_directory : int64 * int64 -> t -> string -> string ->
+    (** [set_in_directory directory_head t filename data] creates entries in
+     * [directory] for [filename] pointing to [data] *)
+    val set_in_directory : directory_head -> t -> string -> string ->
       (unit, write_error) result Lwt.t
 
   end = struct  
@@ -704,29 +723,30 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
   end
 
   module Delete = struct
-    let delete_in_directory block_pair t name =
-      Find.entries_of_name t block_pair name >>= function
+    let delete_in_directory directory_head t name =
+      Find.entries_of_name t directory_head name >>= function
         (* several "it's not here" cases *)
       | Error (`No_id _) | Error (`Not_found _) ->
         Logs.debug (fun m -> m "no id or nothing found for %s" name);
         Lwt.return @@ Ok ()
       | Ok [] | Ok ((_,[])::_) ->
-        Logs.debug (fun m -> m "no entries on %Ld, %Ld for %s"
-                       (fst block_pair) (snd block_pair) name);
+        Logs.debug (fun m -> m "no entries on %a for %s"
+                       pp_blockpair directory_head name);
         Lwt.return @@ Ok ()
       | Ok ((blockpair_with_id, hd::_tl)::_) ->
         let id = Chamelon.Tag.((fst hd).id) in
-        Logs.debug (fun m -> m "id %d found for name %s" id name);
-        let deletion = Chamelon.Tag.delete id in
-        Logs.debug (fun m -> m "adding deletion for id %d on block pair %Ld, %Ld"
-                       id (fst blockpair_with_id) (snd blockpair_with_id));
+        Logs.debug (fun m -> m "id %d found for name %s on block %a" id name
+                   pp_blockpair blockpair_with_id);
         Read.block_of_block_pair t blockpair_with_id >>= function
         | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v name))
         | Ok block ->
+          Logs.debug (fun m -> m "adding deletion for id %d on block pair %a"
+                         id pp_blockpair blockpair_with_id);
+          let deletion = Chamelon.Tag.delete id in
           let new_block = Chamelon.Block.add_commit block [(deletion, Cstruct.empty)] in
           Write.block_to_block_pair t new_block blockpair_with_id >>= function
-        | Error _ -> Lwt.return @@ Error `No_space
-        | Ok () -> Lwt.return @@ Ok ()
+          | Error _ -> Lwt.return @@ Error `No_space
+          | Ok () -> Lwt.return @@ Ok ()
 
   end
 

@@ -115,9 +115,6 @@ let rec of_cstructv ~starting_offset:_ ~program_block_size ~starting_xor_tag ~pr
   (* we don't have a good way to know how many valid
    * entries there are (since we filter out the CRC tags) ,
    * so we have to keep trying for the whole block :/ *)
-  (* oh fuck, okay, this isn't going to quite work,
-   * because we get a nice long list of *entries* here, which aren't
-   * broken up into commits. Entry.of_cstructv needs to stop when it sees CRCs, I think. *)
   let entries, last_tag, read = Entry.of_cstructv ~starting_xor_tag cs in
   match entries with
   | [] -> []

@@ -185,6 +185,15 @@ module Block = struct
     Alcotest.(check @@ list entry) "compact should have no effect on the entry list in a block with no deletes" (Chamelon.Block.entries pre_split) Chamelon.Block.(entries @@ compact pre_split);
     ()
 
+  let compact_removes_entries () =
+    let sans_delete = example_block in
+    let with_delete = Chamelon.Block.add_commit sans_delete @@ [(Chamelon.Tag.delete 3), Cstruct.empty] in
+    let compacted = Chamelon.Block.compact with_delete in
+    let compacted_is_smaller than = List.length (Chamelon.Block.entries compacted) < List.length (Chamelon.Block.entries than) in
+    Alcotest.(check @@ bool) "compacted should have fewer entries" true @@ compacted_is_smaller with_delete;
+    Alcotest.(check @@ bool) "compacted should have fewer entries" true @@ compacted_is_smaller sans_delete;
+    ()
+
   let split_splits () =
     let pp_entry fmt (tag, cs) =
       Format.fprintf fmt "%a: data length %d" Chamelon.Tag.pp tag (Cstruct.length cs) in
@@ -259,6 +268,7 @@ let () =
           tc "write a superblock commit to a block" `Quick Block.commit_superblock;
           tc "writing a block with different revision count gives different CRC" `Quick Block.revision_count_matters;
           tc "compacting a block with no deletes has no effect on contents" `Quick Block.compact_not_lossy;
+          tc "compacting a block with deletes gives fewer entries" `Quick Block.compact_removes_entries;
           tc "splitting a block gets the hardtail right" `Quick Block.split_splits;
           tc "roundtrip hardtail conservation" `Quick Block.roundtrip_hardtail;
       ]);

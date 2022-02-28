@@ -179,7 +179,7 @@ let test_no_space block _ () =
   let blorp = String.init block_size (fun _ -> 'a') in
   let k n = Mirage_kv.Key.v @@ string_of_int n in
   let blocks = 4096 * 10 / block_size in
-  let blocks_for_metadata = 20 in
+  let blocks_for_metadata = 18 in
   format_and_mount block >>= fun fs ->
   let l = List.init (blocks - blocks_for_metadata) (fun n -> n) in
   Logs.debug (fun f -> f "writing %d blocks of nonsense..." (blocks - blocks_for_metadata));
