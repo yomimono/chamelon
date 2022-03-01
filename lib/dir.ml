@@ -33,12 +33,6 @@ let mkdir ~to_pair id =
   Cstruct.LE.set_uint32 data 4 (Int64.to_int32 @@ snd to_pair);
   (dirstruct id, data)
 
-let blocks (block1, block2) =
-  let cs = Cstruct.create @@ 32 * 2 in
-  Cstruct.LE.set_uint32 cs 0 block1;
-  Cstruct.LE.set_uint32 cs 4 block2;
-  cs
-
 let dirstruct_of_cstruct cs =
   if Cstruct.length cs < (4 + 4) then None
   else Some (Cstruct.LE.(get_uint32 cs 0 |> Int64.of_int32,
