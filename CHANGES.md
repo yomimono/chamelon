@@ -1,3 +1,9 @@
+# v0.0.6 (2022-03-01)
+
+* unix binaries are now all subcommands of the `chamelon` command
+* refactor `split` and add many more tests
+* fix a bug where writing a block that is over half full and already has a hardtail would never cause compaction
+
 # v0.0.5 (2022-02-09)
 
 * fix several problems with `remove`
