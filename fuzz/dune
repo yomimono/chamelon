@@ -1,4 +1,5 @@
 (executable
+  (enabled_if false)
   (name fuzz)
   (libraries chamelon.kv crowbar cstruct lwt lwt.unix mirage-block-combinators mirage-clock-unix)
 )
