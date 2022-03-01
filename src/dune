@@ -106,8 +106,8 @@
         )
   (action (progn
             (setenv OCAMLRUNPARAM b (run %{exe:chamelon.exe} ls test.img 4096 "/"))
-            (setenv OCAMLRUNPARAM b (with-stdin-from lfs_write.ml (run %{exe:chamelon.exe} write test.img 4096 "lfs_write.ml" -)))
-            (setenv OCAMLRUNPARAM b (with-stdout-to lfs_write.bak (run %{exe:chamelon.exe} read test.img 4096 "lfs_write.ml")))
-            (run cmp -l lfs_write.ml lfs_write.bak)
+            (setenv OCAMLRUNPARAM b (with-stdin-from lfs_ls.ml (run %{exe:chamelon.exe} write test.img 4096 "lfs_ls.ml" -)))
+            (setenv OCAMLRUNPARAM b (with-stdout-to lfs_ls.bak (run %{exe:chamelon.exe} read test.img 4096 "lfs_ls.ml")))
+            (run cmp -l lfs_ls.ml lfs_ls.bak)
             ))
 )
