@@ -1,21 +1,6 @@
 module Mirage_block = Block (* disambiguate this from Chamelon.Block *)
 module Chamelon = Kv.Make(Mirage_block)(Pclock)
 
-let timestamp =
-  let doc = "output last-modified information when available" in
-  Cmdliner.Arg.(value & flag & info ~doc ~docv:"TIMESTAMP" ["t"; "timestamp"])
-
-let image =
-  let doc = "path to the filesystem image" in
-  Cmdliner.Arg.(value & pos 0 string "./littlefs.img" & info ~doc ~docv:"IMAGE" [])
-
-let block_size =
-  let doc = "block size of the filesystem in bytes" in
-  Cmdliner.Arg.(value & pos 1 int 4096 & info ~doc ~docv:"BLOCK_SIZE" [])
-
-let path =
-  Cmdliner.Arg.(value & pos 2 string "/" & info ~docv:"PATH" [])
-
 let pp_ty fmt = function
   | `Value -> Stdlib.Format.fprintf fmt "%s" "file"
   | `Dictionary -> Stdlib.Format.fprintf fmt "%s" "directory"
@@ -26,7 +11,7 @@ let pp_time fmt = function
   | Ok (`Span span) -> Ptime.Span.pp fmt span
   | Ok (`Ptime timestamp) -> Ptime.pp fmt timestamp
 
-let ls timestamp image block_size path =
+let ls {Common_options.image; block_size; program_block_size} timestamp path =
   let open Lwt.Infix in
   let check_time t path =
     Chamelon.last_modified t path >>= function
@@ -44,7 +29,7 @@ let ls timestamp image block_size path =
   in
   Lwt_main.run @@ (
   Mirage_block.connect image >>= fun block ->
-  Chamelon.connect block ~program_block_size:16 ~block_size >>= function
+  Chamelon.connect block ~program_block_size ~block_size >>= function
   | Error _ -> Stdlib.Format.eprintf "Error doing the initial filesystem ls\n%!"; exit 1
   | Ok t ->
     let requested_path = Mirage_kv.Key.v path in
@@ -85,7 +70,3 @@ let ls timestamp image block_size path =
       in
       Lwt_list.iter_p print l
    )
-   
-let () =
-  let go = Cmdliner.Term.(const ls $ timestamp $ image $ block_size $ path) in
-  Cmdliner.Term.(exit @@ eval (go, info "lfs_ls"))

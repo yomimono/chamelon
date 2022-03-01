@@ -1,6 +1,6 @@
-(executables
+(executable
   (package chamelon-unix)
-  (public_names format lfs_ls lfs_read lfs_rmrf lfs_write)
+  (public_name chamelon)
   (libraries bos cmdliner fmt fmt.cli fmt.tty fpath chamelon.kv mirage-block-unix mirage-clock-unix mirage-kv logs.cli logs.fmt lwt)
 )
 
@@ -15,8 +15,8 @@
   (action
     (progn
       (run dd if=/dev/zero of=test.img bs=256K count=1)
-      (setenv OCAMLRUNPARAM b (run %{exe:format.exe} test.img))
-      (with-stdout-to empty-ls.output (run %{exe:lfs_ls.exe} test.img 4096 /))
+      (setenv OCAMLRUNPARAM b (run %{exe:chamelon.exe} format test.img))
+      (with-stdout-to empty-ls.output (run %{exe:chamelon.exe} ls test.img 4096 /))
       (with-stdout-to empty-ls.expected (run echo -n ""))
       (diff empty-ls.expected empty-ls.output)
     )
@@ -28,13 +28,13 @@
   (locks colossal test.img)
   (action (progn
             (run chmod 666 test.img)
-            (setenv OCAMLRUNPARAM b (with-stdin-from colossal (run %{exe:lfs_write.exe} test.img 4096 "colossal.bak" -)))
+            (setenv OCAMLRUNPARAM b (with-stdin-from colossal (run %{exe:chamelon.exe} write test.img 4096 "colossal.bak" -)))
 
             (with-stdout-to colossal-ls.expected (run echo "colossal.bak : file"))
-            (setenv OCAMLRUNPARAM b (with-stdout-to colossal-ls.output (run %{exe:lfs_ls.exe} test.img 4096 "/")))
+            (setenv OCAMLRUNPARAM b (with-stdout-to colossal-ls.output(run %{exe:chamelon.exe} write test.img 4096 "/")))
             (diff colossal-ls.expected colossal-ls.output)
             
-            (setenv OCAMLRUNPARAM b (with-stdout-to colossal.bak (run %{exe:lfs_read.exe} test.img 4096 "colossal.bak")))
+            (setenv OCAMLRUNPARAM b (with-stdout-to colossal.bak (run %{exe:chamelon.exe} read test.img 4096 "colossal.bak")))
             (run cmp colossal colossal.bak)
   ))
 )
@@ -45,19 +45,19 @@
   (locks test.img)
   (action (progn
             (run chmod 666 test.img)
-            (setenv OCAMLRUNPARAM b (run %{exe:lfs_write.exe} --verbosity=debug test.img 4096 "autoexec.bat" "CLS"))
+            (setenv OCAMLRUNPARAM b (run %{exe:chamelon.exe} write --verbosity=debug test.img 4096 "autoexec.bat" "CLS"))
             (with-stdout-to autoexec.expected (run echo -n CLS))
-            (with-stdout-to autoexec.output (run %{exe:lfs_read.exe} test.img 4096 autoexec.bat))
+            (with-stdout-to autoexec.output (run %{exe:chamelon.exe} read test.img 4096 autoexec.bat))
             (diff autoexec.expected autoexec.output)
-            (setenv OCAMLRUNPARAM b (run %{exe:lfs_write.exe} test.img 4096 "config.sys" ""))
-            (setenv OCAMLRUNPARAM b (run %{exe:lfs_read.exe} --verbosity=debug test.img 4096 "config.sys"))
-            (setenv OCAMLRUNPARAM b (run %{exe:lfs_ls.exe} test.img 4096 "config.sys"))
-            (setenv OCAMLRUNPARAM b (run %{exe:lfs_rmrf.exe} test.img 4096 "config.sys"))
-            (setenv OCAMLRUNPARAM b (run %{exe:lfs_rmrf.exe} test.img 4096 "config.sys"))
+            (setenv OCAMLRUNPARAM b (run %{exe:chamelon.exe} write test.img 4096 "config.sys" ""))
+            (setenv OCAMLRUNPARAM b (run %{exe:chamelon.exe} read --verbosity=debug test.img 4096 "config.sys"))
+            (setenv OCAMLRUNPARAM b (run %{exe:chamelon.exe} ls test.img 4096 "config.sys"))
+            (setenv OCAMLRUNPARAM b (run %{exe:chamelon.exe} rmrf test.img 4096 "config.sys"))
+            (setenv OCAMLRUNPARAM b (run %{exe:chamelon.exe} rmrf test.img 4096 "config.sys"))
             (with-stderr-to read-deleted.expected (run echo "key config.sys not found"))
-            (setenv OCAMLRUNPARAM b (with-stdout-to read-deleted.output (with-accepted-exit-codes 1 (run %{exe:lfs_read.exe} test.img 4096 "config.sys"))))
+            (setenv OCAMLRUNPARAM b (with-stdout-to read-deleted.output (with-accepted-exit-codes 1 (run %{exe:chamelon.exe} read test.img 4096 "config.sys"))))
             (diff read-deleted.expected read-deleted.output)
-            (setenv OCAMLRUNPARAM b (run %{exe:lfs_rmrf.exe} test.img 4096 "autoexec.bat"))
+            (setenv OCAMLRUNPARAM b (run %{exe:chamelon.exe} rmrf test.img 4096 "autoexec.bat"))
             )))
 
 (rule
@@ -67,12 +67,12 @@
   (action
     (progn
             (run chmod 666 test.img)
-            (setenv OCAMLRUNPARAM b (run %{exe:lfs_write.exe} --verbosity=debug test.img 4096 "diary.txt" "Dear diary, today I ate cheese. It was great."))
-            (setenv OCAMLRUNPARAM b (run %{exe:lfs_ls.exe} test.img 4096 "diary.txt"))
-            (setenv OCAMLRUNPARAM b (run %{exe:lfs_write.exe} test.img --verbosity=debug 4096 "diary.txt" "Dear diary, today I ate cheese. It was a nice sharp cheddar. Delicious."))
-            (setenv OCAMLRUNPARAM b (run %{exe:lfs_ls.exe} test.img 4096 "diary.txt"))
+            (setenv OCAMLRUNPARAM b (run %{exe:chamelon.exe} write --verbosity=debug test.img 4096 "diary.txt" "Dear diary, today I ate cheese. It was great."))
+            (setenv OCAMLRUNPARAM b (run %{exe:chamelon.exe} ls test.img 4096 "diary.txt"))
+            (setenv OCAMLRUNPARAM b (run %{exe:chamelon.exe} write test.img --verbosity=debug 4096 "diary.txt" "Dear diary, today I ate cheese. It was a nice sharp cheddar. Delicious."))
+            (setenv OCAMLRUNPARAM b (run %{exe:chamelon.exe} ls test.img 4096 "diary.txt"))
             (with-stdout-to rewrite.expected (run echo -n "Dear diary, today I ate cheese. It was a nice sharp cheddar. Delicious."))
-            (with-stdout-to rewrite.output (run %{exe:lfs_read.exe} --verbosity=debug test.img 4096 "diary.txt"))
+            (with-stdout-to rewrite.output (run %{exe:chamelon.exe} read --verbosity=debug test.img 4096 "diary.txt"))
             (diff rewrite.expected rewrite.output)
   )))
 
@@ -83,17 +83,17 @@
   (action
     (progn
       (run chmod 666 test.img)
-      (setenv OCAMLRUNPARAM b (run %{exe:lfs_write.exe} test.img 4096 "secrets/mom_dont_look" "I SAID NOT TO LOOK JEEZ"))
-      (setenv OCAMLRUNPARAM b (with-stdout-to ls-secrets.output (run %{exe:lfs_ls.exe} test.img 4096 "/secrets")))
+      (setenv OCAMLRUNPARAM b (run %{exe:chamelon.exe} write test.img 4096 "secrets/mom_dont_look" "I SAID NOT TO LOOK JEEZ"))
+      (setenv OCAMLRUNPARAM b (with-stdout-to ls-secrets.output (run %{exe:chamelon.exe} ls test.img 4096 "/secrets")))
       (with-stdout-to ls-secrets.expected (run echo "mom_dont_look : file"))
       (diff ls-secrets.expected ls-secrets.output)
-      (setenv OCAMLRUNPARAM b (with-stdout-to read-secrets.output (run %{exe:lfs_read.exe} test.img 4096 "secrets/mom_dont_look")))
+      (setenv OCAMLRUNPARAM b (with-stdout-to read-secrets.output (run %{exe:chamelon.exe} read test.img 4096 "secrets/mom_dont_look")))
       (with-stdout-to read-secrets.expected (run echo -n "I SAID NOT TO LOOK JEEZ"))
       (diff read-secrets.expected read-secrets.output)
       (setenv OCAMLRUNPARAM b
-              (run %{exe:lfs_rmrf.exe} --verbosity=debug test.img 4096 "secrets"))
+              (run %{exe:chamelon.exe} rmrf --verbosity=debug test.img 4096 "secrets"))
       (setenv OCAMLRUNPARAM b (with-accepted-exit-codes 1 
-              (run %{exe:lfs_ls.exe} test.img 4096 "/secrets")))
+              (run %{exe:chamelon.exe} ls test.img 4096 "/secrets")))
       )))
 
 (rule
@@ -105,9 +105,9 @@
         test.img
         )
   (action (progn
-            (setenv OCAMLRUNPARAM b (run %{exe:lfs_ls.exe} test.img 4096 "/"))
-            (setenv OCAMLRUNPARAM b (with-stdin-from lfs_write.ml (run %{exe:lfs_write.exe} test.img 4096 "lfs_write.ml" -)))
-            (setenv OCAMLRUNPARAM b (with-stdout-to lfs_write.bak (run %{exe:lfs_read.exe} test.img 4096 "lfs_write.ml")))
+            (setenv OCAMLRUNPARAM b (run %{exe:chamelon.exe} ls test.img 4096 "/"))
+            (setenv OCAMLRUNPARAM b (with-stdin-from lfs_write.ml (run %{exe:chamelon.exe} write test.img 4096 "lfs_write.ml" -)))
+            (setenv OCAMLRUNPARAM b (with-stdout-to lfs_write.bak (run %{exe:chamelon.exe} read test.img 4096 "lfs_write.ml")))
             (run cmp -l lfs_write.ml lfs_write.bak)
             ))
 )
