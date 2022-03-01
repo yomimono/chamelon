@@ -99,7 +99,7 @@ let common_options_t =
   Cmdliner.Term.(const Common_options.set_options $ block_size $ program_block_size $ image $ setup_log)
 
 let path =
-  Cmdliner.Arg.(value & pos 0 string "/example" & info ~docv:"PATH" [])
+  Cmdliner.Arg.(value & pos 2 string "/example" & info ~doc:"path" ~docv:"PATH" [])
 
 let format_command =
   let info = Cmdliner.Cmd.info "format" ~doc:"format a file as a chamelon filesystem" in
@@ -110,7 +110,7 @@ let list_command =
     let doc = "output last-modified information when available" in
     Cmdliner.Arg.(value & flag & info ~doc ~docv:"TIMESTAMP" ["t"; "timestamp"])
   in
-  let info = Cmdliner.Cmd.info "list" ~doc:"list the contents of a path in a filesystem" in
+  let info = Cmdliner.Cmd.info "ls" ~doc:"list the contents of a path in a filesystem" in
   Cmdliner.Cmd.v info Cmdliner.Term.(const Lfs_ls.ls $ common_options_t $ timestamp $ path)
 
 let read_command =
@@ -126,7 +126,7 @@ let remove_command =
 let write_command =
   let data =
     let doc = "data to write to the file. Provide - for stdin." in
-    Cmdliner.Arg.(value & pos 1 string "-" & info ~doc ~docv:"DATA" [])
+    Cmdliner.Arg.(value & pos 3 string "-" & info ~doc ~docv:"DATA" [])
   in
   let doc = "write a file" in
   let info = Cmdliner.Cmd.info "write" ~doc in
