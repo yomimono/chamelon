@@ -176,9 +176,10 @@ module Block = struct
     let pp_entry fmt (tag, cs) =
       Format.fprintf fmt "%a: data length %d" Chamelon.Tag.pp tag (Cstruct.length cs) in
     let eq entry1 entry2 =
-      Cstruct.equal
-        (Chamelon.Entry.to_cstruct ~xor_tag_with:default_xor entry1)
-        (Chamelon.Entry.to_cstruct ~xor_tag_with:default_xor entry2)
+      let cs1, cs2 = Cstruct.(create block_size, create block_size) in
+      let _ = Chamelon.Entry.into_cstructv ~starting_xor_tag:default_xor cs1 [entry1] in
+      let _ = Chamelon.Entry.into_cstructv ~starting_xor_tag:default_xor cs2 [entry2] in
+      Cstruct.equal cs1 cs2
     in
     let pre_split = example_block in
     let entry = Alcotest.testable pp_entry eq in

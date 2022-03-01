@@ -5,9 +5,6 @@ type link = | Metadata of (int64 * int64)
 let sizeof t =
   Cstruct.length (snd t) + Tag.size
 
-let is_type abstract_type (tag, _data) =
-  (fst tag.Tag.type3) = abstract_type
-
 let info_of_entry (tag, data) =
   match tag.Tag.type3 with
   | (LFS_TYPE_NAME, 0x01) ->
@@ -38,11 +35,6 @@ let ctime_of_cstruct cs =
 let into_cstruct ~xor_tag_with cs t =
   Tag.into_cstruct ~xor_tag_with cs @@ fst t;
   Cstruct.blit (snd t) 0 cs Tag.size (Cstruct.length @@ snd t)
-
-let to_cstruct ~xor_tag_with t =
-  let cs = Cstruct.create @@ sizeof t in
-  into_cstruct ~xor_tag_with cs t;
-  cs
 
 let links (tag, data) =
   if Tag.is_file_struct tag then begin
