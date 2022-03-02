@@ -21,7 +21,7 @@ build: [
 ]
 
 depends: [
-  "ocaml" {>= "4.06.0"}
+  "ocaml" {>= "4.10.0"}
   "dune" {>= "2.0.0"}
   "alcotest" {with-test}
   "mirage-block-unix" {with-test}
@@ -30,7 +30,6 @@ depends: [
   "checkseum"
   "digestif"
   "fmt"
-  "fpath"
   "logs"
   "lwt"
   "mirage-block" {>= "3.0.0"}

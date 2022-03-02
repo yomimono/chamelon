@@ -1,3 +1,7 @@
+# v0.0.7 (2022-03-04)
+
+* initial opam release
+
 # v0.0.6 (2022-03-01)
 
 * unix binaries are now all subcommands of the `chamelon` command
