@@ -17,18 +17,18 @@ let rec write_until_full ~write fs n =
   | true -> write_until_full ~write fs (n+1)
 
 let format_and_mount block =
-  Chamelon.format ~program_block_size ~block_size block >>= function
+  Chamelon.format ~program_block_size block >>= function
   | Error e -> fail_write e
   | Ok () ->
-    Chamelon.connect ~program_block_size ~block_size block >>= function
+    Chamelon.connect ~program_block_size block >>= function
     | Error e -> fail_read e
     | Ok fs -> Lwt.return fs
 
 let test_format block _ () =
-  Chamelon.format ~program_block_size ~block_size block >>= function
+  Chamelon.format ~program_block_size block >>= function
   | Error e -> fail_write e
   | Ok () ->
-    Chamelon.connect ~program_block_size ~block_size block >>= function
+    Chamelon.connect ~program_block_size block >>= function
     | Error e -> Alcotest.failf "couldn't mount the filesystem after formatting it: %a" Chamelon.pp_error e
     | Ok fs ->
       Chamelon.list fs (Mirage_kv.Key.v "/") >>= function
@@ -286,7 +286,7 @@ let test img =
   let open Alcotest_lwt in
   let open Lwt.Infix in
   Lwt_main.run @@ (
-    Block.connect img >>= fun block ->
+    Block.connect ~prefered_sector_size:(Some 512) img >>= fun block ->
     run "mirage-kv" [
       ("format",
        [ test_case "format" `Quick (test_format block) ;

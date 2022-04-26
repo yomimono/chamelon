@@ -28,8 +28,8 @@ let ls {Common_options.image; block_size; program_block_size} timestamp path =
           Lwt.return @@ Ok (`Ptime timestamp)
   in
   Lwt_main.run @@ (
-  Mirage_block.connect image >>= fun block ->
-  Chamelon.connect block ~program_block_size ~block_size >>= function
+  Mirage_block.connect ~prefered_sector_size:(Some block_size) image >>= fun block ->
+  Chamelon.connect block ~program_block_size >>= function
   | Error _ -> Stdlib.Format.eprintf "Error doing the initial filesystem ls\n%!"; exit 1
   | Ok t ->
     let requested_path = Mirage_kv.Key.v path in

@@ -11,19 +11,19 @@ let fail_write = fail Chamelon.pp_write_error
 let testable_key = Alcotest.testable Mirage_kv.Key.pp Mirage_kv.Key.equal
 
 let program_block_size = 16
-let block_size = 512
+(* let block_size = 512 *)
 
 let rec do_many fs ~f = function
   | n when n <= 0 -> Lwt.return_unit
   | n -> f fs n >>= fun () -> do_many fs ~f (n-1)
 
 let just_mount block =
-  Chamelon.connect ~program_block_size ~block_size block >>= function
+  Chamelon.connect ~program_block_size block >>= function
   | Error e -> fail_read e
   | Ok fs -> Lwt.return fs
 
 let format_and_mount block =
-  Chamelon.format ~program_block_size ~block_size block >>= function
+  Chamelon.format ~program_block_size block >>= function
   | Error e -> fail_write e
   | Ok () -> just_mount block
 
@@ -162,7 +162,7 @@ let test img =
   let open Alcotest_lwt in
   let open Lwt.Infix in
   Lwt_main.run @@ (
-    Block.connect img >>= fun block ->
+    Block.connect ~prefered_sector_size:(Some 512) img >>= fun block ->
     run "directories" [
       ("from_toml", [
           test_case "root" `Quick (test_root block);

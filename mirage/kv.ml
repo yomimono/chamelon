@@ -224,7 +224,13 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
 
   let disconnect _ = Lwt.return_unit
 
-  let connect = Fs.connect
+  let connect ~program_block_size block =
+    Sectors.get_info block >>= fun info ->
+    let block_size = info.Mirage_block.sector_size in
+    Fs.connect ~program_block_size ~block_size block
 
-  let format = Fs.format
+  let format ~program_block_size block =
+    Sectors.get_info block >>= fun info ->
+    let block_size = info.Mirage_block.sector_size in
+    Fs.format ~program_block_size ~block_size block
 end

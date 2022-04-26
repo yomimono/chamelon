@@ -8,10 +8,10 @@ open Toolkit
 let mount =
   let open Lwt.Infix in
   Block.connect "mount chamelon" >>= fun block ->
-  Chamelon.format ~program_block_size:16 ~block_size:512 block >>= function
+  Chamelon.format ~program_block_size:16 block >>= function
   | Error _ -> assert false
   | Ok () ->
-    Chamelon.connect ~program_block_size:16 ~block_size:512 block >>= function
+    Chamelon.connect ~program_block_size:16 block >>= function
     | Error _ -> assert false
     | Ok fs -> Lwt.return fs
 

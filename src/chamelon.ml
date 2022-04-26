@@ -4,9 +4,11 @@ module Littlefs = Kv.Make(Mirage_sectors)(Pclock) (* Pclock comes from mirage-cl
 let format {Common_options.program_block_size; block_size; image} =
   let aux () =
     let open Lwt.Infix in
-    Mirage_sectors.connect image >>= fun sectors ->
+    Mirage_sectors.connect ~prefered_sector_size:(Some block_size) image >>= fun sectors ->
+    Mirage_sectors.get_info sectors >>= fun info ->
+    let block_size = info.Mirage_block.sector_size in
     Printf.printf "Formatting %s as a littlefs filesystem with block size %d\n%!" image block_size;
-    Littlefs.format ~program_block_size ~block_size sectors >|= function
+    Littlefs.format ~program_block_size sectors >|= function
     | Error _ -> Format.eprintf "error writing the filesystem to disk\n%!"; exit 1
     | Ok r -> r
   in
@@ -14,8 +16,8 @@ let format {Common_options.program_block_size; block_size; image} =
 
 let mount {Common_options.image; block_size; program_block_size} =
   let open Lwt.Infix in
-  Mirage_sectors.connect image >>= fun block ->
-  Littlefs.connect block ~program_block_size ~block_size >>= function
+  Mirage_sectors.connect ~prefered_sector_size:(Some block_size) image >>= fun block ->
+  Littlefs.connect block ~program_block_size >>= function
   | Error _ -> Format.eprintf "Error doing the initial filesystem read\n%!"; exit 1
   | Ok t -> Lwt.return t
 
