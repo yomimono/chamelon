@@ -11,7 +11,6 @@ let fail_write = fail Chamelon.pp_write_error
 let testable_key = Alcotest.testable Mirage_kv.Key.pp Mirage_kv.Key.equal
 
 let program_block_size = 16
-(* let block_size = 512 *)
 
 let rec do_many fs ~f = function
   | n when n <= 0 -> Lwt.return_unit
