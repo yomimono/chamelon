@@ -1,3 +1,7 @@
+# v0.0.8 (2022-04-29)
+
+* use the sector_size given by the block device via its info (@dinosaure)
+
 # v0.0.7 (2022-03-04)
 
 * initial opam release
