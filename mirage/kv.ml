@@ -46,13 +46,13 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     Fs.Find.find_first_blockpair_of_directory t root_pair
       (Mirage_kv.Key.segments dir) >>= function
     | `Basename_on block_pair ->
-      Logs.debug (fun m -> m "found basename of path %a on block pair %Ld, %Ld"
+      Log.debug (fun m -> m "found basename of path %a on block pair %Ld, %Ld"
                      Mirage_kv.Key.pp key
                      (fst block_pair) (snd block_pair));
       (* the directory already exists, so just write the file *)
       Fs.File_write.set_in_directory block_pair t (Mirage_kv.Key.basename key) data
     | `No_id path -> begin
-        Logs.debug (fun m -> m "path component %s had no id; making it and its children" path);
+        Log.debug (fun m -> m "path component %s had no id; making it and its children" path);
         (* something along the path is missing, so make it. *)
         (* note we need to call mkdir with the whole path (save the basename),
          * so that we get all levels of directory we may need,
@@ -61,16 +61,16 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       | Error (`Not_found _) -> Lwt.return @@ (Error (`Not_found (Mirage_kv.Key.v path)))
       | Error `No_space as e -> Lwt.return e
       | Ok block_pair ->
-        Logs.debug (fun m -> m "made filesystem structure for %a, writing to blockpair %Ld, %Ld"
+        Log.debug (fun m -> m "made filesystem structure for %a, writing to blockpair %Ld, %Ld"
                        Mirage_kv.Key.pp dir (fst block_pair) (snd block_pair)
         );
         Fs.File_write.set_in_directory block_pair t (Mirage_kv.Key.basename key) data
       end
     | `No_entry ->
-      Logs.err (fun m -> m "id was present but no matching entries");
+      Log.err (fun m -> m "id was present but no matching entries");
       Lwt.return @@ Error (`Not_found key)
     | `No_structs ->
-      Logs.err (fun m -> m "id was present but no matching structure");
+      Log.err (fun m -> m "id was present but no matching structure");
       Lwt.return @@ Error (`Not_found key)
 
   let list t key : ((string * [`Dictionary | `Value]) list, error) result Lwt.t =
@@ -111,12 +111,12 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     if Mirage_kv.Key.(equal empty key) then begin
     (* it's impossible to remove the root directory in littlefs, as it's
      * implicitly at the root pair *)
-      Logs.warn (fun m -> m "refusing to delete the root directory");
+      Log.warn (fun m -> m "refusing to delete the root directory");
       Lwt.return @@ Error (`Not_found key)
     end else
       Fs.Find.find_first_blockpair_of_directory t root_pair Mirage_kv.Key.(segments @@ parent key) >>= function
       | `Basename_on pair ->
-        Logs.debug (fun f -> f "found %a in a directory starting at %a, will delete"
+        Log.debug (fun f -> f "found %a in a directory starting at %a, will delete"
                        Mirage_kv.Key.pp key Fmt.(pair ~sep:comma int64 int64) 
                        pair);
         Fs.Delete.delete_in_directory pair t (Mirage_kv.Key.basename key)
