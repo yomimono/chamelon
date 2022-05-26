@@ -10,6 +10,6 @@
     (progn
       (run mkdir input output)
       (run dd if=/dev/zero of=input/zero bs=512 count=32)
-      (run format -b 512 input/zero)
+      (run chamelon format input/zero 512)
       (run afl-fuzz -i input -o output ./%{exe:fuzz.exe} -- @@)
     )))
