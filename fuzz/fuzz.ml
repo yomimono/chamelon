@@ -30,7 +30,7 @@ let init blocks to_write =
     (* on start, fill the in-memory block device *)
     write_fs block blocks >>= fun () ->
     (* for now, our assertion is just that we'll either connect or return an error *)
-    Chamelon.connect block ~program_block_size:16 ~block_size:512  >>= function
+    Chamelon.connect block ~program_block_size:16 >>= function
     | Error _ -> Crowbar.bad_test ()
     | Ok fs ->
       (* for any key/value pair we've been given, we should be able to
@@ -51,10 +51,10 @@ let format_clears blocks =
     Block.connect "fuzz chamelon" >>= fun block ->
     (* on start, fill the in-memory block device *)
     write_fs block blocks >>= fun () ->
-    Chamelon.format ~program_block_size:16 ~block_size:512 block >>= function
+    Chamelon.format ~program_block_size:16 block >>= function
     | Error _ -> Crowbar.bad_test ()
     | Ok () ->
-      Chamelon.connect block ~program_block_size:16 ~block_size:512 >>= function
+      Chamelon.connect block ~program_block_size:16 >>= function
       | Error _ -> Crowbar.bad_test ()
       | Ok fs ->
         Chamelon.list fs Mirage_kv.Key.empty >>= function
