@@ -13,7 +13,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     block : This_Block.t;
     block_size : int;
     program_block_size : int;
-    lookahead : ([`Before | `After ] * (int64 list)) ref;
+    lookahead : (int * (int64 list)) ref;
     new_block_mutex : Lwt_mutex.t;
   }
 
@@ -125,48 +125,45 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
 
   module Allocate = struct
 
-    let opp = function
+    let ring = function
       | `Before -> `After
       | `After -> `Before
 
-    let unused ~bias t l1 =
+    let unused t used_blocks =
       let module IntSet = Set.Make(Int64) in
-      let possible_blocks = This_Block.block_count t.block in
-      let all_indices = IntSet.of_list (List.init possible_blocks (fun a -> Int64.of_int a)) in
-      let set1 = IntSet.of_list l1 in
-      let candidates = IntSet.diff all_indices set1 in
-      let pivot = Int64.(unsigned_div (of_int possible_blocks) 2L) in
-      let set = match bias, IntSet.split pivot candidates with
-        | `After, (_, true, s) -> IntSet.add pivot s
-        | `Before, (s, true, _)
-        | `Before, (s, false, _)
-        | `After, (_, false, s) -> s
+      let prev_offset = fst !(t.lookahead) in
+      let alloc_size = min 16 (max 255 @@ This_Block.block_count t.block) in
+      let this_offset =
+        if (prev_offset + alloc_size) >= This_Block.block_count t.block then 0
+        else prev_offset + alloc_size
       in
-      Logs.debug (fun f -> f "filesystem has %d (0x%x) blocks. of these %d are used and %d available for immediate allocation" possible_blocks possible_blocks (List.length l1) (IntSet.cardinal set));
-      IntSet.elements set
+      let pool = IntSet.of_list @@ List.init alloc_size
+          (fun a -> Int64.of_int @@ a + this_offset)
+      in
+      this_offset, IntSet.(elements @@ diff pool (of_list used_blocks))
 
-    let populate_lookahead t bias =
+    let populate_lookahead t =
       Traverse.follow_links t (Chamelon.Entry.Metadata root_pair) >|= function
       | Error e ->
         Log.err (fun f -> f "error attempting to find unused blocks: %a" This_Block.pp_error e);
         Error `No_space
       | Ok used_blocks ->
         Log.debug (fun f -> f "%d blocks used: %a" (List.length used_blocks) Fmt.(list ~sep:sp uint64) used_blocks);
-        Ok (unused ~bias t used_blocks)
+        Ok (unused t used_blocks)
 
     let get_block t =
       match !(t.lookahead) with
-      | bias, block::l ->
-        t.lookahead := bias, l;
+      | offset, block::l ->
+        t.lookahead := offset, l;
         Lwt.return @@ Ok block
-      | bias, [] ->
+      | _offset, [] ->
         let open Lwt_result.Infix in
-        populate_lookahead t bias >>= function
-        | [] ->
+        populate_lookahead t >>= function
+        | _, [] ->
           Log.err (fun f -> f "no blocks remain free on filesystem");
           Lwt.return @@ Error `No_space
-        | block::l ->
-          t.lookahead := (opp bias, l);
+        | new_offset, block::l ->
+          t.lookahead := (new_offset, l);
           Log.debug (fun f -> f "adding %d blocks to lookahead buffer (%a)" (List.length l) Fmt.(list int64) l);
           Lwt.return @@ Ok block
 
@@ -178,14 +175,16 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         Lwt.return @@ Ok (block1, block2)
       (* whether we have 1 block left or none, we still need to repopulate the lookahead buffer
        * so go just go ahead and do it first, and then take the first two blocks *)
-      | bias, _ ->
+      | _, _ ->
         let open Lwt_result.Infix in
-        populate_lookahead t bias >>= function
-        | block1::block2::l ->
-          t.lookahead := (opp bias, l);
+        populate_lookahead t >>= function
+        | new_offset, (block1::block2::l) ->
+          t.lookahead := (new_offset, l);
           Log.debug (fun f -> f "adding %d blocks to lookahead buffer (%a)" (List.length l) Fmt.(list int64) l);
           Lwt.return @@ Ok (block1, block2)
-        | l ->
+        | _, l ->
+          (* TODO: this isn't quite right; there might be more unused blocks
+           * in another offset *)
           Log.debug (fun f -> f "%d unused blocks: %a" (List.length l) Fmt.(list int64) l);
           Log.err (fun f -> f "insufficient free blocks to allocate a new block pair");
           Lwt.return @@ Error `No_space
@@ -725,7 +724,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       Logs.err (fun f -> f "first block read failed: %a" This_Block.pp_error e);
       Lwt.return @@ Error (`Not_found (Mirage_kv.Key.empty))
     | Ok () ->
-      let t = {block; block_size; program_block_size; lookahead = ref (`Before, []); new_block_mutex = Lwt_mutex.create ()} in
+      let t = {block; block_size; program_block_size; lookahead = ref (0, []); new_block_mutex = Lwt_mutex.create ()} in
       Lwt_mutex.lock t.new_block_mutex >>= fun () ->
       Traverse.follow_links t (Chamelon.Entry.Metadata root_pair) >>= function
       | Error _e ->
@@ -734,7 +733,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       | Ok used_blocks ->
         Logs.debug (fun f -> f "found %d used blocks on block-based key-value store: %a" (List.length used_blocks) Fmt.(list ~sep:sp int64) used_blocks);
         let open Allocate in
-        let lookahead = ref (`After, unused ~bias:`Before t used_blocks) in
+        let lookahead = ref (unused t used_blocks) in
         Lwt_mutex.unlock t.new_block_mutex;
         Lwt.return @@ Ok {t with lookahead; block; block_size; program_block_size}
 
