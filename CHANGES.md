@@ -1,3 +1,9 @@
+# v0.0.9
+
+* be consistent in the use of Logs vs Log module (@palainp)
+* implement a lookahead block allocator more similar to the littlefs one (@yomimono)
+* bring back fuzz tests and improve them (@yomimono)
+
 # v0.0.8 (2022-04-29)
 
 * use the sector_size given by the block device via its info (@dinosaure)
