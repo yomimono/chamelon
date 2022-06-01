@@ -36,6 +36,7 @@
             
             (setenv OCAMLRUNPARAM b (with-stdout-to colossal.bak (run %{exe:chamelon.exe} read test.img 4096 "colossal.bak")))
             (run cmp colossal colossal.bak)
+            (run %{exe:chamelon.exe} rm test.img 4096 "/colossal.bak")
   ))
 )
 
