@@ -129,10 +129,6 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
 
   module Allocate = struct
 
-    let ring = function
-      | `Before -> `After
-      | `After -> `Before
-
     let unused t used_blocks =
       let module IntSet = Set.Make(Int64) in
       let actual_blocks = This_Block.block_count t.block in
