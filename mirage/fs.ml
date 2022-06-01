@@ -9,11 +9,15 @@ open Lwt.Infix
 
 module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
   module This_Block = Block_ops.Make(Sectors)
+  type lookahead = {
+    offset : int;
+    blocks : int64 list ;
+  }
   type t = {
     block : This_Block.t;
     block_size : int;
     program_block_size : int;
-    lookahead : (int * (int64 list)) ref;
+    lookahead : lookahead ref;
     new_block_mutex : Lwt_mutex.t;
   }
 
@@ -131,8 +135,9 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
 
     let unused t used_blocks =
       let module IntSet = Set.Make(Int64) in
-      let prev_offset = fst !(t.lookahead) in
-      let alloc_size = min 16 (max 255 @@ This_Block.block_count t.block) in
+      let actual_blocks = This_Block.block_count t.block in
+      let prev_offset = !(t.lookahead).offset in
+      let alloc_size = max 16 ((min 256 actual_blocks) / 4) in
       let this_offset =
         if (prev_offset + alloc_size) >= This_Block.block_count t.block then 0
         else prev_offset + alloc_size
@@ -152,34 +157,34 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         Ok (unused t used_blocks)
 
     let get_block t =
-      match !(t.lookahead) with
-      | offset, block::l ->
-        t.lookahead := offset, l;
+      match !(t.lookahead).blocks with
+      | block::l ->
+        t.lookahead := {!(t.lookahead) with blocks = l};
         Lwt.return @@ Ok block
-      | _offset, [] ->
+      | [] ->
         let open Lwt_result.Infix in
         populate_lookahead t >>= function
         | _, [] ->
           Log.err (fun f -> f "no blocks remain free on filesystem");
           Lwt.return @@ Error `No_space
         | new_offset, block::l ->
-          t.lookahead := (new_offset, l);
+          t.lookahead := ({offset = new_offset; blocks = l});
           Log.debug (fun f -> f "adding %d blocks to lookahead buffer (%a)" (List.length l) Fmt.(list int64) l);
           Lwt.return @@ Ok block
 
     (* this is a common enough case that it makes sense to handle it explicitly *)
     let get_block_pair t =
-      match !(t.lookahead) with
-      | bias, block1::block2::l ->
-        t.lookahead := bias, l;
+      match !(t.lookahead).blocks with
+      | block1::block2::l ->
+        t.lookahead := {!(t.lookahead) with blocks = l};
         Lwt.return @@ Ok (block1, block2)
       (* whether we have 1 block left or none, we still need to repopulate the lookahead buffer
        * so go just go ahead and do it first, and then take the first two blocks *)
-      | _, _ ->
+      | _ ->
         let open Lwt_result.Infix in
         populate_lookahead t >>= function
         | new_offset, (block1::block2::l) ->
-          t.lookahead := (new_offset, l);
+          t.lookahead := ({offset = new_offset; blocks = l});
           Log.debug (fun f -> f "adding %d blocks to lookahead buffer (%a)" (List.length l) Fmt.(list int64) l);
           Lwt.return @@ Ok (block1, block2)
         | _, l ->
@@ -724,7 +729,8 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       Logs.err (fun f -> f "first block read failed: %a" This_Block.pp_error e);
       Lwt.return @@ Error (`Not_found (Mirage_kv.Key.empty))
     | Ok () ->
-      let t = {block; block_size; program_block_size; lookahead = ref (0, []); new_block_mutex = Lwt_mutex.create ()} in
+      let lookahead = ref {offset = 0; blocks = []} in
+      let t = {block; block_size; program_block_size; lookahead; new_block_mutex = Lwt_mutex.create ()} in
       Lwt_mutex.lock t.new_block_mutex >>= fun () ->
       Traverse.follow_links t (Chamelon.Entry.Metadata root_pair) >>= function
       | Error _e ->
@@ -733,7 +739,8 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       | Ok used_blocks ->
         Logs.debug (fun f -> f "found %d used blocks on block-based key-value store: %a" (List.length used_blocks) Fmt.(list ~sep:sp int64) used_blocks);
         let open Allocate in
-        let lookahead = ref (unused t used_blocks) in
+        let offset, blocks = unused t used_blocks in
+        let lookahead = ref {blocks; offset} in
         Lwt_mutex.unlock t.new_block_mutex;
         Lwt.return @@ Ok {t with lookahead; block; block_size; program_block_size}
 
