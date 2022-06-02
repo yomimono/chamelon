@@ -252,6 +252,23 @@ module Entry = struct
 
 end
 
+module File = struct
+
+  let last_block () =
+    let block_size = 512 in
+    Alcotest.(check int) "tiny file" 0 @@ Chamelon.File.last_block_index ~file_size:1 ~block_size;
+    (* 503 gives the expected 0 result, but 504 gives 1 -- we expect this change to happen
+     * between 512 and 513 *)
+    Alcotest.(check int) "one-block file" 0 @@ Chamelon.File.last_block_index ~file_size:block_size ~block_size;
+    Alcotest.(check int) "one block and change" 1 @@ Chamelon.File.last_block_index ~file_size:(block_size + block_size / 2) ~block_size;
+    Alcotest.(check int) "maximal two-block file" 2 @@ Chamelon.File.last_block_index
+      ~file_size:(block_size + (block_size - 8)) ~block_size;
+
+    Alcotest.(check int) "minimal three-block file" 2 @@ Chamelon.File.last_block_index
+      ~file_size:(block_size + (block_size - 8) + 1) ~block_size
+
+end
+
 let () =
   let tc = Alcotest.test_case in
   Alcotest.run "littlefs" [
@@ -275,6 +292,9 @@ let () =
       ]);
     ( "entry", [
           tc "entry roundtrip" `Quick Entry.roundtrip;
+        ]);
+    ( "file", [
+          tc "tricky last block index values" `Quick File.last_block;
         ]);
     ( "roundtrip", [
           tc "you got a parser and printer, you know what to do" `Quick Block.roundtrip;

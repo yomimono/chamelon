@@ -534,7 +534,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
           | None -> Error (`Value_expected filename)
 
     let get t key : (string, error) result Lwt.t =
-      let map_errors = function
+      let map_result = function
         | Ok (`Inline d) -> Lwt.return (Ok d)
         | Ok (`Ctz ctz) -> get_ctz t key ctz
         | Error (`Not_found k) -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v k))
@@ -542,12 +542,12 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       in
       match Mirage_kv.Key.segments key with
       | [] -> Lwt.return @@ Error (`Value_expected key)
-      | basename::[] -> get_value t root_pair basename >>= map_errors
+      | basename::[] -> get_value t root_pair basename >>= map_result
       | _ ->
         let dirname = Mirage_kv.Key.(parent key |> segments) in
         Find.find_first_blockpair_of_directory t root_pair dirname >>= function
         | `Basename_on pair -> begin
-            get_value t pair (Mirage_kv.Key.basename key) >>= map_errors
+            get_value t pair (Mirage_kv.Key.basename key) >>= map_result
           end
         | _ -> Lwt.return @@ Error (`Not_found key)
 
