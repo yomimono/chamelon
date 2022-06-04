@@ -22,11 +22,8 @@ let crc_of_revision_count revision_count =
   let cs = Cstruct.create 4 in
   let sizeof_crc = 4 in
   Cstruct.LE.set_uint32 cs 0 (Int32.of_int revision_count);
-  let revision_count_crc = Checkseum.Crc32.(digest_bigstring
-                             (Cstruct.to_bigarray cs) 0 sizeof_crc start_crc)
-  in
-  (* hey hey, ho ho, we don't want no overflow *)
-  Optint.((logand) revision_count_crc @@ of_unsigned_int32 0xffffffffl)
+  Checkseum.Crc32.(digest_bigstring
+                     (Cstruct.to_bigarray cs) 0 sizeof_crc start_crc)
 
 let linked_blocks t =
   (* we call `compact` on the entry list because otherwise we'd incorrectly follow

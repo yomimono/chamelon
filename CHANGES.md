@@ -3,6 +3,8 @@
 * be consistent in the use of Logs vs Log module (@palainp)
 * implement a lookahead block allocator more similar to the littlefs one (@yomimono)
 * bring back fuzz tests and improve them (@yomimono)
+* test for correct block index detection in CTZ files, and fix an edge case (@yomimono)
+* remove literals that break compilation on 32-bit systems (@yomimono)
 
 # v0.0.8 (2022-04-29)
 
