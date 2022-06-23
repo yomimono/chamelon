@@ -229,6 +229,27 @@ let test_get_big_value block _ () =
       Alcotest.(check string "retrieved big file is the same as what we set" (Cstruct.to_string value) retrieved_value);
       Lwt.return_unit
 
+let test_size_nonexistent block _ () =
+  let key = Mirage_kv.Key.v "/filenotfound" in
+  format_and_mount block >>= fun fs ->
+  Chamelon.size fs key >>= function
+  | Error (`Not_found _) -> Lwt.return_unit
+  | Error e -> Alcotest.fail (Format.asprintf "size on a nonexistent key failed with misleading error: %a" Chamelon.pp_error e)
+  | Ok s -> Alcotest.fail (Format.asprintf "size on a nonexistent key succeeded, and gave us %d" s)
+
+let test_size_small_file block _ () =
+  let key = Mirage_kv.Key.v "/smallfile"
+  and contents = "a string of known size"
+  in
+  format_and_mount block >>= fun fs ->
+  Chamelon.set fs key contents >>= function
+  | Error e -> fail_write e
+  | Ok () ->
+    Chamelon.size fs key >>= function
+    | Error e -> fail_read e
+    | Ok s -> Alcotest.(check int) "size of small file is correct" (String.length contents) s;
+      Lwt.return_unit
+
 let test_many_files block _ () =
   format_and_mount block >>= fun fs ->
   let contents i = "number " ^ string_of_int i in
@@ -324,6 +345,11 @@ let test img =
        [ test_case "get nonexistent value" `Quick (test_nonexistent_value block);
          test_case "get a dictionary" `Quick (test_get_dictionary block);
          test_case "get a big value" `Quick (test_get_big_value block);
+       ]
+      );
+      ("size",
+      [ test_case "size of something missing" `Quick (test_size_nonexistent block);
+      test_case "size of a small file" `Quick (test_size_small_file block);
        ]
       );
       ("digest",

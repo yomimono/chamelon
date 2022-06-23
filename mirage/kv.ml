@@ -107,6 +107,15 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       in
       Lwt.return @@ Ok (List.find_map lookup l)
 
+  let size t key =
+    exists t key >>= function
+    | Error e -> Lwt.return @@ Error e
+    | Ok None -> Lwt.return @@ Error (`Not_found key)
+    | Ok (Some `Dictionary) ->
+      Lwt.return @@ Error (`Value_expected key)
+    | Ok (Some `Value) ->
+      Fs.Size.size t key
+
   let remove t key =
     if Mirage_kv.Key.(equal empty key) then begin
     (* it's impossible to remove the root directory in littlefs, as it's

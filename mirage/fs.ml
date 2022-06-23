@@ -558,6 +558,46 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
 
   end
 
+  module Size = struct
+
+    let get_size t parent_dir_head filename =
+      Find.entries_of_name t parent_dir_head filename >|= function
+      | Error _ | Ok [] -> Error (`Not_found (Mirage_kv.Key.v filename))
+      | Ok compacted ->
+        let entries = snd @@ List.(hd @@ rev compacted) in
+        let inline_files = List.find_opt (fun (tag, _data) ->
+            Chamelon.Tag.((fst tag.type3) = LFS_TYPE_STRUCT) &&
+            Chamelon.Tag.((snd tag.type3) = 0x01)
+          )
+        in
+        let ctz_files = List.find_opt (fun (tag, _block) ->
+            Chamelon.Tag.((fst tag.type3 = LFS_TYPE_STRUCT) &&
+                          Chamelon.Tag.((snd tag.type3 = 0x02)
+                                       ))) in
+        Log.debug (fun m -> m "found %d entries with name %s" (List.length compacted) filename);
+        match inline_files entries, ctz_files entries with
+        | None, None -> Error (`Not_found (Mirage_kv.Key.v filename))
+        | Some (tag, _data), None ->
+          Ok tag.Chamelon.Tag.length
+        | _, Some (_tag, data) ->
+          match Chamelon.File.ctz_of_cstruct data with
+          | Some (_pointer, length) -> Ok (Int32.to_int length)
+          | None -> Error (`Value_expected (Mirage_kv.Key.v filename))
+
+    let size t key : (int, error) result Lwt.t =
+      match Mirage_kv.Key.segments key with
+      | [] -> Lwt.return @@ Error (`Value_expected key)
+      | basename::[] -> get_size t root_pair basename
+      | _ ->
+        let dirname = Mirage_kv.Key.(parent key |> segments) in
+        Find.find_first_blockpair_of_directory t root_pair dirname >>= function
+        | `Basename_on pair -> begin
+            get_size t pair (Mirage_kv.Key.basename key)
+          end
+        | _ -> Lwt.return @@ Error (`Not_found key)
+
+  end
+
   module File_write : sig
     (** [set_in_directory directory_head t filename data] creates entries in
      * [directory] for [filename] pointing to [data] *)
