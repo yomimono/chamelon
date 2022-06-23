@@ -13,8 +13,7 @@ type abstract_type =
     (* data checksummed includes all metadata since previous CRC tag, including the CRC tag itself *)
 [@@uint8_t]]
 
-type chunk = int
-type type3 = abstract_type * chunk
+type type3 = abstract_type * int
 
 let hardtail = (LFS_TYPE_TAIL, 0x01)
 
@@ -69,21 +68,20 @@ let delete id =
     
 let of_cstruct ~xor_tag_with cs =
   let tag_region = Cstruct.sub cs 0 size in
-  let any_invalid = List.exists (Cstruct.equal tag_region) invalid_tags in
-  if any_invalid then Error (`Msg "invalid tag")
+  if List.exists (Cstruct.equal tag_region) invalid_tags then Error (`Msg "invalid tag")
   else begin
     xor ~into:cs xor_tag_with;
-    let r32 = Cstruct.BE.get_uint32 cs 0 in
-    let r = Int32.to_int r32 in
-    let valid = (0x01 land (r lsr 31)) = 0x00
-    and abstract_type = (r lsr 28) land 0x7 |> int_to_abstract_type
-    and chunk = (r lsr 20) land 0xff
-    and id = (r lsr 10) land 0x3ff
-    and length = r land 0x3ff
-    in
-    (* all 1s and all 0s are explicitly invalid *)
-    if (r land 0xffffffff = 0xffffffff || r land 0xffffffff = 0x0) then Error (`Msg "invalid tag")
+    if List.exists (Cstruct.equal (Cstruct.sub cs 0 size)) invalid_tags then
+      Error (`Msg "invalid tag")
     else begin
+      let r32 = Cstruct.BE.get_uint32 cs 0 in
+      let r = Int32.to_int r32 in
+      let valid = Int.compare (Cstruct.get_uint8 cs 0) 128 < 0
+      and abstract_type = (r lsr 28) land 0x7 |> int_to_abstract_type
+      and chunk = (r lsr 20) land 0xff
+      and id = (r lsr 10) land 0x3ff
+      and length = r land 0x3ff
+      in
       match abstract_type with
       | None -> Error (`Msg "invalid abstract type in metadata tag")
       | Some abstract_type ->
