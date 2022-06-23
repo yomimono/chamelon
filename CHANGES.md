@@ -1,6 +1,6 @@
-# v.0.0.9.1
+# v.0.0.9.1 (2022-06-23)
 
-* fix 32-bit compilation, for real this time
+* fix 32-bit compilation, for real this time (@yomimono)
 
 # v0.0.9 (unreleased)
 
