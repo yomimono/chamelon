@@ -1,8 +1,13 @@
-# v0.0.9
+# v.0.0.9.1
+
+* fix 32-bit compilation, for real this time
+
+# v0.0.9 (unreleased)
 
 * be consistent in the use of Logs vs Log module (@palainp)
 * implement a lookahead block allocator more similar to the littlefs one (@yomimono)
 * bring back fuzz tests and improve them (@yomimono)
+* test for correct block index detection in CTZ files, and fix an edge case (@yomimono)
 
 # v0.0.8 (2022-04-29)
 

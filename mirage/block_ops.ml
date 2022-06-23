@@ -38,7 +38,7 @@ end = struct
     Sectors.get_info sectors >>= fun info ->
     let sector_size = info.sector_size in
     let size_sectors = info.size_sectors in
-    Logs.debug (fun f -> f "got info from a device with sector size %d (0x%x) and %Ld (0x%Lx) sectors available"
+    Log.debug (fun f -> f "got info from a device with sector size %d (0x%x) and %Ld (0x%Lx) sectors available"
                    info.sector_size info.sector_size
                    info.size_sectors info.size_sectors);
     Lwt.return @@ 

@@ -98,12 +98,10 @@ let into_cstruct ~filter_hardtail ~starting_offset ~program_block_size ~starting
 
   (* the crc in t is the crc of all the entries, so we can use that input to a crc calculation of the tag *)
   let crc_with_tag = Checkseum.Crc32.digest_bigstring (Cstruct.to_bigarray tag_region) 0 Tag.size seed_crc
-                   |> Optint.(logand @@ of_unsigned_int32 0xffffffffl)
-                   |> Optint.lognot
-                   |> Optint.(logand @@ of_unsigned_int32 0xffffffffl)
+                   |> Optint.to_unsigned_int32
+                   |> Int32.lognot
   in
-
-  Cstruct.LE.set_uint32 crc_region 0 Optint.(to_unsigned_int32 crc_with_tag);
+  Cstruct.LE.set_uint32 crc_region 0 crc_with_tag;
 
   (* set the padding bytes to an obvious value *)
   if padding <= 0 then () else Cstruct.memset padding_region 0xff;

@@ -215,6 +215,20 @@ let test_get_dictionary block _ () =
   | Ok s -> Alcotest.fail (Format.asprintf "getting a dictionary succeeded and returned %S" s)
   | Error e -> Alcotest.fail (Format.asprintf "getting a dictionary failed with an unexpected error type: %a" Chamelon.pp_error e)
 
+let test_get_big_value block _ () =
+  let key = Mirage_kv.Key.v "/chonkerson" in
+  format_and_mount block >>= fun fs ->
+  let g = Mirage_crypto_rng.default_generator () in
+  let value = Mirage_crypto_rng.generate ~g (block_size * 4) in
+  Chamelon.set fs key (Cstruct.to_string value) >>= function
+  | Error e -> Alcotest.fail (Format.asprintf "setting a large key failed: %a" Chamelon.pp_write_error e)
+  | Ok () ->
+    Chamelon.get fs key >>= function
+    | Error e -> Alcotest.fail (Format.asprintf "getting a large key failed: %a" Chamelon.pp_error e)
+    | Ok retrieved_value ->
+      Alcotest.(check string "retrieved big file is the same as what we set" (Cstruct.to_string value) retrieved_value);
+      Lwt.return_unit
+
 let test_many_files block _ () =
   format_and_mount block >>= fun fs ->
   let contents i = "number " ^ string_of_int i in
@@ -286,6 +300,7 @@ let test img =
   let open Alcotest_lwt in
   let open Lwt.Infix in
   Lwt_main.run @@ (
+    Mirage_crypto_rng_lwt.initialize ();
     Block.connect ~prefered_sector_size:(Some 512) img >>= fun block ->
     run "mirage-kv" [
       ("format",
@@ -308,6 +323,7 @@ let test img =
       ("get",
        [ test_case "get nonexistent value" `Quick (test_nonexistent_value block);
          test_case "get a dictionary" `Quick (test_get_dictionary block);
+         test_case "get a big value" `Quick (test_get_big_value block);
        ]
       );
       ("digest",
