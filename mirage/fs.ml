@@ -80,7 +80,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         | [] -> Lwt.return @@ Ok (pointer::l)
         | next::_ -> get_ctz_pointers t (Ok (pointer::l)) (index - 1) (Int64.of_int32 next)
 
-    let rec follow_links t = function
+    let rec follow_links t visited = function
       | Chamelon.Entry.Data (pointer, length) -> begin
           let file_size = Int32.to_int length in
           let index = Chamelon.File.last_block_index ~file_size ~block_size:t.block_size in
@@ -88,30 +88,35 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
           get_ctz_pointers t (Ok []) index (Int64.of_int32 pointer)
         end
       | Chamelon.Entry.Metadata (a, b) ->
-        Read.block_of_block_pair t (a, b) >>= function
-        | Error (`Block e) ->
-          Log.err (fun m -> m "error reading block pair %Ld, %Ld (0x%Lx, 0x%Lx): %a"
-                       a b a b This_Block.pp_error e);
-          Lwt.return @@ Error e
-        | Error (`Chamelon `Corrupt) ->
-          Log.err (fun f -> f "filesystem seems corrupted; we couldn't make sense of a block pair");
+        match List.mem (a, b) visited with
+        | true -> Log.err (fun f -> f "cycle detected: blockpair %a encountered again after initial visit." pp_blockpair (a, b));
           Lwt.return @@ Error `Disconnected
-        | Ok block ->
-          Log.debug (fun f -> f "finding blocks linked from %a" pp_blockpair (a, b));
-          let links = Chamelon.Block.linked_blocks block in
-          Lwt_list.fold_left_s (fun so_far link ->
-              match so_far with
-              | Error _ as e -> Lwt.return e
-              | Ok l ->
-                follow_links t link >>= function
-                | Error e ->
-                  Log.err (fun f -> f "filesystem seems corrupted; we couldn't get a list of unused blocks: %a" This_Block.pp_error e);
-                  Lwt.return @@ Error `Disconnected
-                | Ok new_links -> Lwt.return @@ Ok (new_links @ l)
-            ) (Ok []) links
-          >>= function
-          | Ok list -> Lwt.return @@ Ok (a :: b :: list)
-          | e -> Lwt.return e
+        | false ->
+          Read.block_of_block_pair t (a, b) >>= function
+          | Error (`Block e) ->
+            Log.err (fun m -> m "error reading block pair %Ld, %Ld (0x%Lx, 0x%Lx): %a"
+                        a b a b This_Block.pp_error e);
+            Lwt.return @@ Error e
+          | Error (`Chamelon `Corrupt) ->
+            Log.err (fun f -> f "filesystem seems corrupted; we couldn't make sense of a block pair");
+            Lwt.return @@ Error `Disconnected
+          | Ok block ->
+            Log.debug (fun f -> f "finding blocks linked from %a" pp_blockpair (a, b));
+            let links = Chamelon.Block.linked_blocks block in
+            Log.debug (fun f -> f "found %d linked blocks" (List.length links));
+            Lwt_list.fold_left_s (fun so_far link ->
+                match so_far with
+                | Error _ as e -> Lwt.return e
+                | Ok l ->
+                  follow_links t ((a, b)::visited) link >>= function
+                  | Error e ->
+                    Log.err (fun f -> f "filesystem seems corrupted; we couldn't get a list of unused blocks: %a" This_Block.pp_error e);
+                    Lwt.return @@ Error `Disconnected
+                  | Ok new_links -> Lwt.return @@ Ok (new_links @ l)
+              ) (Ok []) links
+            >>= function
+            | Ok list -> Lwt.return @@ Ok (a :: b :: list)
+            | e -> Lwt.return e
 
     (* [last_block t pair] returns the last blockpair in the hardtail
      * linked list starting at [pair], which may well be [pair] itself *)
@@ -144,7 +149,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       this_offset, IntSet.(elements @@ diff pool (of_list used_blocks))
 
     let populate_lookahead t =
-      Traverse.follow_links t (Chamelon.Entry.Metadata root_pair) >|= function
+      Traverse.follow_links t [] (Chamelon.Entry.Metadata root_pair) >|= function
       | Error e ->
         Log.err (fun f -> f "error attempting to find unused blocks: %a" This_Block.pp_error e);
         Error `No_space
@@ -728,10 +733,11 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       let lookahead = ref {offset = 0; blocks = []} in
       let t = {block; block_size; program_block_size; lookahead; new_block_mutex = Lwt_mutex.create ()} in
       Lwt_mutex.lock t.new_block_mutex >>= fun () ->
-      Traverse.follow_links t (Chamelon.Entry.Metadata root_pair) >>= function
+      Traverse.follow_links t [] (Chamelon.Entry.Metadata root_pair) >>= function
       | Error _e ->
         Lwt_mutex.unlock t.new_block_mutex;
-        Lwt.fail_with "couldn't get list of used blocks"
+        Log.err (fun f -> f "couldn't get list of used blocks");
+        Lwt.return @@ Error (`Not_found Mirage_kv.Key.empty)
       | Ok used_blocks ->
         Log.debug (fun f -> f "found %d used blocks on block-based key-value store: %a" (List.length used_blocks) Fmt.(list ~sep:sp int64) used_blocks);
         let open Allocate in
