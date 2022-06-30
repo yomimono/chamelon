@@ -24,47 +24,37 @@ let key = Crowbar.(map [bytes] Mirage_kv.Key.v)
 
 let kv = Crowbar.(pair key bytes)
 
-let init blocks to_write =
+let init name blocks to_write =
   Lwt_main.run (
-    Block.connect "fuzz chamelon" >>= fun block ->
+    Block.connect name >>= fun block ->
     (* on start, fill the in-memory block device *)
     write_fs block blocks >>= fun () ->
-    (* for now, our assertion is just that we'll either connect or return an error *)
     Chamelon.connect block ~program_block_size:16 >>= function
-    | Error _ -> Crowbar.bad_test ()
+    | Error _ ->
+      (* "correctly" failing to connect is good *)
+      Block.disconnect block >>= fun () ->
+      Crowbar.bad_test ()
     | Ok fs ->
-      (* for any key/value pair we've been given, we should be able to
-       * write it and then get it back *)
+      (* for any key/value pair, if we can write it,
+       * we should then be able to read it back *)
       Lwt_list.iter_p (
         fun (k, v) -> Chamelon.set fs k v >>= function
-          | Error _ -> Crowbar.bad_test ()
+          | Error _ ->
+            Block.disconnect block >>= fun () ->
+            Crowbar.bad_test ()
           | Ok () ->
             Chamelon.get fs k >>= function
-            | Error e -> Crowbar.failf "%a" Chamelon.pp_error e
+            | Error e ->
+              Block.disconnect block >>= fun () ->
+              Crowbar.failf "%a" Chamelon.pp_error e
             | Ok readback ->
               Lwt.return @@ Crowbar.check_eq readback v
       ) to_write
-  )
-
-let format_clears blocks =
-  Lwt_main.run @@ (
-    Block.connect "fuzz chamelon" >>= fun block ->
-    (* on start, fill the in-memory block device *)
-    write_fs block blocks >>= fun () ->
-    Chamelon.format ~program_block_size:16 block >>= function
-    | Error _ -> Crowbar.bad_test ()
-    | Ok () ->
-      Chamelon.connect block ~program_block_size:16 >>= function
-      | Error _ -> Crowbar.bad_test ()
-      | Ok fs ->
-        Chamelon.list fs Mirage_kv.Key.empty >>= function
-        | Error e -> Crowbar.failf "failure listing freshly formatted and mounted filesystem: %a" Chamelon.pp_error e
-        | Ok l -> Crowbar.check_eq 0 (List.length l);
-          Lwt.return_unit
+      >>= fun () ->
+      Block.disconnect block
   )
 
 let () =
   let open Crowbar in
   Logs.set_level (Some Logs.Debug);
-  add_test ~name:"initialize" [list block_gen; list kv] init;
-  add_test ~name:"format" [list block_gen] format_clears
+  add_test ~name:"initialize" [bytes; list block_gen; list kv] init
