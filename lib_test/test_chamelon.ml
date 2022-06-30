@@ -69,21 +69,6 @@ module Tag = struct
 
 end
 
-module Superblock = struct
-  let test_zero () =
-    let cs = Cstruct.(create @@ Chamelon.Superblock.sizeof_superblock) in
-    let sb = Chamelon.Superblock.parse cs in
-    Alcotest.(check int) "major version" 0 sb.version_major;
-    Alcotest.(check int) "minor version" 0 sb.version_minor;
-    Alcotest.(check int32) "block size" Int32.zero sb.block_size;
-    Alcotest.(check int32) "block count" Int32.zero sb.block_count;
-    Alcotest.(check int32) "name length maximum" Int32.zero sb.name_length_max;
-    Alcotest.(check int32) "file size maximum" Int32.zero sb.file_size_max;
-    Alcotest.(check int32) "file attributes size maximum" Int32.zero sb.file_attribute_size_max
-
-
-end
-
 module Block = struct
   module Block = Chamelon.Block
 
@@ -276,9 +261,6 @@ let () =
           tc "write: all bits are 1" `Quick Tag.write_maxint;
           tc "roundtrip print/parse for a data-bearing tag" `Quick Tag.roundtrip;
         ]);
-    ( "superblock", [
-          tc "all bits are zero" `Quick Superblock.test_zero;
-      ]);
     ( "block", [
           tc "write a superblock commit to a block" `Quick Block.commit_superblock;
           tc "writing a block with different revision count gives different CRC" `Quick Block.revision_count_matters;

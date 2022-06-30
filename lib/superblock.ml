@@ -1,4 +1,4 @@
-let magic = "littlefs"
+let magic = Cstruct.of_string "littlefs"
 (* for whatever bonkers reason, the major/minor versions
  * are big-endian, not little-endian like everything else,
  * even though they're not part of a tag and the functions writing
@@ -31,7 +31,8 @@ type superblock = {
   } [@@little_endian]]
 
 let parse cs =
-  {
+  if Cstruct.length cs < sizeof_superblock then Error (`Msg "superblock inline struct too small")
+  else Ok {
     version_minor = get_superblock_version_minor cs;
     version_major = get_superblock_version_major cs;
     block_size = get_superblock_block_size cs;
@@ -62,7 +63,21 @@ let name =
       id = 0;
       length = 8; })
   in
-  (tag, Cstruct.of_string magic)
+  (tag, magic)
+
+let is_valid_name (tag, data) =
+  tag.Tag.length = 8 &&
+  tag.Tag.valid = true &&
+  tag.Tag.type3 = (Tag.LFS_TYPE_NAME, 0xff) &&
+  tag.Tag.id = 0 &&
+  Cstruct.equal magic data
+
+let is_valid_superblock (tag, data) =
+  tag.Tag.valid = true &&
+  tag.Tag.type3 = (Tag.LFS_TYPE_STRUCT, 0x01) &&
+  tag.Tag.id = 0 &&
+  tag.Tag.length = sizeof_superblock &&
+  Cstruct.length data = sizeof_superblock
 
 let inline_struct block_size block_count =
   let entry = {

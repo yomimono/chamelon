@@ -720,6 +720,38 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
 
   end
 
+(* [block_size_device] is the block size used by the underlying block device which
+ * we're trying to mount a filesystem from,
+ * as opposed to the block size recorded in the filesystem's superblock *)
+  let check_superblock ~program_block_size ~block_size_device cs =
+    match Chamelon.Block.of_cstruct ~program_block_size cs with
+    | Error (`Msg s) ->
+      Log.err (fun f -> f "error parsing block when checking superblock: %s" s);
+      Lwt.return @@ Error (`Not_found Mirage_kv.Key.empty)
+    | Ok parsed_block ->
+      (* does this block have the expected superblock entries? *)
+      (* the order of entries is strictly specified: name, then the inline struct, then
+       * any other entries in the superblock *)
+      match Chamelon.Block.entries parsed_block with
+      | maybe_name :: maybe_struct :: _ when
+          Chamelon.Superblock.is_valid_name maybe_name &&
+          Chamelon.Superblock.is_valid_superblock maybe_struct -> begin
+        match Chamelon.Superblock.parse (snd maybe_struct) with
+        | Error (`Msg s) ->
+          Log.err (fun f -> f "error parsing block when checking superblock: %s" s);
+          Lwt.return @@ Error (`Not_found Mirage_kv.Key.empty)
+        | Ok sb ->
+          if sb.version_major != fst Chamelon.Superblock.version then begin
+            Log.err (fun f -> f "filesystem is an incompatible version");
+            Lwt.return @@ Error (`Not_found Mirage_kv.Key.empty)
+          end else if not @@ Int32.equal sb.block_size block_size_device then begin
+            Log.err (fun f -> f "filesystem expects a block device with size %ld but the device block size is %ld" sb.block_size block_size_device);
+            Lwt.return @@ Error (`Not_found Mirage_kv.Key.empty)
+          end else Lwt.return @@ Ok ()
+      end
+      | _ -> Log.err (fun f -> f "expected entries not found on parsed superblock");
+        Lwt.return @@ Error (`Not_found Mirage_kv.Key.empty)
+
   (* `device` should be an already-connected block device *)
   let connect ~program_block_size ~block_size device : (t, error) result Lwt.t =
     This_Block.connect ~block_size device >>= fun block ->
@@ -728,23 +760,27 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     This_Block.read block 0L [first_block] >>= function
     | Error e ->
       Log.err (fun f -> f "first block read failed: %a" This_Block.pp_error e);
-      Lwt.return @@ Error (`Not_found (Mirage_kv.Key.empty))
+      Lwt.return @@ Error (`Not_found Mirage_kv.Key.empty)
     | Ok () ->
-      let lookahead = ref {offset = 0; blocks = []} in
-      let t = {block; block_size; program_block_size; lookahead; new_block_mutex = Lwt_mutex.create ()} in
-      Lwt_mutex.lock t.new_block_mutex >>= fun () ->
-      Traverse.follow_links t [] (Chamelon.Entry.Metadata root_pair) >>= function
-      | Error _e ->
-        Lwt_mutex.unlock t.new_block_mutex;
-        Log.err (fun f -> f "couldn't get list of used blocks");
-        Lwt.return @@ Error (`Not_found Mirage_kv.Key.empty)
-      | Ok used_blocks ->
-        Log.debug (fun f -> f "found %d used blocks on block-based key-value store: %a" (List.length used_blocks) Fmt.(list ~sep:sp int64) used_blocks);
-        let open Allocate in
-        let offset, blocks = unused t used_blocks in
-        let lookahead = ref {blocks; offset} in
-        Lwt_mutex.unlock t.new_block_mutex;
-        Lwt.return @@ Ok {t with lookahead; block; block_size; program_block_size}
+      (* make sure the block is parseable and block size matches *)
+      check_superblock ~program_block_size ~block_size_device:(Int32.of_int block_size) first_block >>= function
+      | Error _ as e -> Lwt.return e
+      | Ok () ->
+        let lookahead = ref {offset = 0; blocks = []} in
+        let t = {block; block_size; program_block_size; lookahead; new_block_mutex = Lwt_mutex.create ()} in
+        Lwt_mutex.lock t.new_block_mutex >>= fun () ->
+        Traverse.follow_links t [] (Chamelon.Entry.Metadata root_pair) >>= function
+        | Error _e ->
+          Lwt_mutex.unlock t.new_block_mutex;
+          Log.err (fun f -> f "couldn't get list of used blocks");
+          Lwt.return @@ Error (`Not_found Mirage_kv.Key.empty)
+        | Ok used_blocks ->
+          Log.debug (fun f -> f "found %d used blocks on block-based key-value store: %a" (List.length used_blocks) Fmt.(list ~sep:sp int64) used_blocks);
+          let open Allocate in
+          let offset, blocks = unused t used_blocks in
+          let lookahead = ref {blocks; offset} in
+          Lwt_mutex.unlock t.new_block_mutex;
+          Lwt.return @@ Ok {t with lookahead; block; block_size; program_block_size}
 
   let format ~program_block_size ~block_size (sectors : Sectors.t) :
     (unit, write_error) result Lwt.t =
