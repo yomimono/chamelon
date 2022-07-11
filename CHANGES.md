@@ -1,3 +1,8 @@
+# v0.0.10 (2022-07-11)
+
+* detect simple cycles in the metadata tree at connect time (@yomimono)
+* check block size in the superblock at connect time, and fail if it doesn't match block device (@yomimono)
+
 # v.0.0.9.1 (2022-06-23)
 
 * fix 32-bit compilation, for real this time (@yomimono)
