@@ -33,18 +33,6 @@ let ctz_of_cstruct cs =
   if Cstruct.length cs < 8 then None
   else Some Cstruct.LE.(get_uint32 cs 0, get_uint32 cs 4)
 
-let size (tag, data) =
-  match tag.Tag.type3 with
-  | Tag.LFS_TYPE_STRUCT, c when c = inline_struct_chunk ->
-    `File tag.Tag.length
-  | Tag.LFS_TYPE_STRUCT, c when c = ctz_chunk -> begin
-      match ctz_of_cstruct data with
-      | None -> `Skip
-      | Some (_, file_size) -> `File (Int32.to_int file_size)
-    end
-  | Tag.LFS_TYPE_STRUCT, c when c = 0x00 -> `Dir_id tag.Tag.id
-  | _ -> `Skip
-
 let write_inline n id contents =
   [name n id; (create_inline id contents), contents; ]
 

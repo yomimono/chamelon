@@ -251,15 +251,21 @@ module File = struct
 
   let size () =
     let not_a_file = Chamelon.Dir.mkdir ~to_pair:(2L, 3L) 1 in
-    match Chamelon.File.size not_a_file with
-    | `Dir_id n when n != 1 -> Alcotest.failf "gave wrong dir id: %d (0x%x)" n n
+    match Chamelon.Content.size not_a_file with
     | `File _ -> Alcotest.fail "gave a file size for a directory"
     | `Skip -> Alcotest.fail "inappropriately skipped a directory"
-    | `Dir_id _ ->
+    | `Dir p ->
+      Alcotest.(check @@ pair int64 int64) "dirpair to recurse into for size" (2L, 3L) p;
       let ctz = Chamelon.File.create_ctz 2 ~pointer:4l ~file_size:10l in
-      match Chamelon.File.size ctz with
-      | `Dir_id _ | `Skip -> Alcotest.fail "didn't get file size for a ctz"
-      | `File n -> Alcotest.(check int) "file size for a ctz" 10 n
+      match Chamelon.Content.size ctz with
+      | `Dir _ | `Skip -> Alcotest.fail "didn't get file size for a ctz"
+      | `File n ->
+        Alcotest.(check int) "file size for a ctz" 10 n;
+        let v = Cstruct.of_string "pies" in
+        let inline = Chamelon.File.create_inline 3 v in
+        match Chamelon.Content.size (inline, v) with
+        | `Dir _ | `Skip -> Alcotest.fail "didn't get filesize for inlien file"
+        | `File n -> Alcotest.(check int) "file size for an inline file" (Cstruct.length v) n
 
 end
 
