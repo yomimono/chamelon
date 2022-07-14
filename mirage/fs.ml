@@ -560,7 +560,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
 
   module Size = struct
 
-    let get_size t parent_dir_head filename =
+    let get_file_size t parent_dir_head filename =
       Find.entries_of_name t parent_dir_head filename >|= function
       | Error _ | Ok [] -> Error (`Not_found (Mirage_kv.Key.v filename))
       | Ok compacted ->
@@ -600,14 +600,18 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     let size t key : (int, error) result Lwt.t =
       match Mirage_kv.Key.segments key with
       | [] -> size_all t root_pair >>= fun i -> Lwt.return @@ Ok i
-      | basename::[] -> get_size t root_pair basename
-      | _ ->
-        let dirname = Mirage_kv.Key.(parent key |> segments) in
-        Find.find_first_blockpair_of_directory t root_pair dirname >>= function
-        | `Basename_on pair -> begin
-            get_size t pair (Mirage_kv.Key.basename key)
-          end
-        | _ -> Lwt.return @@ Error (`Not_found key)
+      | basename::[] -> get_file_size t root_pair basename
+      | segments ->
+        Find.find_first_blockpair_of_directory t root_pair segments >>= function
+        | `Basename_on p -> size_all t p >|= fun i -> Ok i
+        | `No_entry | `No_id _ | `No_structs -> begin
+            (* no directory by that name, so try for a file *)
+            Find.find_first_blockpair_of_directory t root_pair segments >>= function
+            | `Basename_on pair -> begin
+                get_file_size t pair (Mirage_kv.Key.basename key)
+              end
+            | _ -> Lwt.return @@ Error (`Not_found key)
+        end
 
   end
 

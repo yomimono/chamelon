@@ -250,6 +250,19 @@ let test_size_small_file block _ () =
     | Ok s -> Alcotest.(check int) "size of small file is correct" (String.length contents) s;
       Lwt.return_unit
 
+let test_size_dir block _ () =
+  let key1 = Mirage_kv.Key.v "/important do not lose/1"
+  and key2 = Mirage_kv.Key.v "/important do not lose/2"
+  and contents = "a string of known size"
+  in
+  format_and_mount block >>= fun fs ->
+  Chamelon.set fs key1 contents >>= function | Error e -> fail_write e | Ok () ->
+  Chamelon.set fs key2 contents >>= function | Error e -> fail_write e | Ok () ->
+  Chamelon.size fs Mirage_kv.Key.empty >>= function
+  | Error e -> fail_read e
+  | Ok n -> Alcotest.(check int) "directory file size" ((String.length contents) * 2) n;
+    Lwt.return_unit
+
 let test_many_files block _ () =
   format_and_mount block >>= fun fs ->
   let contents i = "number " ^ string_of_int i in
