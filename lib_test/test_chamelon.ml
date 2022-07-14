@@ -249,6 +249,18 @@ module File = struct
     Alcotest.(check int) "minimal three-block file" 2 @@ Chamelon.File.last_block_index
       ~file_size:(block_size + (block_size - 8) + 1) ~block_size
 
+  let size () =
+    let not_a_file = Chamelon.Dir.mkdir ~to_pair:(2L, 3L) 1 in
+    match Chamelon.File.size not_a_file with
+    | `Dir_id n when n != 1 -> Alcotest.failf "gave wrong dir id: %d (0x%x)" n n
+    | `File _ -> Alcotest.fail "gave a file size for a directory"
+    | `Skip -> Alcotest.fail "inappropriately skipped a directory"
+    | `Dir_id _ ->
+      let ctz = Chamelon.File.create_ctz 2 ~pointer:4l ~file_size:10l in
+      match Chamelon.File.size ctz with
+      | `Dir_id _ | `Skip -> Alcotest.fail "didn't get file size for a ctz"
+      | `File n -> Alcotest.(check int) "file size for a ctz" 10 n
+
 end
 
 let () =
@@ -274,6 +286,7 @@ let () =
         ]);
     ( "file", [
           tc "tricky last block index values" `Quick File.last_block;
+          tc "sizes of entries" `Quick File.size;
         ]);
     ( "roundtrip", [
           tc "you got a parser and printer, you know what to do" `Quick Block.roundtrip;
