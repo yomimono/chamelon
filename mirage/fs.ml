@@ -584,9 +584,22 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
           | Some (_pointer, length) -> Ok (Int32.to_int length)
           | None -> Error (`Value_expected (Mirage_kv.Key.v filename))
 
+    let rec size_all t blockpair =
+      Find.all_entries_in_dir t blockpair >>= function
+      | Error _ -> Lwt.return 0
+      | Ok l ->
+        let entries = List.(map snd l |> flatten) in
+        Lwt_list.fold_left_s (fun acc e ->
+            match Chamelon.Content.size e with
+            | `File n -> Lwt.return @@ acc + n
+            | `Skip -> Lwt.return @@ acc
+            | `Dir p ->
+              size_all t p >>= fun s -> Lwt.return @@ s + acc
+          ) 0 entries
+
     let size t key : (int, error) result Lwt.t =
       match Mirage_kv.Key.segments key with
-      | [] -> Lwt.return @@ Error (`Value_expected key)
+      | [] -> size_all t root_pair >>= fun i -> Lwt.return @@ Ok i
       | basename::[] -> get_size t root_pair basename
       | _ ->
         let dirname = Mirage_kv.Key.(parent key |> segments) in
