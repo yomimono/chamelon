@@ -24,7 +24,7 @@ let key = Crowbar.(map [bytes] Mirage_kv.Key.v)
 
 let kv = Crowbar.(pair key bytes)
 
-let init name blocks to_write =
+let readback name blocks to_write =
   Lwt_main.run (
     Block.connect name >>= fun block ->
     (* on start, fill the in-memory block device *)
@@ -57,4 +57,4 @@ let init name blocks to_write =
 let () =
   let open Crowbar in
   Logs.set_level (Some Logs.Debug);
-  add_test ~name:"initialize" [bytes; list block_gen; list kv] init
+  add_test ~name:"read written info" [bytes; list block_gen; list kv] readback
