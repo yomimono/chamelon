@@ -44,6 +44,8 @@ let size name blocks to_write =
       (* if we couldn't get a starting size, abort *)
       Block.disconnect block >>= fun () -> Crowbar.bad_test ()
     | Ok start_size ->
+      Format.printf "fs mounted with size %d to start\n%!" start_size;
+      Format.printf "%d ks and vs: %a\n%!" (List.length to_write) Fmt.(list ~sep:semi @@ pair ~sep:comma Mirage_kv.Key.pp Dump.string) to_write;
     (* write all the key/value pairs.
      * if they all succeeded,
      * the size reported for /
@@ -54,19 +56,21 @@ let size name blocks to_write =
         (* don't overwrite any previously set keys, and if we otherwise would,
          * don't include the value we would've set in the sum *)
         Chamelon.get fs k >>= function
-        | Ok _ -> Lwt.return sum
+        | Ok _ ->
+          Format.printf "skipping %a as it's already set\n%!" Mirage_kv.Key.pp k;
+          Lwt.return sum
         | Error _ ->
           Chamelon.set fs k v >>= function
           | Error _ ->
             Block.disconnect block >>= fun () ->
             Crowbar.bad_test ()
           | Ok () ->
+            Format.printf "set key %a, value length %d, new sum %d\n%!" Mirage_kv.Key.pp k (String.length v) (sum + String.length v);
             Lwt.return (sum + String.length v)
     ) start_size to_write >>= fun sum ->
     Chamelon.size fs Mirage_kv.Key.empty >>= function
     | Error e -> Crowbar.failf "size failed on a filesystem where writes succeeded: %a" Chamelon.pp_error e
     | Ok size ->
-      Format.printf "%d ks and vs: %a\n%!" (List.length to_write) Fmt.(list ~sep:semi @@ pair ~sep:comma Mirage_kv.Key.pp string) to_write;
       Crowbar.check_eq ~pp:Fmt.int size sum;
     Block.disconnect block
   )
