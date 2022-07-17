@@ -34,11 +34,16 @@ let start block blocks =
   | Ok fs ->
     Lwt.return fs
 
-
 let size name blocks to_write =
   Lwt_main.run (
     Block.connect name >>= fun block ->
     start block blocks >>= fun fs ->
+    (* our starting filesystem might have readable data; include that in the starting size *)
+    Chamelon.size fs Mirage_kv.Key.empty >>= function
+    | Error _ ->
+      (* if we couldn't get a starting size, abort *)
+      Block.disconnect block >>= fun () -> Crowbar.bad_test ()
+    | Ok start_size ->
     (* write all the key/value pairs.
      * if they all succeeded,
      * the size reported for /
@@ -57,10 +62,12 @@ let size name blocks to_write =
             Crowbar.bad_test ()
           | Ok () ->
             Lwt.return (sum + String.length v)
-    ) 0 to_write >>= fun sum ->
+    ) start_size to_write >>= fun sum ->
     Chamelon.size fs Mirage_kv.Key.empty >>= function
     | Error e -> Crowbar.failf "size failed on a filesystem where writes succeeded: %a" Chamelon.pp_error e
-    | Ok size -> Crowbar.check (size = sum);
+    | Ok size ->
+      Format.printf "%d ks and vs: %a\n%!" (List.length to_write) Fmt.(list ~sep:semi @@ pair ~sep:comma Mirage_kv.Key.pp string) to_write;
+      Crowbar.check_eq ~pp:Fmt.int size sum;
     Block.disconnect block
   )
 
