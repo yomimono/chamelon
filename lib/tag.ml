@@ -13,9 +13,22 @@ type abstract_type =
     (* data checksummed includes all metadata since previous CRC tag, including the CRC tag itself *)
 [@@uint8_t]]
 
-type type3 = abstract_type * int
+module Magic = struct
+  let struct_dir = 0x00
+  let struct_inline = 0x01
+  let struct_ctz = 0x02
 
-let hardtail = (LFS_TYPE_TAIL, 0x01)
+  let tail_soft = 0x00
+  let tail_hard = 0x01
+
+  let not_associated = 0x3ff (* special value for "id" field *)
+  let deleted_tag = 0x3ff (* special value for "length" field *)
+
+  let invalid_tags = [
+    Cstruct.of_string "\x00\x00\x00\x00";
+    Cstruct.of_string "\xff\xff\xff\xff";
+  ]
+end
 
 type t = {
   valid : bool;
@@ -24,16 +37,8 @@ type t = {
   length : int;
 }
 
-let not_associated = 0x3ff (* special value for "id" field *)
-let deleted_tag = 0x3ff (* special value for "length" field *)
-
 let size = 4 (* tags are always 32 bits, with internal
                 numerical representations big-endian *)
-
-let invalid_tags = [
-  Cstruct.of_string "\x00\x00\x00\x00";
-  Cstruct.of_string "\xff\xff\xff\xff";
-]
 
 let pp fmt tag =
   Format.fprintf fmt "id %d (%x), length %d (%x), valid %b, type is %x with chunk %x" tag.id tag.id
@@ -50,11 +55,11 @@ let xor ~into arg =
 
 let is_file_struct tag =
   (fst tag.type3) = LFS_TYPE_STRUCT &&
-  ((snd tag.type3) = 0x00 (* dirstruct *)
-   || snd tag.type3 = 0x02) (* ctz *)
+  ((snd tag.type3) = Magic.struct_dir
+   || snd tag.type3 = Magic.struct_ctz)
 
 let is_hardtail {type3; _} =
-  (fst type3) = LFS_TYPE_TAIL && (snd type3) = 0x01
+  (fst type3) = LFS_TYPE_TAIL && (snd type3) = Magic.tail_hard
 
 let has_links tag =
   is_file_struct tag || is_hardtail tag
@@ -68,10 +73,10 @@ let delete id =
     
 let of_cstruct ~xor_tag_with cs =
   let tag_region = Cstruct.sub cs 0 size in
-  if List.exists (Cstruct.equal tag_region) invalid_tags then Error (`Msg "invalid tag")
+  if List.exists (Cstruct.equal tag_region) Magic.invalid_tags then Error (`Msg "invalid tag")
   else begin
     xor ~into:cs xor_tag_with;
-    if List.exists (Cstruct.equal (Cstruct.sub cs 0 size)) invalid_tags then
+    if List.exists (Cstruct.equal (Cstruct.sub cs 0 size)) Magic.invalid_tags then
       Error (`Msg "invalid tag")
     else begin
       let r32 = Cstruct.BE.get_uint32 cs 0 in
