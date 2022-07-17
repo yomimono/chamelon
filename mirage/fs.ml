@@ -594,14 +594,17 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
             | `File n -> Lwt.return @@ acc + n
             | `Skip -> Lwt.return @@ acc
             | `Dir p ->
+              Log.debug (fun f -> f "descending into dirpair %a" pp_blockpair p);
               size_all t p >>= fun s -> Lwt.return @@ s + acc
           ) 0 entries
 
     let size t key : (int, error) result Lwt.t =
+      Log.debug (fun f -> f "getting size on key %a" Mirage_kv.Key.pp key);
       match Mirage_kv.Key.segments key with
       | [] -> size_all t root_pair >>= fun i -> Lwt.return @@ Ok i
       | basename::[] -> get_file_size t root_pair basename
       | segments ->
+        Log.debug (fun f -> f "descending into segments %a" Fmt.(list ~sep:comma string) segments);
         Find.find_first_blockpair_of_directory t root_pair segments >>= function
         | `Basename_on p -> size_all t p >|= fun i -> Ok i
         | `No_entry | `No_id _ | `No_structs -> begin

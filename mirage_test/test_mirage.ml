@@ -250,6 +250,13 @@ let test_size_small_file block _ () =
     | Ok s -> Alcotest.(check int) "size of small file is correct" (String.length contents) s;
       Lwt.return_unit
 
+let test_size_empty block _ () =
+  format_and_mount block >>= fun fs ->
+  Chamelon.size fs Mirage_kv.Key.empty >>= function
+  | Error e -> fail_read e
+  | Ok n -> Alcotest.(check int) "fresh filesystem size /" 0 n;
+    Lwt.return_unit
+  
 let test_size_dir block _ () =
   let key1 = Mirage_kv.Key.v "/important do not lose/1"
   and key2 = Mirage_kv.Key.v "/important do not lose/2"
@@ -362,7 +369,9 @@ let test img =
       );
       ("size",
       [ test_case "size of something missing" `Quick (test_size_nonexistent block);
-      test_case "size of a small file" `Quick (test_size_small_file block);
+        test_case "size of a small file" `Quick (test_size_small_file block);
+        test_case "size of an empty fs" `Quick (test_size_empty block);
+        test_case "size of a directory" `Quick (test_size_dir block);
        ]
       );
       ("digest",
