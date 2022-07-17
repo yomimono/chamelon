@@ -816,16 +816,22 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
   let connect ~program_block_size ~block_size device : (t, error) result Lwt.t =
     This_Block.connect ~block_size device >>= fun block ->
     Log.debug (fun f -> f "initiating filesystem with block size %d (0x%x)" block_size block_size);
-    let first_block = Cstruct.create block_size in
-    This_Block.read block 0L [first_block] >>= function
+    let block0, block1= Cstruct.create block_size, Cstruct.create block_size in
+    Lwt_result.both 
+      (This_Block.read block 0L [block0])
+      (This_Block.read block 1L [block1])
+    >>= function
     | Error e ->
-      Log.err (fun f -> f "first block read failed: %a" This_Block.pp_error e);
+      Log.err (fun f -> f "first blockpair read failed: %a" This_Block.pp_error e);
       Lwt.return @@ Error (`Not_found Mirage_kv.Key.empty)
-    | Ok () ->
+    | Ok ((), ()) ->
       (* make sure the block is parseable and block size matches *)
-      check_superblock ~program_block_size ~block_size_device:(Int32.of_int block_size) first_block >>= function
+      Lwt_result.both
+        (check_superblock ~program_block_size ~block_size_device:(Int32.of_int block_size) block0)
+        (check_superblock ~program_block_size ~block_size_device:(Int32.of_int block_size) block1)
+      >>= function
       | Error _ as e -> Lwt.return e
-      | Ok () ->
+      | Ok ((), ()) ->
         let lookahead = ref {offset = 0; blocks = []} in
         let t = {block; block_size; program_block_size; lookahead; new_block_mutex = Lwt_mutex.create ()} in
         Lwt_mutex.lock t.new_block_mutex >>= fun () ->
