@@ -63,6 +63,16 @@ let test_set_nonascii_key =
   let contents = "camel" in
   test_get_set_general path contents
 
+let test_set_too_big_key block _ () =
+  (* 500 x 'A' shouldn't be writable as a path on our 512-block fs *)
+  let path = Mirage_kv.Key.v "/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" in
+  let contents = ":D" in
+  format_and_mount block >>= fun fs ->
+  Chamelon.set fs path contents >>= function
+  | Ok () -> Alcotest.fail "allowed a write to way too big a key"
+  | Error e -> Format.printf "%a" Chamelon.pp_write_error e; Lwt.return_unit
+
+
 let test_set_empty_key block _ () =
   let path = Mirage_kv.Key.v "" in
   let contents = "camel" in
@@ -353,6 +363,7 @@ let test img =
          test_case "get/set roundtrip w/non-ascii data" `Quick (test_set_nonascii_data block);
          test_case "get/set roundtrip w/non-ascii key" `Quick (test_set_nonascii_key block);
          test_case "get/set roundtrip w/empty key" `Quick (test_set_empty_key block);
+         test_case "try to set too big a key" `Quick (test_set_too_big_key block);
          test_case "mkdir -p" `Quick (test_set_deep block);
          test_case "disk full" `Quick (test_no_space block);
        ]
