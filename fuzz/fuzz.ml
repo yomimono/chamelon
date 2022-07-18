@@ -102,6 +102,7 @@ let readback name blocks to_write =
 
 let () =
   let open Crowbar in
+  Logs.set_reporter @@ Logs_fmt.reporter ();
   Logs.set_level (Some Logs.Debug);
   add_test ~name:"read written info" [bytes; list block_gen; list kv] readback;
   add_test ~name:"size is sum of all written values" [bytes; list block_gen; list kv] size

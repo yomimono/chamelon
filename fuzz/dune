@@ -1,6 +1,6 @@
 (executable
   (name fuzz)
-  (libraries chamelon.kv crowbar cstruct lwt lwt.unix mirage-block-combinators mirage-clock-unix)
+  (libraries chamelon.kv crowbar cstruct logs.fmt lwt lwt.unix mirage-block-combinators mirage-clock-unix)
 )
 
 (rule
