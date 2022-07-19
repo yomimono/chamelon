@@ -264,7 +264,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         | Ok _ -> Lwt.return @@ Ok ()
         | Error _ as e -> Lwt.return e
       end
-      | `Split | `Split_emergency ->
+      | `Split | `Split_emergency | `Unwriteable ->
         (* try a compaction first *)
         Cstruct.memset cs1 0x00;
         let compacted = Chamelon.Block.compact data in
@@ -295,7 +295,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
             | Ok _ -> Lwt.return @@ Ok ()
             | Error _ as e -> Lwt.return e
           end
-        | `Split_emergency, _ ->
+        | `Split_emergency, _  | `Unwriteable, _ ->
           Log.err (fun f -> f "Couldn't write to block %a" pp_blockpair (b1, b2));
           Lwt.return @@ Error `No_space
   end

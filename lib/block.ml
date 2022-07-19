@@ -10,7 +10,7 @@ type t = {
   hardtail : Entry.t option;
 }
 
-type write_result = [ `Ok | `Split | `Split_emergency ]
+type write_result = [ `Ok | `Split | `Split_emergency | `Unwriteable ]
 
 let commits t = t.commits
 let revision_count t = t.revision_count
@@ -112,9 +112,11 @@ let into_cstruct ~program_block_size cs block =
       let hardtail_bytes, _raw_crc =
         write_hardtail ~after:List.(hd @@ rev commits) ~starting_xor_tag ~starting_offset block hardtail_region
       in
-      if (after_last_crc + hardtail_bytes) > ((Cstruct.length cs) / 2) then `Split else `Ok
+      if (after_last_crc + hardtail_bytes) > Cstruct.length cs then `Unwriteable
+      else if (after_last_crc + hardtail_bytes) > ((Cstruct.length cs) / 2) then `Split
+      else `Ok
     with
-    | Invalid_argument _ -> `Split_emergency
+    | Invalid_argument _ -> `Unwriteable
 
 let ids t =
   let id_of_entry e = (fst e).Tag.id in

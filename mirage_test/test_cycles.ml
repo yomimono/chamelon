@@ -45,6 +45,7 @@ let simple_cycle block _ () =
       let altered_block = Chamelon_lib.Block.add_commit parsed_root_block new_commit in
       (* properly serialize the block to a cstruct for writing to the block device *)
       match Chamelon_lib.Block.to_cstruct ~program_block_size ~block_size altered_block with
+      | _, `Unwriteable -> Alcotest.fail "attempted write was unwriteable"
       | _, `Split | _, `Split_emergency -> Alcotest.failf "first write gave us a split"
       | new_block_zero, `Ok ->
         (* write the serialized block *)

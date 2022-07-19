@@ -201,6 +201,7 @@ module Block = struct
     let old_block, _new_block = Chamelon.Block.split pre_split new_block_address in
     let cs = Cstruct.create block_size in
     match Chamelon.Block.into_cstruct ~program_block_size cs old_block with
+    | `Unwriteable -> Alcotest.fail "this block should be extremely writeable"
     | `Split -> Alcotest.fail "it's not split time now"
     | `Split_emergency -> Alcotest.fail "it's not emergency split time now"
     | `Ok ->
