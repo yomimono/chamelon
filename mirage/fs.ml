@@ -18,6 +18,8 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     block_size : int;
     program_block_size : int;
     lookahead : lookahead ref;
+    file_size_max : Cstruct.uint32;
+    name_length_max : Cstruct.uint32;
     new_block_mutex : Lwt_mutex.t;
   }
 
@@ -807,7 +809,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
           end else if not @@ Int32.equal sb.block_size block_size_device then begin
             Log.err (fun f -> f "filesystem expects a block device with size %ld but the device block size is %ld" sb.block_size block_size_device);
             Lwt.return @@ Error (`Not_found Mirage_kv.Key.empty)
-          end else Lwt.return @@ Ok ()
+          end else Lwt.return @@ Ok (Chamelon.Block.revision_count parsed_block, sb)
       end
       | _ -> Log.err (fun f -> f "expected entries not found on parsed superblock");
         Lwt.return @@ Error (`Not_found Mirage_kv.Key.empty)
@@ -831,9 +833,19 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         (check_superblock ~program_block_size ~block_size_device:(Int32.of_int block_size) block1)
       >>= function
       | Error _ as e -> Lwt.return e
-      | Ok ((), ()) ->
+      | Ok ((rc0, sb0), (rc1, sb1)) ->
         let lookahead = ref {offset = 0; blocks = []} in
-        let t = {block; block_size; program_block_size; lookahead; new_block_mutex = Lwt_mutex.create ()} in
+        let file_size_max, name_length_max =
+          if rc1 > rc0 then sb1.file_size_max, sb1.name_length_max else sb0.file_size_max, sb0.name_length_max
+        in
+        let t = {block;
+                 block_size;
+                 program_block_size;
+                 lookahead;
+                 file_size_max;
+                 name_length_max;
+                 new_block_mutex = Lwt_mutex.create ()}
+        in
         Lwt_mutex.lock t.new_block_mutex >>= fun () ->
         Traverse.follow_links t [] (Chamelon.Entry.Metadata root_pair) >>= function
         | Error _e ->
