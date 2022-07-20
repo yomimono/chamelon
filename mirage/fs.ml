@@ -354,11 +354,11 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       let entries_matching_name (block, entries) =
         match id_of_key (Chamelon.Entry.compact entries) name with
         | None ->
-          Log.debug (fun m -> m "id for %s not found in %d entries from %a"
+          Log.debug (fun m -> m "id for %S not found in %d entries from %a"
                          name (List.length entries) pp_blockpair block);
           Error (`No_id (Mirage_kv.Key.v name))
         | Some id ->
-          Log.debug (fun m -> m "name %s is associated with id %d on blockpair %a"
+          Log.debug (fun m -> m "name %S is associated with id %d on blockpair %a"
                          name id pp_blockpair block);
           let entries = entries_of_id entries id in
           Log.debug (fun m -> m "found %d entries for id %d in %a"
@@ -846,6 +846,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
                  name_length_max;
                  new_block_mutex = Lwt_mutex.create ()}
         in
+        Log.debug (fun f -> f "mounting fs with file size max %ld, name length max %ld" file_size_max name_length_max);
         Lwt_mutex.lock t.new_block_mutex >>= fun () ->
         Traverse.follow_links t [] (Chamelon.Entry.Metadata root_pair) >>= function
         | Error _e ->

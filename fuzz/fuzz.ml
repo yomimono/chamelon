@@ -79,10 +79,12 @@ let readback name blocks to_write =
   Lwt_main.run (
     Block.connect name >>= fun block ->
     start block blocks >>= fun fs ->
+    Logs.debug (fun f -> f "%d ks and vs: %a\n%!" (List.length to_write) Fmt.(list ~sep:semi @@ pair ~sep:comma Mirage_kv.Key.pp Dump.string) to_write);
     (* for any key/value pair, if we can write it,
      * we should then be able to read it back *)
     Lwt_list.iter_p (
       fun (k, v) ->
+        Logs.debug (fun f -> f "setting %S" @@ Mirage_kv.Key.to_string k);
         Chamelon.set fs k v >>= function
 	| Error _ ->
 	  Block.disconnect block >>= fun () ->
@@ -93,7 +95,7 @@ let readback name blocks to_write =
 	    Block.disconnect block >>= fun () ->
 	    Crowbar.failf "on readback of successfully set value: %a" Chamelon.pp_error e
 	  | Ok readback ->
-              Lwt.return @@ Crowbar.check_eq readback v
+              Lwt.return @@ Crowbar.check_eq ~pp:Fmt.Dump.string readback v
 
     ) to_write
     >>= fun () ->
