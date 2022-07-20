@@ -32,15 +32,32 @@ type superblock = {
 
 let parse cs =
   if Cstruct.length cs < sizeof_superblock then Error (`Msg "superblock inline struct too small")
-  else Ok {
+  else begin
+    let name_length_max = get_superblock_name_length_max cs
+    and block_size = get_superblock_block_size cs
+    in
+    (* if the user really wants a name length that's the maximum possible with this block size,
+     * they should be allowed to have it,
+     * but anything bigger than that should be rejected *)
+    let overhead = 4 (* revision count *)
+      + Tag.size (* tag for this name *)
+      + Tag.size (* tag for the CRC *)
+      + Tag.size + 8 (* hardtail entry *)
+      + Tag.size (* hardtail CRC *)
+    in
+    if (Int32.to_int name_length_max) > ((Int32.to_int block_size) - overhead) then
+      Error (`Msg (Format.asprintf "name length max %ld is too big for block size %ld after overhead" name_length_max block_size))
+    else
+    Ok {
     version_minor = get_superblock_version_minor cs;
     version_major = get_superblock_version_major cs;
-    block_size = get_superblock_block_size cs;
+    block_size;
     block_count = get_superblock_block_count cs;
     name_length_max = get_superblock_name_length_max cs;
     file_size_max = get_superblock_file_size_max cs;
     file_attribute_size_max = get_superblock_file_attribute_size_max cs;
   }
+  end
 
 let into_cstruct cs sb =
   set_superblock_version_minor cs sb.version_minor;
