@@ -239,6 +239,66 @@ let test_get_big_value block _ () =
       Alcotest.(check string "retrieved big file is the same as what we set" (Cstruct.to_string value) retrieved_value);
       Lwt.return_unit
 
+let test_get_valid_partial block _ () =
+  let negation = "on opposite day, "
+  and content = "the sky is red"
+  in
+  let key = Mirage_kv.Key.v "/wisdom"
+  and contents = negation ^ content
+  in
+  format_and_mount block >>= fun fs ->
+  Chamelon.set fs key contents >>= function
+  | Error e -> fail_write e
+  | Ok () ->
+    Chamelon.get_partial fs key
+      ~offset:(String.length negation)
+      ~length:(String.length content) >>= function
+    | Error e -> fail_read e
+    | Ok partial -> Alcotest.(check string) "partial read" content partial;
+      Lwt.return_unit
+
+let test_get_partial_bad_offsets block _ () =
+  let key = Mirage_kv.Key.v "/file" and content = "important stuff" in
+  format_and_mount block >>= fun fs ->
+  Chamelon.set fs key content >>= function
+  | Error e -> fail_write e
+  | Ok () ->
+    (* offset too big *)
+    Chamelon.get_partial fs key ~offset:(String.length content + 10) ~length:1 >>= function
+    | Ok v -> Alcotest.failf "partial read off end of file succeeded, returning %S" v
+    | Error _ ->
+      (* offset too *small* *)
+      Chamelon.get_partial fs key ~offset:(-10) ~length:1 >>= function
+      | Ok v -> Alcotest.failf "negative offset succeeded, returning %S" v
+      | Error _ -> Lwt.return_unit
+
+let test_get_partial_bad_length block _ () =
+  let key = Mirage_kv.Key.v "/file" and content = "important stuff" in
+  format_and_mount block >>= fun fs ->
+  Chamelon.set fs key content >>= function
+  | Error e -> fail_write e
+  | Ok () ->
+    (* negative length *)
+    Chamelon.get_partial fs key ~offset:0 ~length:(-10) >>= function
+    | Ok v -> Alcotest.failf "partial read with negative length succeeded, returning %S" v
+    | Error _ -> 
+      Chamelon.get_partial fs key ~offset:0 ~length:(2 * (String.length content)) >>= function
+      | Ok v -> Alcotest.failf "partial read with excessive length succeeded, returning %S" v
+      | Error _ ->
+        Chamelon.get_partial fs key ~offset:0 ~length:0 >>= function
+        | Ok v -> Alcotest.failf "partial read with zero length succeeded, returning %S" v
+        | Error _ -> Lwt.return_unit
+
+let test_get_partial_bad_combos block _ () =
+  let key = Mirage_kv.Key.v "/file" and content = "important stuff" in
+  format_and_mount block >>= fun fs ->
+  Chamelon.set fs key content >>= function
+  | Error e -> fail_write e
+  | Ok () ->
+    Chamelon.get_partial fs key ~offset:5 ~length:(String.length content) >>= function
+    | Ok v -> Alcotest.failf "partial read with excessive length succeeded, returning %S" v
+    | Error _ -> Lwt.return_unit
+
 let test_size_nonexistent block _ () =
   let key = Mirage_kv.Key.v "/filenotfound" in
   format_and_mount block >>= fun fs ->
@@ -376,6 +436,10 @@ let test img =
        [ test_case "get nonexistent value" `Quick (test_nonexistent_value block);
          test_case "get a dictionary" `Quick (test_get_dictionary block);
          test_case "get a big value" `Quick (test_get_big_value block);
+         test_case "get valid partial data" `Quick (test_get_valid_partial block);
+         test_case "get partial data w/bad offset" `Quick (test_get_partial_bad_offsets block);
+         test_case "get partial data w/bad length" `Quick (test_get_partial_bad_length block);
+         test_case "get partial data w/bad offset+length" `Quick (test_get_partial_bad_combos block);
        ]
       );
       ("size",

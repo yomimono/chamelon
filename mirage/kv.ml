@@ -37,6 +37,23 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
 
   let get = Fs.File_read.get
 
+  let get_partial t key ~offset ~length =
+    if offset < 0 then begin
+      Log.err (fun f -> f "read requested with negative offset");
+      Lwt.return @@ Error (`Not_found key)
+    end else if length <= 0 then begin
+      Log.err (fun f -> f "read requested with length <= 0");
+      Lwt.return @@ Error (`Not_found key)
+    end else begin
+      get t key >|= function
+      | Error _ as e -> e
+      | Ok v ->
+        try Ok (String.sub v offset length)
+        with Invalid_argument _ ->
+          Log.err (fun f -> f "partial read request cannot be fulfilled: %d < %d" (String.length v) (offset + length));
+          Error (`Not_found key)
+    end
+
   (* [set] does a little work on top of the filesystem's set functions, because
    * we need to make directories if the key has >1 segment in it. *)
   (* Once we've either found or created the parent directory, we can ask the FS layer

@@ -93,10 +93,16 @@ let readback name blocks to_write =
 	  Chamelon.get fs k >>= function
 	  | Error e ->
 	    Block.disconnect block >>= fun () ->
-	    Crowbar.failf "on readback of successfully set value: %a" Chamelon.pp_error e
+	    Crowbar.failf "get of successfully set value: %a" Chamelon.pp_error e
 	  | Ok readback ->
-              Lwt.return @@ Crowbar.check_eq ~pp:Fmt.Dump.string readback v
-
+            Crowbar.check_eq ~pp:Fmt.Dump.string readback v;
+            Chamelon.get_partial fs k ~offset:0 ~length:(String.length v) >>= function
+	    | Error e ->
+	      Block.disconnect block >>= fun () ->
+	      Crowbar.failf "get_partial of successfully set value: %a" Chamelon.pp_error e
+            | Ok readback ->
+              Crowbar.check_eq ~pp:Fmt.Dump.string readback v;
+              Lwt.return_unit
     ) to_write
     >>= fun () ->
     Block.disconnect block
