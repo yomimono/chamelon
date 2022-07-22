@@ -9,4 +9,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) : sig
   (** [get_partial t k ~offset ~length] gives errors for length 0, negative offsets and lengths, and partial reads off the end of the file.  [get_partial t k ~offset ~length] should always give a result of (Ok v) where String.length v = length, or an error. *)
   val get_partial : t -> key -> offset:int -> length:int -> (string, error) result Lwt.t
 
+(** [simple_get_partial] is the naive implementation, which retrieves the whole file and then returns the subset the user requested. *)
+  val simple_get_partial : t -> key -> offset:int -> length:int -> (string, error) result Lwt.t
+
 end

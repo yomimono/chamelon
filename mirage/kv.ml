@@ -37,7 +37,7 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
 
   let get = Fs.File_read.get
 
-  let get_partial t key ~offset ~length =
+  let simple_get_partial t key ~offset ~length =
     if offset < 0 then begin
       Log.err (fun f -> f "read requested with negative offset");
       Lwt.return @@ Error (`Not_found key)
@@ -53,6 +53,9 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
           Log.err (fun f -> f "partial read request cannot be fulfilled: %d < %d" (String.length v) (offset + length));
           Error (`Not_found key)
     end
+
+  let get_partial t key ~offset ~length =
+    simple_get_partial t key ~offset ~length
 
   (* [set] does a little work on top of the filesystem's set functions, because
    * we need to make directories if the key has >1 segment in it. *)
