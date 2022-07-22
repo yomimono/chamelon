@@ -38,7 +38,10 @@ let read_real ~readfn n =
         readfn fs key ~offset:0 ~length:128 >>= function
         | Error e -> Format.eprintf "error reading test key: %a" Chamelon.pp_error e;
           assert false
-        | Ok _subset -> aux (n-1)
+        | Ok subset ->
+          (* not interested in benchmarking incorrect implementations *)
+          assert (String.equal subset comparator);
+          aux (n-1)
     in
     aux n
   )
