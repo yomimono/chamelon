@@ -481,6 +481,8 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
 
   module File_read : sig
     val get : t -> Mirage_kv.Key.t -> (string, error) result Lwt.t
+    val get_partial : t -> Mirage_kv.Key.t -> offset:int -> length:int ->
+       (string, error) result Lwt.t
   end = struct
 
     let get_ctz t key (pointer, length) =
@@ -557,6 +559,10 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
             get_value t pair (Mirage_kv.Key.basename key) >>= map_result
           end
         | _ -> Lwt.return @@ Error (`Not_found key)
+
+    let get_partial t key ~offset ~length : (string, error) result Lwt.t =
+      let _, _, _, _ = t, key, offset, length in
+      Lwt.return @@ Ok "cheese"
 
   end
 
