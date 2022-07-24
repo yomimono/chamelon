@@ -1,6 +1,6 @@
 (executables
-  (names test_cycles test_dirs test_mirage)
-  (libraries mirage-block-unix mirage-clock-unix mirage-crypto-rng mirage-crypto-rng.lwt mirage-kv logs.cli logs.fmt lwt chamelon chamelon.kv fpath alcotest alcotest-lwt)
+  (names mem_test_read test_cycles test_dirs test_mirage)
+  (libraries mirage-block-combinators mirage-block-unix mirage-clock-unix mirage-crypto-rng mirage-crypto-rng.lwt mirage-kv logs.cli logs.fmt lwt chamelon chamelon.kv fpath alcotest alcotest-lwt)
 )
 
 (rule
@@ -11,4 +11,5 @@
             (run dd if=/dev/zero of=emptyfile bs=1M count=10)
             (run %{exe:test_dirs.exe})
             (run %{exe:test_cycles.exe})
+            (run %{exe:mem_test_read.exe})
             )))
