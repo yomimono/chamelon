@@ -24,7 +24,7 @@ let mount_and_write =
       let content = String.init content_size (fun f -> Char.chr (f mod ascii_denom)) in
       Format.eprintf "starting key with %S\n%!" @@ String.sub content 0 128;
       Chamelon.set fs key content >>= function
-      | Error e -> Format.eprintf "error setting test key: %a" Chamelon.pp_write_error e; Alcotest.fail "bzzzzzert"
+      | Error e -> Alcotest.failf "error setting test key: %a" Chamelon.pp_write_error e
       | Ok () -> Lwt.return fs
 
 (* worst-case for an inefficient partial read, and a common real-world case:

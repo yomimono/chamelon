@@ -150,14 +150,14 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       in
       this_offset, IntSet.(elements @@ diff pool (of_list used_blocks))
 
-    let populate_lookahead t =
+    let populate_lookahead ~except t =
       Traverse.follow_links t [] (Chamelon.Entry.Metadata root_pair) >|= function
       | Error e ->
         Log.err (fun f -> f "error attempting to find unused blocks: %a" This_Block.pp_error e);
         Error `No_space
       | Ok used_blocks ->
         Log.debug (fun f -> f "%d blocks used: %a" (List.length used_blocks) Fmt.(list ~sep:sp uint64) used_blocks);
-        Ok (unused t used_blocks)
+        Ok (unused t (used_blocks @ except))
 
     let get_block t =
       match !(t.lookahead).blocks with
@@ -166,7 +166,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         Lwt.return @@ Ok block
       | [] ->
         let open Lwt_result.Infix in
-        populate_lookahead t >>= function
+        populate_lookahead ~except:[] t >>= function
         | _, [] ->
           Log.err (fun f -> f "no blocks remain free on filesystem");
           Lwt.return @@ Error `No_space
@@ -174,6 +174,43 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
           t.lookahead := ({offset = new_offset; blocks = l});
           Log.debug (fun f -> f "adding %d blocks to lookahead buffer (%a)" (List.length l) Fmt.(list int64) l);
           Lwt.return @@ Ok block
+
+    let get_blocks t n : (int64 list, write_error) result Lwt.t =
+      (* zero or fewer blocks is a pretty easy request to fulfill *)
+      if n <= 0 then Lwt.return @@ Ok []
+      else begin
+        let rec aux t acc n =
+          match !(t.lookahead).blocks with
+          (* if we have exactly enough blocks, just return the whole list *)
+          | l when List.length l = n ->
+            t.lookahead := {!(t.lookahead) with blocks = []};
+            Lwt.return @@ Ok l
+          (* if we have enough in the lookahead buffer, just grab the first one n times *)
+          | l when List.length l > n -> begin
+              let l = List.init n (fun a -> a) in
+              Lwt_list.fold_left_s (fun acc _ ->
+                  match acc with | Error _ as e -> Lwt.return e
+                                 | Ok l -> begin
+                                     get_block t >>= function
+                                     | Error _ as e -> Lwt.return e
+                                     | Ok b -> Lwt.return @@ Ok (b::l)
+                                   end
+                ) (Ok []) l
+            end
+          | l -> (* this is our sad case: not enough blocks in the lookahead allocator
+                    to satisfy the request. *)
+            let open Lwt_result.Infix in
+            populate_lookahead ~except:(l @ acc) t >>= function
+            | _, [] ->
+              Log.err (fun f -> f "no blocks remain free on filesystem");
+              Lwt.return @@ Error `No_space
+            | new_offset, next_l ->
+              t.lookahead := ({offset = new_offset; blocks = next_l});
+              Log.debug (fun f -> f "adding %d blocks to lookahead buffer (%a)" (List.length l) Fmt.(list int64) l);
+              aux t (l @ acc) (n - (List.length l))
+        in
+        aux t [] n
+      end
 
     (* this is a common enough case that it makes sense to handle it explicitly *)
     let get_block_pair t =
@@ -185,7 +222,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
        * so go just go ahead and do it first, and then take the first two blocks *)
       | _ ->
         let open Lwt_result.Infix in
-        populate_lookahead t >>= function
+        populate_lookahead ~except:[] t >>= function
         | new_offset, (block1::block2::l) ->
           t.lookahead := ({offset = new_offset; blocks = l});
           Log.debug (fun f -> f "adding %d blocks to lookahead buffer (%a)" (List.length l) Fmt.(list int64) l);
@@ -634,15 +671,18 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
 
   end = struct  
 
-    let rec write_ctz_block t l index so_far data =
+    (* write_ctz_block continues writing a CTZ `data` to `t` from the block list `blocks`. *)
+    let rec write_ctz_block t blocks written index so_far data =
       if Int.compare so_far (String.length data) >= 0 then begin
         (* we purposely don't reverse the list because we're going to want
          * the *last* block for inclusion in the ctz structure *)
-        Lwt.return @@ Ok l
+        Lwt.return @@ Ok written
       end else begin
-        Allocate.get_block t >>= function
-        | Error _ -> Lwt.return @@ Error `No_space
-        | Ok block_number ->
+        match blocks with
+        | [] ->
+          Log.err (fun f -> f "get_blocks gave us too few blocks for our CTZ file");
+          Lwt.return @@ Error `No_space
+        | block_number::blocks ->
           let pointer = Int64.to_int32 block_number in
           let block_cs = Cstruct.create t.block_size in
           let skip_list_size = Chamelon.File.n_pointers index in
@@ -651,7 +691,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
           (* the 0th item in the skip list is always (index - 1). Only exception
            * is the last block in the list (the first block in the file),
            * which has no skip list *)
-          (match l with
+          (match written with
            | [] -> ()
            | (_last_index, last_pointer)::_ ->
              (* the first entry in the skip list should be for block _last_index,
@@ -659,16 +699,32 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
              Cstruct.LE.set_uint32 block_cs 0 last_pointer
           );
           for n_skip_list = 1 to (skip_list_size - 1) do
-            let point_index = List.assoc (n_skip_list / (2 lsl n_skip_list)) l in
+            let point_index = List.assoc (n_skip_list / (2 lsl n_skip_list)) written in
             Cstruct.LE.set_uint32 block_cs (n_skip_list * 4) point_index
           done;
           Cstruct.blit_from_string data so_far block_cs skip_list_length data_length;
           This_Block.write t.block (Int64.of_int32 pointer) [block_cs] >>= function
           | Error _ -> Lwt.return @@ Error `No_space
           | Ok () ->
-            write_ctz_block t ((index, pointer)::l) (index + 1) (so_far + data_length) data
+            write_ctz_block t blocks ((index, pointer)::written) (index + 1) (so_far + data_length) data
       end
 
+    (* Get the correct number of blocks to write `data` as a CTZ, then write it. *)
+    let write_ctz t data =
+      let data_length = String.length data in
+      (* the average overhead is two pointers! for an excited and charming summation,
+       * see the littlefs repository's root-level DESIGN.md, subheading "CTZ skip-lists" *)
+      let raw_blocks_needed = (data_length / t.block_size) + (if data_length mod t.block_size = 0 then 0 else 1) in
+      let adjusted_length = data_length + raw_blocks_needed * 64 in
+      let adjusted_blocks_needed = adjusted_length / t.block_size + (if adjusted_length mod t.block_size = 0 then 0 else 1) in
+      Allocate.get_blocks t adjusted_blocks_needed >>= function
+      | Error _ as e -> Lwt.return e
+      | Ok blocks ->
+        (* ok super cool thanks for the big list of free blocks I love writing data <3 :)  *)
+        write_ctz_block t blocks [] 0 0 data
+
+    (* Find the correct directory structure in which to write the metadata entry for the CTZ pointer.
+     * Write the CTZ, then write the metadata. *)
     let rec write_in_ctz dir_block_pair t filename data entries =
       Read.block_of_block_pair t dir_block_pair >>= function
       | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v filename))
@@ -677,7 +733,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         | Some next_blockpair -> write_in_ctz next_blockpair t filename data entries
         | None ->
           let file_size = String.length data in
-          write_ctz_block t [] 0 0 data >>= function
+          write_ctz t data >>= function
           | Error _ as e -> Lwt.return e
           | Ok [] -> Lwt.return @@ Error `No_space
           | Ok ((_last_index, last_pointer)::_) ->
