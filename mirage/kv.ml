@@ -54,7 +54,7 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
           Error (`Not_found key)
     end
 
-  let get_partial = (* Fs.File_read.get_partial *) simple_get_partial
+  let get_partial = Fs.File_read.get_partial
 
   (* [set] does a little work on top of the filesystem's set functions, because
    * we need to make directories if the key has >1 segment in it. *)

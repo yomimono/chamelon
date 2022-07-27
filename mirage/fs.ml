@@ -542,14 +542,14 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
           | [] ->
             Lwt.return @@ Ok (data_region :: l)
       in
-      let index = Chamelon.File.last_block_index ~file_size:length
+      let index = Chamelon.File.last_block_index ~file_size
           ~block_size:t.block_size in
-      Log.debug (fun f -> f "last block has index %d (file size is %d)" index length);
+      Log.debug (fun f -> f "last block has index %d (file size is %d)" index file_size);
       read_block [] index pointer >>= function
       | Error _ -> Lwt.return @@ Error (`Not_found key)
       | Ok l ->
         (* the last block very likely needs to be trimmed *)
-        let cs = Cstruct.sub (Cstruct.concat l) 0 length in
+        let cs = Cstruct.sub (Cstruct.concat l) 0 file_size in
         let s = Cstruct.(to_string cs) in
         Lwt.return @@ Ok s
 
@@ -606,9 +606,39 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         | _ -> Lwt.return @@ Error (`Not_found key)
 
     let get_partial t key ~offset ~length : (string, error) result Lwt.t =
-      let _, _, _, _ = t, key, offset, length in
-      Lwt.return @@ Ok "cheese"
-
+      if offset < 0 then begin
+        Log.err (fun f -> f "read requested with negative offset");
+        Lwt.return @@ Error (`Not_found key)
+      end else if length <= 0 then begin
+        Log.err (fun f -> f "read requested with length <= 0");
+        Lwt.return @@ Error (`Not_found key)
+      end else begin
+        let map_result = function
+          | Error (`Not_found k) -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v k))
+          | Error (`Value_expected k) -> Lwt.return @@ Error (`Value_expected (Mirage_kv.Key.v k))
+          | Ok (`Inline d) -> begin
+            try Lwt.return @@ Ok (String.sub d offset length)
+            with Invalid_argument _ -> Lwt.return @@ Error (`Not_found key)
+          end
+          | Ok (`Ctz ctz) ->
+            get_ctz t key ctz >>= function
+            | Ok s -> begin
+              try Lwt.return @@ Ok (String.sub s offset length)
+              with Invalid_argument _ -> Lwt.return @@ Error (`Not_found key)
+            end
+            | e -> Lwt.return e
+        in
+        match Mirage_kv.Key.segments key with
+        | [] -> Lwt.return @@ Error (`Value_expected key)
+        | basename::[] -> get_value t root_pair basename >>= map_result
+        | _ ->
+          let dirname = Mirage_kv.Key.(parent key |> segments) in
+          Find.find_first_blockpair_of_directory t root_pair dirname >>= function
+          | `Basename_on pair -> begin
+              get_value t pair (Mirage_kv.Key.basename key) >>= map_result
+            end
+          | _ -> Lwt.return @@ Error (`Not_found key)
+      end
   end
 
   module Size = struct
