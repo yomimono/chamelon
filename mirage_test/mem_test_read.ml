@@ -18,13 +18,10 @@ let mount_and_write =
     | Error e -> Alcotest.failf "failed to mount fs: %a" Chamelon.pp_error e
     | Ok fs ->
       (* we want a real big buncha stuff *)
-      Format.eprintf "block device has %Ld sectors of size %d\n%!" info.size_sectors info.sector_size;
-      let space = (8192 - 64) * info.sector_size in
+      let space = ((Int64.to_int info.size_sectors) / 2) * info.sector_size in
       (* get an even # of iterations of our chargen loop, for easier `tail` testing *)
       let content_size = (space / ascii_denom) * ascii_denom in
       let content = String.init content_size (fun f -> Char.chr (f mod ascii_denom)) in
-      Format.eprintf "setting a key of size %d\n%!" content_size;
-      Format.eprintf "starting key with %S\n%!" @@ String.sub content 0 128;
       Chamelon.set fs key content >>= function
       | Error e -> Alcotest.failf "error setting test key: %a" Chamelon.pp_write_error e
       | Ok () -> Lwt.return fs
@@ -71,7 +68,6 @@ let tail ~readfn n =
 
 let () =
   Logs.set_reporter @@ Logs_fmt.reporter ();
-  Logs.set_level (Some Logs.Debug);
   head ~readfn:Chamelon.get_partial 1;
   tail ~readfn:Chamelon.get_partial 1;
   ()
