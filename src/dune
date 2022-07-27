@@ -15,7 +15,7 @@
   (action
     (progn
       (run dd if=/dev/zero of=test.img bs=256K count=1)
-      (setenv OCAMLRUNPARAM b (run %{exe:chamelon.exe} format test.img))
+      (setenv OCAMLRUNPARAM b (run %{exe:chamelon.exe} format test.img 4096))
       (with-stdout-to empty-ls.output (run %{exe:chamelon.exe} ls test.img 4096 /))
       (with-stdout-to empty-ls.expected (run echo -n ""))
       (diff empty-ls.expected empty-ls.output)
@@ -28,10 +28,11 @@
   (locks colossal test.img)
   (action (progn
             (run chmod 666 test.img)
-            (setenv OCAMLRUNPARAM b (with-stdin-from colossal (run %{exe:chamelon.exe} write test.img 4096 "colossal.bak" -)))
+            (setenv OCAMLRUNPARAM b (run %{exe:chamelon.exe} format test.img))
+            (setenv OCAMLRUNPARAM b (with-stdin-from colossal (run %{exe:chamelon.exe} write --verbosity=debug test.img 4096 "colossal.bak" -)))
 
             (with-stdout-to colossal-ls.expected (run echo "colossal.bak : file"))
-            (setenv OCAMLRUNPARAM b (with-stdout-to colossal-ls.output(run %{exe:chamelon.exe} ls test.img 4096 "/")))
+            (setenv OCAMLRUNPARAM b (with-stdout-to colossal-ls.output (run %{exe:chamelon.exe} ls test.img 4096 "/")))
             (diff colossal-ls.expected colossal-ls.output)
             
             (setenv OCAMLRUNPARAM b (with-stdout-to colossal.bak (run %{exe:chamelon.exe} read test.img 4096 "colossal.bak")))

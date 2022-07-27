@@ -184,7 +184,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
           (* if we have exactly enough blocks, just return the whole list *)
           | l when List.length l = n ->
             t.lookahead := {!(t.lookahead) with blocks = []};
-            Lwt.return @@ Ok l
+            Lwt.return @@ Ok (l @ acc)
           (* if we have enough in the lookahead buffer, just grab the first one n times *)
           | l when List.length l > n -> begin
               let l = List.init n (fun a -> a) in
@@ -195,10 +195,13 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
                                      | Error _ as e -> Lwt.return e
                                      | Ok b -> Lwt.return @@ Ok (b::l)
                                    end
-                ) (Ok []) l
+                ) (Ok acc) l
             end
-          | l -> (* this is our sad case: not enough blocks in the lookahead allocator
-                    to satisfy the request. *)
+          | l ->
+            (* this is our sad case: not enough blocks in the lookahead allocator
+                    to satisfy the request.
+               Claim the blocks that are there already, and try to get more;
+               if the allocator can't give us any, give up *)
             let open Lwt_result.Infix in
             populate_lookahead ~except:(l @ acc) t >>= function
             | _, [] ->
@@ -206,7 +209,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
               Lwt.return @@ Error `No_space
             | new_offset, next_l ->
               t.lookahead := ({offset = new_offset; blocks = next_l});
-              Log.debug (fun f -> f "adding %d blocks to lookahead buffer (%a)" (List.length l) Fmt.(list int64) l);
+              Log.debug (fun f -> f "adding %d blocks to lookahead buffer (%a)" (List.length next_l) Fmt.(list int64) next_l);
               aux t (l @ acc) (n - (List.length l))
         in
         aux t [] n
@@ -520,6 +523,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     val get : t -> Mirage_kv.Key.t -> (string, error) result Lwt.t
     val get_partial : t -> Mirage_kv.Key.t -> offset:int -> length:int ->
        (string, error) result Lwt.t
+
   end = struct
 
     let get_ctz t key (pointer, length) =
@@ -529,6 +533,8 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         | Error _ as e -> Lwt.return e
         | Ok () ->
           let pointers, data_region = Chamelon.File.of_block index data in
+          Log.debug (fun f -> f "block index %d at block number %Ld has %d outgoing pointers: %a"
+                        index pointer (List.length pointers) Fmt.(list ~sep:comma int32) pointers);
           match pointers with
           | next::_ ->
             read_block (data_region :: l) (index - 1) (Int64.of_int32 next)
@@ -537,6 +543,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       in
       let index = Chamelon.File.last_block_index ~file_size:length
           ~block_size:t.block_size in
+      Log.debug (fun f -> f "last block has index %d (file size is %d)" index length);
       read_block [] index pointer >>= function
       | Error _ -> Lwt.return @@ Error (`Not_found key)
       | Ok l ->
@@ -688,6 +695,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
           let skip_list_size = Chamelon.File.n_pointers index in
           let skip_list_length = skip_list_size * 4 in
           let data_length = min (t.block_size - skip_list_length) ((String.length data) - so_far) in
+          Format.eprintf "%d bytes available for data on block %d (address %Ld) \n%!" data_length index block_number;
           (* the 0th item in the skip list is always (index - 1). Only exception
            * is the last block in the list (the first block in the file),
            * which has no skip list *)
@@ -699,7 +707,10 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
              Cstruct.LE.set_uint32 block_cs 0 last_pointer
           );
           for n_skip_list = 1 to (skip_list_size - 1) do
-            let point_index = List.assoc (n_skip_list / (2 lsl n_skip_list)) written in
+            let destination_block_index = index / (1 lsl n_skip_list) in
+            Format.eprintf "finding pointer for block index %d to include in skip list for block %d\n%!" destination_block_index index;
+            let point_index = List.assoc destination_block_index written in
+            Format.eprintf "block index %d: setting entry number %d in the skip list to %ld, the address of block index %d\n%!" index n_skip_list point_index destination_block_index;
             Cstruct.LE.set_uint32 block_cs (n_skip_list * 4) point_index
           done;
           Cstruct.blit_from_string data so_far block_cs skip_list_length data_length;
@@ -712,15 +723,11 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     (* Get the correct number of blocks to write `data` as a CTZ, then write it. *)
     let write_ctz t data =
       let data_length = String.length data in
-      (* the average overhead is two pointers! for an excited and charming summation,
-       * see the littlefs repository's root-level DESIGN.md, subheading "CTZ skip-lists" *)
-      let raw_blocks_needed = (data_length / t.block_size) + (if data_length mod t.block_size = 0 then 0 else 1) in
-      let adjusted_length = data_length + raw_blocks_needed * 64 in
-      let adjusted_blocks_needed = adjusted_length / t.block_size + (if adjusted_length mod t.block_size = 0 then 0 else 1) in
-      Allocate.get_blocks t adjusted_blocks_needed >>= function
+      let last_block_index = Chamelon.File.last_block_index ~file_size:data_length ~block_size:t.block_size in
+      Allocate.get_blocks t (last_block_index + 1) >>= function
       | Error _ as e -> Lwt.return e
       | Ok blocks ->
-        (* ok super cool thanks for the big list of free blocks I love writing data <3 :)  *)
+        Format.eprintf "got %d blocks for data of length %d" (List.length blocks) data_length;
         write_ctz_block t blocks [] 0 0 data
 
     (* Find the correct directory structure in which to write the metadata entry for the CTZ pointer.
