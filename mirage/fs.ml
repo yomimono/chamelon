@@ -526,7 +526,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
 
   end = struct
 
-    let get_ctz t key (pointer, length) =
+    let get_ctz t key (pointer, file_size) =
       let rec read_block l index pointer =
         let data = Cstruct.create t.block_size in
         This_Block.read t.block pointer [data] >>= function
@@ -605,6 +605,69 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
           end
         | _ -> Lwt.return @@ Error (`Not_found key)
 
+    let rec address_of_index t ~desired_index (pointer, index) =
+      if desired_index = index then Lwt.return @@ Ok pointer
+      else begin
+        let data = Cstruct.create t.block_size in
+        This_Block.read t.block pointer [data] >>= function
+        | Error e ->
+          Log.err (fun f -> f "block read error: %a" This_Block.pp_error e);
+          Lwt.return @@ Error (`Not_found (Mirage_kv.Key.empty))
+        | Ok () ->
+          let pointers, _ = Chamelon.File.of_block index data in
+          if desired_index > index / 2 || (List.length pointers) < 2 then begin
+          (* worst case: we want an index that's between our index and
+           * (our index / 2), so we can't jump to it (or this index isn't
+           * a multiple of 2, so we only have one link);
+           * we just have to iterate backward until we get there *)
+            match pointers with
+            | next::_ ->
+               address_of_index t ~desired_index (Int64.of_int32 next, (index - 1))
+            | _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.empty))
+          end else begin
+            match pointers with
+            (* TODO: we can do better than this if the index is even smaller than index / 2 *)
+            | _ :: n_div_2 :: _ ->
+              address_of_index t ~desired_index (Int64.of_int32 n_div_2, (index / 2))
+            | _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.empty))
+          end
+      end
+
+    let get_ctz_partial t key ~offset ~length (pointer, file_size) =
+      let rec read_block ~desired_length l index pointer =
+        let data = Cstruct.create t.block_size in
+        This_Block.read t.block pointer [data] >>= function
+        | Error _ as e -> Lwt.return e
+        | Ok () ->
+          let pointers, data_region = Chamelon.File.of_block index data in
+          let pointer_region = Cstruct.sub data 0 (4 * List.length pointers) in
+          Log.debug (fun f -> f "block index %d at block number %Ld has %d bytes of data and %d outgoing pointers: %a (raw %a)"
+                        index pointer (Cstruct.length data_region) (List.length pointers) Fmt.(list ~sep:comma int32) pointers Cstruct.hexdump_pp pointer_region);
+          let accumulated_data = data_region :: l in
+          if (Cstruct.lenv accumulated_data) >= desired_length then Lwt.return @@ Ok accumulated_data else
+          match pointers with
+          | next::_ ->
+            read_block ~desired_length accumulated_data (index - 1) (Int64.of_int32 next)
+          | [] ->
+            Lwt.return @@ Ok accumulated_data
+      in
+      let last_overall_block_index = Chamelon.File.last_block_index ~file_size
+          ~block_size:t.block_size in
+      let offset_index = Chamelon.File.last_block_index ~file_size:offset ~block_size:t.block_size in
+      let last_byte_of_interest_index = Chamelon.File.last_block_index ~file_size:(offset + length) ~block_size:t.block_size in
+      Log.debug (fun f -> f "last block has index %d (file size is %d). We're interested in block indices %d through %d" last_overall_block_index file_size offset_index last_byte_of_interest_index);
+      address_of_index t ~desired_index:last_byte_of_interest_index (pointer, last_overall_block_index) >>= function
+      | Error _ as e -> Lwt.return e
+      | Ok last_byte_of_interest_pointer ->
+        read_block ~desired_length:length [] last_byte_of_interest_index last_byte_of_interest_pointer >>= function
+        | Error _ -> Lwt.return @@ Error (`Not_found key)
+        | Ok h::tl ->
+          (* we probably need to drop some bytes off the beginning of `blocks_read`,
+           * since the offset requested isn't likely to map onto the start
+           * of a block (except in the common case of 0). *)
+
+            
+
     let get_partial t key ~offset ~length : (string, error) result Lwt.t =
       if offset < 0 then begin
         Log.err (fun f -> f "read requested with negative offset");
@@ -620,13 +683,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
             try Lwt.return @@ Ok (String.sub d offset length)
             with Invalid_argument _ -> Lwt.return @@ Error (`Not_found key)
           end
-          | Ok (`Ctz ctz) ->
-            get_ctz t key ctz >>= function
-            | Ok s -> begin
-              try Lwt.return @@ Ok (String.sub s offset length)
-              with Invalid_argument _ -> Lwt.return @@ Error (`Not_found key)
-            end
-            | e -> Lwt.return e
+          | Ok (`Ctz ctz) -> get_ctz_partial t key ~offset ~length ctz
         in
         match Mirage_kv.Key.segments key with
         | [] -> Lwt.return @@ Error (`Value_expected key)

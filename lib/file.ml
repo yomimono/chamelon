@@ -63,5 +63,3 @@ let last_block_index ~file_size ~block_size =
     else aux (block_index + 1) (bytes_to_write - can_write)
   in
   aux 0 file_size
-
-
