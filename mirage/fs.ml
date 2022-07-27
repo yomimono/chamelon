@@ -661,12 +661,22 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       | Ok last_byte_of_interest_pointer ->
         read_block ~desired_length:length [] last_byte_of_interest_index last_byte_of_interest_pointer >>= function
         | Error _ -> Lwt.return @@ Error (`Not_found key)
-        | Ok h::tl ->
-          (* we probably need to drop some bytes off the beginning of `blocks_read`,
+        | Ok [] -> Lwt.return @@ Ok ""
+        | Ok (h::more_blocks) ->
+          (* TODO: we probably need to drop some bytes off the beginning of `blocks_read`,
            * since the offset requested isn't likely to map onto the start
            * of a block (except in the common case of 0). *)
-
-            
+          let first_block_offset = Chamelon.File.first_byte_on_index
+              ~block_size:t.block_size offset_index
+          in
+          (* this calculation is correct *if* we correctly identified the
+           * first block associated with this offset.
+           * Otherwise it's wrong garbage nonsense, so let's hope we got that
+           * first block correct :sweat_smile: *)
+          let new_hd = Cstruct.shift h (offset - first_block_offset) in
+          let offset_cs = Cstruct.concat @@ new_hd :: more_blocks |> Cstruct.to_string in
+          let truncated = String.sub offset_cs 0 length in
+          Lwt.return @@ Ok truncated
 
     let get_partial t key ~offset ~length : (string, error) result Lwt.t =
       if offset < 0 then begin
@@ -683,7 +693,8 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
             try Lwt.return @@ Ok (String.sub d offset length)
             with Invalid_argument _ -> Lwt.return @@ Error (`Not_found key)
           end
-          | Ok (`Ctz ctz) -> get_ctz_partial t key ~offset ~length ctz
+          | Ok (`Ctz ctz) ->
+            get_ctz_partial t key ~offset ~length ctz
         in
         match Mirage_kv.Key.segments key with
         | [] -> Lwt.return @@ Error (`Value_expected key)

@@ -63,3 +63,9 @@ let last_block_index ~file_size ~block_size =
     else aux (block_index + 1) (bytes_to_write - can_write)
   in
   aux 0 file_size
+
+let rec first_byte_on_index ~block_size index =
+  if index = 0 then 0
+  else
+     (block_size - ((n_pointers (index - 1))  * 4)) +
+    (first_byte_on_index ~block_size (index - 1))
