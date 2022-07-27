@@ -20,7 +20,7 @@ let mount_and_write =
     | Error _ -> assert false
     | Ok fs ->
       (* we want a real big buncha stuff *)
-      let space = ((Int64.to_int info.size_sectors) - 2) * info.sector_size in
+      let space = ((Int64.to_int info.size_sectors) / 2) * info.sector_size in
       (* get an even # of iterations of our chargen loop, for easier `tail` testing *)
       let content_size = (space / ascii_denom) * ascii_denom in
       let content = String.init content_size (fun f -> Char.chr (f mod ascii_denom)) in
@@ -41,7 +41,7 @@ let head ~readfn n =
         | Error e -> Format.eprintf "error reading test key: %a" Chamelon.pp_error e;
           assert false
         | Ok subset ->
-          Printf.eprintf "received: %S\nexpected: %S\n%!" subset comparator;
+          assert (String.equal subset comparator);
           aux (n-1)
     in
     aux n
@@ -63,9 +63,7 @@ let tail ~readfn n =
         | Error e -> Format.eprintf "error reading test key: %a" Chamelon.pp_error e;
           assert false
         | Ok subset ->
-          (*
-          Printf.eprintf "received: %S\nexpected: %S\n%!" subset comparator;
-             *) let _ = subset in
+          assert (String.equal subset comparator);
           aux (n-1)
     in
     aux n
@@ -100,4 +98,4 @@ let evaluate instance =
   | Ok _ -> ()
 
 let () =
-  evaluate Instance.major_allocated
+  evaluate Instance.monotonic_clock
