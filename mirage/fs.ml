@@ -533,8 +533,9 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         | Error _ as e -> Lwt.return e
         | Ok () ->
           let pointers, data_region = Chamelon.File.of_block index data in
-          Log.debug (fun f -> f "block index %d at block number %Ld has %d outgoing pointers: %a"
-                        index pointer (List.length pointers) Fmt.(list ~sep:comma int32) pointers);
+          let pointer_region = Cstruct.sub data 0 (4 * List.length pointers) in
+          Log.debug (fun f -> f "block index %d at block number %Ld has %d bytes of data and %d outgoing pointers: %a (raw %a)"
+                        index pointer (Cstruct.length data_region) (List.length pointers) Fmt.(list ~sep:comma int32) pointers Cstruct.hexdump_pp pointer_region);
           match pointers with
           | next::_ ->
             read_block (data_region :: l) (index - 1) (Int64.of_int32 next)
@@ -695,7 +696,6 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
           let skip_list_size = Chamelon.File.n_pointers index in
           let skip_list_length = skip_list_size * 4 in
           let data_length = min (t.block_size - skip_list_length) ((String.length data) - so_far) in
-          Format.eprintf "%d bytes available for data on block %d (address %Ld) \n%!" data_length index block_number;
           (* the 0th item in the skip list is always (index - 1). Only exception
            * is the last block in the list (the first block in the file),
            * which has no skip list *)
@@ -708,9 +708,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
           );
           for n_skip_list = 1 to (skip_list_size - 1) do
             let destination_block_index = index / (1 lsl n_skip_list) in
-            Format.eprintf "finding pointer for block index %d to include in skip list for block %d\n%!" destination_block_index index;
             let point_index = List.assoc destination_block_index written in
-            Format.eprintf "block index %d: setting entry number %d in the skip list to %ld, the address of block index %d\n%!" index n_skip_list point_index destination_block_index;
             Cstruct.LE.set_uint32 block_cs (n_skip_list * 4) point_index
           done;
           Cstruct.blit_from_string data so_far block_cs skip_list_length data_length;
@@ -727,7 +725,6 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       Allocate.get_blocks t (last_block_index + 1) >>= function
       | Error _ as e -> Lwt.return e
       | Ok blocks ->
-        Format.eprintf "got %d blocks for data of length %d" (List.length blocks) data_length;
         write_ctz_block t blocks [] 0 0 data
 
     (* Find the correct directory structure in which to write the metadata entry for the CTZ pointer.
@@ -744,6 +741,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
           | Error _ as e -> Lwt.return e
           | Ok [] -> Lwt.return @@ Error `No_space
           | Ok ((_last_index, last_pointer)::_) ->
+            (* the file has been written; find an ID and write the appropriate metadata *)
             let next = match Chamelon.Block.(IdSet.max_elt_opt @@ ids root) with
               | None -> 1
               | Some n -> n + 1
