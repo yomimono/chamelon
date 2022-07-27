@@ -245,10 +245,10 @@ module File = struct
     Alcotest.(check int) "tiny file" 0 @@ Chamelon.File.last_block_index ~file_size:1 ~block_size;
     Alcotest.(check int) "one-block file" 0 @@ Chamelon.File.last_block_index ~file_size:block_size ~block_size;
     Alcotest.(check int) "one block and change" 1 @@ Chamelon.File.last_block_index ~file_size:(block_size + block_size / 2) ~block_size;
-    Alcotest.(check int) "maximal two-block file" 2 @@ Chamelon.File.last_block_index
-      ~file_size:(block_size + (block_size - 8)) ~block_size;
+    Alcotest.(check int) "maximal two-block file" 1 @@ Chamelon.File.last_block_index
+      ~file_size:(block_size + (block_size - 4)) ~block_size;
     Alcotest.(check int) "minimal three-block file" 2 @@ Chamelon.File.last_block_index
-      ~file_size:(block_size + (block_size - 8) + 1) ~block_size
+      ~file_size:(block_size + (block_size - 4) + 1) ~block_size
 
   let size () =
     let not_a_file = Chamelon.Dir.mkdir ~to_pair:(2L, 3L) 1 in

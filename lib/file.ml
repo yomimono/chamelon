@@ -57,8 +57,11 @@ let of_block index cs =
   (pointers, Cstruct.sub cs (pointer_count * sizeof_pointer) sizeof_data)
 
 let last_block_index ~file_size ~block_size =
-  if file_size <= block_size then 0 else begin
-    let popcount_arg = (file_size / (block_size - (2 * sizeof_pointer))) - 1 |> Int32.of_int in
-    let numerator = file_size - (sizeof_pointer * (Bitwise.popcount popcount_arg)) + 2 in
-    numerator / (block_size - 2 * sizeof_pointer)
-  end
+  let rec aux block_index bytes_to_write =
+    let can_write = block_size - ((n_pointers block_index) * 4) in
+    if can_write >= bytes_to_write then block_index
+    else aux (block_index + 1) (bytes_to_write - can_write)
+  in
+  aux 0 file_size
+
+
