@@ -72,7 +72,7 @@ let tail ~readfn n =
 let benchmark instance =
   let n = 10 in
   let ols =
-    Analyze.ols ~bootstrap:0 ~r_square:true ~predictors:Measure.[| run |]
+    Analyze.ols ~bootstrap:0 ~r_square:false ~predictors:Measure.[| run |]
   in
   let cfg = Benchmark.cfg ~stabilize:true () in
   let instances = instance::[] in
