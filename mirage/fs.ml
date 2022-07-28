@@ -640,9 +640,6 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         | Error _ as e -> Lwt.return e
         | Ok () ->
           let pointers, data_region = Chamelon.File.of_block index data in
-          let pointer_region = Cstruct.sub data 0 (4 * List.length pointers) in
-          Log.debug (fun f -> f "block index %d at block number %Ld has %d bytes of data and %d outgoing pointers: %a (raw %a)"
-                        index pointer (Cstruct.length data_region) (List.length pointers) Fmt.(list ~sep:comma int32) pointers Cstruct.hexdump_pp pointer_region);
           let accumulated_data = data_region :: l in
           if index <= offset_index then Lwt.return @@ Ok accumulated_data else
           match pointers with
@@ -654,7 +651,6 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       let last_overall_block_index = Chamelon.File.last_block_index ~file_size
           ~block_size:t.block_size in
       let last_byte_of_interest_index = Chamelon.File.last_block_index ~file_size:(offset + length) ~block_size:t.block_size in
-      Log.debug (fun f -> f "last block has index %d (file size is %d). We're interested in block indices %d through %d" last_overall_block_index file_size offset_index last_byte_of_interest_index);
       address_of_index t ~desired_index:last_byte_of_interest_index (pointer, last_overall_block_index) >>= function
       | Error _ as e -> Lwt.return e
       | Ok last_byte_of_interest_pointer ->
