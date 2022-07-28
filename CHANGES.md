@@ -1,4 +1,18 @@
-# v.0.0.9.1 (2022-06-23)
+# v0.1.0 (2022-07-28, all changes by @yomimono)
+
+* new features: expose and implement `Kv.size t key` and `Kv.get_partial t key ~offset ~length`.
+* bugfix: large files could be misread under certain circumstances because the final block index wasn't correctly calculated. remove `bitwise` module and the Base `popcount` it referenced, and instead calculate the block index with a recursive function.
+* bugfix: detect unwriteable blocks instead of endlessly splitting to try to accommodate them.
+* bugfix: keep track of allocated but not-yet-written blocks, and don't hand them out twice.
+* bugfix: check the maximum name length against the block size when mounting a filesystem.
+
+# v0.0.10
+
+* detect simple cycles in the metadata tree at connect time (@yomimono)
+* check block size in the superblock at connect time, and fail if it doesn't match block device (@yomimono)
+
+
+# v0.0.9.1 (2022-06-23)
 
 * fix 32-bit compilation, for real this time (@yomimono)
 
