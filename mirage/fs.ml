@@ -634,7 +634,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       end
 
     let get_ctz_partial t key ~offset ~length (pointer, file_size) =
-      let rec read_block ~desired_length l index pointer =
+      let rec read_block ~offset_index l index pointer =
         let data = Cstruct.create t.block_size in
         This_Block.read t.block pointer [data] >>= function
         | Error _ as e -> Lwt.return e
@@ -644,28 +644,28 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
           Log.debug (fun f -> f "block index %d at block number %Ld has %d bytes of data and %d outgoing pointers: %a (raw %a)"
                         index pointer (Cstruct.length data_region) (List.length pointers) Fmt.(list ~sep:comma int32) pointers Cstruct.hexdump_pp pointer_region);
           let accumulated_data = data_region :: l in
-          if (Cstruct.lenv accumulated_data) >= desired_length then Lwt.return @@ Ok accumulated_data else
+          if index <= offset_index then Lwt.return @@ Ok accumulated_data else
           match pointers with
           | next::_ ->
-            read_block ~desired_length accumulated_data (index - 1) (Int64.of_int32 next)
+            read_block ~offset_index accumulated_data (index - 1) (Int64.of_int32 next)
           | [] ->
             Lwt.return @@ Ok accumulated_data
       in
       let last_overall_block_index = Chamelon.File.last_block_index ~file_size
           ~block_size:t.block_size in
-      let offset_index = Chamelon.File.last_block_index ~file_size:offset ~block_size:t.block_size in
       let last_byte_of_interest_index = Chamelon.File.last_block_index ~file_size:(offset + length) ~block_size:t.block_size in
       Log.debug (fun f -> f "last block has index %d (file size is %d). We're interested in block indices %d through %d" last_overall_block_index file_size offset_index last_byte_of_interest_index);
       address_of_index t ~desired_index:last_byte_of_interest_index (pointer, last_overall_block_index) >>= function
       | Error _ as e -> Lwt.return e
       | Ok last_byte_of_interest_pointer ->
-        read_block ~desired_length:length [] last_byte_of_interest_index last_byte_of_interest_pointer >>= function
+        let offset_index = Chamelon.File.last_block_index ~file_size:offset ~block_size:t.block_size in
+        read_block ~offset_index [] last_byte_of_interest_index last_byte_of_interest_pointer >>= function
         | Error _ -> Lwt.return @@ Error (`Not_found key)
         | Ok [] -> Lwt.return @@ Ok ""
         | Ok (h::more_blocks) ->
-          (* TODO: we probably need to drop some bytes off the beginning of `blocks_read`,
-           * since the offset requested isn't likely to map onto the start
-           * of a block (except in the common case of 0). *)
+          (* since our list is just the raw block contents of the relevant bit of the file,
+           * we probably need to drop some bytes from the beginning in order to correctly
+           * return the file starting at the right offset *)
           let first_block_offset = Chamelon.File.first_byte_on_index
               ~block_size:t.block_size offset_index
           in

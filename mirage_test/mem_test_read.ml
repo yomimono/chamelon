@@ -66,8 +66,27 @@ let tail ~readfn n =
     aux n
   )
 
+(* try a small subset straddling a block, to make sure
+ * we get the expected value *)
+let block_straddling_read () =
+  (*
+   * block 0: 512 bytes
+   * block 1: 508 bytes
+   * block 2: 504 bytes
+   *)
+  Lwt_main.run @@ (
+    let open Lwt.Infix in
+    mount_and_write >>= fun fs ->
+    Chamelon.get_partial fs key ~offset:511 ~length:3 >>= function
+    | Error e -> Alcotest.failf "error reading test key: %a" Chamelon.pp_error e
+    | Ok read -> 
+      Alcotest.(check string) "block-straddling read" "\x7f\x00\x01" read;
+      Lwt.return_unit
+  )
+
 let () =
   Logs.set_reporter @@ Logs_fmt.reporter ();
   head ~readfn:Chamelon.get_partial 1;
   tail ~readfn:Chamelon.get_partial 1;
+  block_straddling_read ();
   ()
