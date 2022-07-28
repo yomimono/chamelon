@@ -9,6 +9,24 @@ let key = Mirage_kv.Key.v "/file"
 let ascii_denom = 128
 let comparator = String.init ascii_denom (fun f -> Char.chr f)
  
+let simple_get_partial t key ~offset ~length =
+  if offset < 0 then begin
+    Logs.err (fun f -> f "read requested with negative offset");
+    Lwt.return @@ Error (`Not_found key)
+  end else if length <= 0 then begin
+    Logs.err (fun f -> f "read requested with length <= 0");
+    Lwt.return @@ Error (`Not_found key)
+  end else begin
+    let open Lwt.Infix in
+    Chamelon.get t key >|= function
+    | Error _ as e -> e
+    | Ok v ->
+      try Ok (String.sub v offset length)
+      with Invalid_argument _ ->
+        Logs.err (fun f -> f "partial read request cannot be fulfilled: %d < %d" (String.length v) (offset + length));
+        Error (`Not_found key)
+  end
+
 let mount_and_write =
   let open Lwt.Infix in
   Block.connect "mount chamelon" >>= fun block ->
@@ -37,7 +55,7 @@ let head ~readfn n =
     let rec aux = function
       | n when n <= 0 -> Lwt.return_unit
       | n ->
-        readfn fs key ~offset:0 ~length:128 >>= function
+        readfn fs key ~offset:0 ~length:ascii_denom >>= function
         | Error e -> Format.eprintf "error reading test key: %a" Chamelon.pp_error e;
           assert false
         | Ok subset ->
@@ -76,13 +94,13 @@ let benchmark instance =
   in
   let cfg = Benchmark.cfg ~stabilize:true () in
   let instances = instance::[] in
-  let test_naive_head = Test.make ~name:"naive head reads" (Staged.stage @@ fun () -> head ~readfn:Chamelon.simple_get_partial n) in
+  let _test_naive_head = Test.make ~name:"naive head reads" (Staged.stage @@ fun () -> head ~readfn:simple_get_partial n) in
   let test_nonnaive_head = Test.make ~name:"less naive head reads" (Staged.stage @@ fun () -> head ~readfn:Chamelon.get_partial n) in
-  let test_naive_tail = Test.make ~name:"naive tail reads" (Staged.stage @@ fun () -> tail ~readfn:Chamelon.simple_get_partial n) in
+  let _test_naive_tail = Test.make ~name:"naive tail reads" (Staged.stage @@ fun () -> tail ~readfn:simple_get_partial n) in
   let test_nonnaive_tail = Test.make ~name:"less naive tail reads" (Staged.stage @@ fun () -> tail ~readfn:Chamelon.get_partial n) in
-  let naive = Test.make_grouped ~name:"naive" [test_naive_head; test_naive_tail] in
-  let nonnaive = Test.make_grouped ~name:"non_naive" [test_nonnaive_head; test_nonnaive_tail] in
-  let test = Test.make_grouped ~name:"all" [naive; nonnaive] in
+  let heads = Test.make_grouped ~name:"head" [(* test_naive_head ; *) test_nonnaive_head] in
+  let tails = Test.make_grouped ~name:"tail" [(* test_naive_tail ; *) test_nonnaive_tail] in
+  let test = Test.make_grouped ~name:"all" [heads; tails] in
   let raw_results = Benchmark.all cfg instances test in
   let results =
     List.map (fun instance -> Analyze.all ols instance raw_results) instances
