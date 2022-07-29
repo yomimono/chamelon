@@ -1,4 +1,9 @@
-# v0.1.0 (2022-07-28, all changes by @yomimono)
+# v0.1.1 (2022-07-28, all changes by @yomimono)
+
+* bugfix: remove dependency cycle between chamelon and chamelon-unix
+* bugfix: tag src/runtest with `(package chamelon-unix)`
+
+# v0.1.0 (prepared and superseded 2022-07-28, all changes by @yomimono)
 
 * new features: expose and implement `Kv.size t key` and `Kv.get_partial t key ~offset ~length`.
 * bugfix: large files could be misread under certain circumstances because the final block index wasn't correctly calculated. remove `bitwise` module and the Base `popcount` it referenced, and instead calculate the block index with a recursive function.
