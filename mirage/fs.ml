@@ -159,23 +159,12 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         Log.debug (fun f -> f "%d blocks used: %a" (List.length used_blocks) Fmt.(list ~sep:sp uint64) used_blocks);
         Ok (unused t (used_blocks @ except))
 
-    let get_block t =
-      match !(t.lookahead).blocks with
-      | block::l ->
-        t.lookahead := {!(t.lookahead) with blocks = l};
-        Lwt.return @@ Ok block
-      | [] ->
-        let open Lwt_result.Infix in
-        populate_lookahead ~except:[] t >>= function
-        | _, [] ->
-          Log.err (fun f -> f "no blocks remain free on filesystem");
-          Lwt.return @@ Error `No_space
-        | new_offset, block::l ->
-          t.lookahead := ({offset = new_offset; blocks = l});
-          Log.debug (fun f -> f "adding %d blocks to lookahead buffer (%a)" (List.length l) Fmt.(list int64) l);
-          Lwt.return @@ Ok block
-
     let get_blocks t n : (int64 list, write_error) result Lwt.t =
+      let get_block t =
+        let l = !(t.lookahead).blocks in
+        t.lookahead := {!(t.lookahead) with blocks = (List.tl l)};
+        Lwt.return @@ Ok (List.hd l)
+      in
       (* zero or fewer blocks is a pretty easy request to fulfill *)
       if n <= 0 then Lwt.return @@ Ok []
       else begin
