@@ -198,7 +198,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
               Lwt.return @@ Error `No_space
             | new_offset, next_l ->
               t.lookahead := ({offset = new_offset; blocks = next_l});
-              Log.debug (fun f -> f "adding %d blocks to lookahead buffer (%a)" (List.length next_l) Fmt.(list int64) next_l);
+              Log.debug (fun f -> f "adding %d blocks to lookahead buffer (%a)" (List.length next_l) Fmt.(list ~sep:comma int64) next_l);
               aux t (l @ acc) (n - (List.length l))
         in
         aux t [] n
@@ -819,7 +819,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
                 ~pointer:last_pointer ~file_size:(Int32.of_int file_size)
             in
             let new_entries = entries @ [name; ctime; ctz] in
-            Log.debug (fun m -> m "writing ctz %d entries for ctz for file %s" (List.length new_entries) filename);
+            Log.debug (fun m -> m "writing %d entries for ctz for file %s of size %d" (List.length new_entries) filename file_size);
             let new_block = Chamelon.Block.add_commit root new_entries in
             Write.block_to_block_pair t new_block dir_block_pair >>= function
             | Error `No_space -> Lwt.return @@ Error `No_space
