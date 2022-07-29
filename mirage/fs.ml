@@ -204,27 +204,11 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         aux t [] n
       end
 
-    (* this is a common enough case that it makes sense to handle it explicitly *)
+    (* [get_block_pair fs] wraps [get_blocks fs 2] to return a pair for the caller's convenience *)
     let get_block_pair t =
-      match !(t.lookahead).blocks with
-      | block1::block2::l ->
-        t.lookahead := {!(t.lookahead) with blocks = l};
-        Lwt.return @@ Ok (block1, block2)
-      (* whether we have 1 block left or none, we still need to repopulate the lookahead buffer
-       * so go just go ahead and do it first, and then take the first two blocks *)
-      | _ ->
-        let open Lwt_result.Infix in
-        populate_lookahead ~except:[] t >>= function
-        | new_offset, (block1::block2::l) ->
-          t.lookahead := ({offset = new_offset; blocks = l});
-          Log.debug (fun f -> f "adding %d blocks to lookahead buffer (%a)" (List.length l) Fmt.(list int64) l);
-          Lwt.return @@ Ok (block1, block2)
-        | _, l ->
-          (* TODO: this isn't quite right; there might be more unused blocks
-           * in another offset *)
-          Log.debug (fun f -> f "%d unused blocks: %a" (List.length l) Fmt.(list int64) l);
-          Log.err (fun f -> f "insufficient free blocks to allocate a new block pair");
-          Lwt.return @@ Error `No_space
+      get_blocks t 2 >|= function
+      | Ok (block1::block2::_) -> Ok (block1, block2)
+      | Ok _ | Error _ -> Error `No_space
 
   end
 
