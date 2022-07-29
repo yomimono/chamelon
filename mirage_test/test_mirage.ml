@@ -124,6 +124,33 @@ let test_last_modified block _ () =
             (Ptime.is_later second_timestamp ~than:now_timestamp);
           Lwt.return_unit
 
+let test_last_modified_dir block _ () =
+  let cheese1 = Mirage_kv.Key.v "/cheeses/edam" in
+  let cheese2 = Mirage_kv.Key.v "/cheeses/cheddar" in
+  let contents = "delicious" in
+  format_and_mount block >>= fun fs ->
+  Chamelon.set fs cheese1 contents >>= function | Error e -> fail_write e | Ok () ->
+  Chamelon.set fs cheese2 contents >>= function | Error e -> fail_write e | Ok () ->
+  Chamelon.last_modified fs cheese2 >>= function | Error e -> fail_read e | Ok cheese2_modified ->
+  Chamelon.last_modified fs @@ Mirage_kv.Key.parent cheese2 >>= function
+  | Error e -> fail_read e
+  | Ok cheeses_modified ->
+    Alcotest.(check (pair int int64) "dir has same last modified time as the last thing modified" cheese2_modified cheeses_modified);
+    Lwt.return_unit
+
+let test_last_modified_depth block _ () =
+  let key1 = Mirage_kv.Key.v "/calico/explanation" in
+  let key2 = Mirage_kv.Key.v "/calico/shorthaired/sweetheart" in
+  let contents1 = "cats with 3 colors, usually black and orange on white" in
+  let contents2 = "curious georgia porgia, perfect princess housecat, first of her name, smallest and best" in
+  format_and_mount block >>= fun fs ->
+  Chamelon.set fs key1 contents1 >>= function | Error e -> fail_write e | Ok () ->
+  Chamelon.set fs key2 contents2 >>= function | Error e -> fail_write e | Ok () ->
+  Chamelon.last_modified fs (Mirage_kv.Key.parent key1) >>= function | Error e -> fail_read e | Ok calico_modified ->
+  Chamelon.last_modified fs key1 >>= function | Error e -> fail_read e | Ok key1_modified ->
+  Alcotest.(check (pair int int64) "last modified for parent only goes down 1 level" key1_modified calico_modified);
+  Lwt.return_unit
+
 let test_digest_empty block _ () =
   let path1 = Mirage_kv.Key.v "trans" and path2 = Mirage_kv.Key.v "rights" in
   format_and_mount block >>= fun fs ->
@@ -292,15 +319,24 @@ let test_get_partial_bad_length block _ () =
 let test_get_partial_bad_combos block _ () =
   let key = Mirage_kv.Key.v "/file" and content = "important stuff" in
   format_and_mount block >>= fun fs ->
-  Chamelon.set fs key content >>= function
-  | Error e -> fail_write e
-  | Ok () ->
-    Chamelon.get_partial fs key ~offset:5 ~length:(String.length content) >>= function
-    | Ok v -> Alcotest.failf "partial read with excessive length succeeded, returning %S" v
-    | Error _ -> Lwt.return_unit
+  Chamelon.set fs key content >>= function | Error e -> fail_write e | Ok () ->
+  Chamelon.get_partial fs key ~offset:5 ~length:(String.length content) >>= function
+  | Ok v -> Alcotest.failf "partial read with excessive length succeeded, returning %S" v
+  | Error _ -> Lwt.return_unit
+
+let test_get_partial_in_dir block _ () =
+  let key = Mirage_kv.Key.v "/files/more files/some more files/file"
+  and content = "important stuff"
+  in
+  format_and_mount block >>= fun fs ->
+  Chamelon.set fs key content >>= function | Error e -> fail_write e | Ok () ->
+  Chamelon.get_partial fs key ~offset:1 ~length:((String.length content) - 1) >>= function
+  | Error e -> Alcotest.failf "error reading successfully set key: %a" Chamelon.pp_error e
+  | Ok v -> Alcotest.(check string) "offset read of a file in a directory" (String.sub content 1 @@ (String.length content) - 1) v;
+    Lwt.return_unit
 
 let test_size_nonexistent block _ () =
-  let key = Mirage_kv.Key.v "/filenotfound" in
+  let key = Mirage_kv.Key.v "/thedeep/filenotfound" in
   format_and_mount block >>= fun fs ->
   Chamelon.size fs key >>= function
   | Error (`Not_found _) -> Lwt.return_unit
@@ -338,6 +374,19 @@ let test_size_dir block _ () =
   Chamelon.size fs Mirage_kv.Key.empty >>= function
   | Error e -> fail_read e
   | Ok n -> Alcotest.(check int) "directory file size" ((String.length contents) * 2) n;
+    Lwt.return_unit
+
+let test_nested_dir block _ () =
+  let key1 = Mirage_kv.Key.v "/files/boring/taxes/2013/receipts/the good stuff"
+  and key2 = Mirage_kv.Key.v "/files/boring/taxes/2014/receipts/the good stuff"
+  and contents = "secrets"
+  in
+  format_and_mount block >>= fun fs ->
+  Chamelon.set fs key1 contents >>= function | Error e -> fail_write e | Ok () ->
+  Chamelon.set fs key2 contents >>= function | Error e -> fail_write e | Ok () ->
+  Chamelon.size fs @@ Mirage_kv.Key.v "/files/boring" >>= function
+  | Error e -> fail_read e
+  | Ok n -> Alcotest.(check int) "deeply nested directory file size" (2 * (String.length contents)) n;
     Lwt.return_unit
 
 let test_many_files block _ () =
@@ -405,6 +454,12 @@ let test_recursive_rm block _ () =
     Alcotest.(check int) "removing an item means it doesn't show up in list" items ((+) 1 @@ List.length l);
     Lwt.return_unit
 
+let test_rm_slash block _ () =
+  format_and_mount block >>= fun fs ->
+  Chamelon.remove fs Mirage_kv.Key.empty >>= function
+  | Ok () -> Alcotest.fail "succeeded in removing the empty key (in other words, /)"
+  | Error _ -> Lwt.return_unit
+
 let test img =
   Logs.set_level (Some Logs.Debug);
   Logs.set_reporter @@ Logs_fmt.reporter ();
@@ -430,6 +485,8 @@ let test img =
       );
       ("last modified",
        [ test_case "last modified increases on overwrite" `Quick (test_last_modified block);
+         test_case "last modified of a directory reflects a write in it" `Quick (test_last_modified_dir block);
+         test_case "last modified only goes 1 level deep" `Quick (test_last_modified_depth block);
        ]
       );
       ("get",
@@ -440,6 +497,7 @@ let test img =
          test_case "get partial data w/bad offset" `Quick (test_get_partial_bad_offsets block);
          test_case "get partial data w/bad length" `Quick (test_get_partial_bad_length block);
          test_case "get partial data w/bad offset+length" `Quick (test_get_partial_bad_combos block);
+         test_case "get partial data in a file within a dir" `Quick (test_get_partial_in_dir block);
        ]
       );
       ("size",
@@ -447,6 +505,7 @@ let test img =
         test_case "size of a small file" `Quick (test_size_small_file block);
         test_case "size of an empty fs" `Quick (test_size_empty block);
         test_case "size of a directory" `Quick (test_size_dir block);
+        test_case "size of some nested stuff" `Quick (test_nested_dir block);
        ]
       );
       ("digest",
@@ -463,6 +522,7 @@ let test img =
       ("rm",
        [
          test_case "removals are recursive" `Quick (test_recursive_rm block);
+         test_case "can't remove /" `Quick (test_rm_slash block);
        ]);
     ]
   )
