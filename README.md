@@ -4,7 +4,7 @@ An implementation of the [mirage-kv](https://github.com/mirage/mirage-kv) module
 
 # what isn't this?
 
-Performant. Wear-alert. Making big promises. Well-tested. Backed by Big Camel or suitable for Big Data.
+Performant. Wear-alert. Making big promises. Backed by Big Camel or suitable for Big Data.
 
 # under what circumstances should I definitely not use it?
 
