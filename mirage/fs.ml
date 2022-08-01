@@ -661,13 +661,16 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
           | [] ->
             Lwt.return @@ Ok accumulated_data
       in
+      let last_byte = min file_size (offset + length) in
       let last_overall_block_index = Chamelon.File.last_block_index ~file_size
           ~block_size:t.block_size in
-      let last_byte_of_interest_index = Chamelon.File.last_block_index ~file_size:(offset + length) ~block_size:t.block_size in
+      (* TODO this all needs some renaming *)
+      let last_byte_of_interest_index = Chamelon.File.last_block_index ~file_size:last_byte ~block_size:t.block_size in
       address_of_index t ~desired_index:last_byte_of_interest_index (pointer, last_overall_block_index) >>= function
       | Error _ as e -> Lwt.return e
       | Ok last_byte_of_interest_pointer ->
         let offset_index = Chamelon.File.last_block_index ~file_size:offset ~block_size:t.block_size in
+        (* TODO we're pretty likely to be reading multiple blocks *)
         read_block ~offset_index [] last_byte_of_interest_index last_byte_of_interest_pointer >>= function
         | Error _ -> Lwt.return @@ Error (`Not_found key)
         | Ok [] -> Lwt.return @@ Ok ""
@@ -684,8 +687,12 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
            * first block correct :sweat_smile: *)
           let new_hd = Cstruct.shift h (offset - first_block_offset) in
           let offset_cs = Cstruct.concat @@ new_hd :: more_blocks |> Cstruct.to_string in
-          let truncated = String.sub offset_cs 0 length in
-          Lwt.return @@ Ok truncated
+          (* we need to trim the results to either:
+           * the requested length, if offset + length is < file_size
+           * the file size minus the offset, if offset + length is > file_size.
+          *)
+          let final_length = if offset + length > file_size then (file_size - offset) else length in
+          Lwt.return @@ Ok (String.sub offset_cs 0 final_length)
 
     let get_partial t key ~offset ~length : (string, error) result Lwt.t =
       if offset < 0 then begin
@@ -699,7 +706,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
           | Error (`Not_found k) -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v k))
           | Error (`Value_expected k) -> Lwt.return @@ Error (`Value_expected (Mirage_kv.Key.v k))
           | Ok (`Inline d) -> begin
-            try Lwt.return @@ Ok (String.sub d offset length)
+            try Lwt.return @@ Ok (String.sub d offset @@ min length @@ (String.length d) - offset)
             with Invalid_argument _ -> Lwt.return @@ Error (`Not_found key)
           end
           | Ok (`Ctz ctz) ->

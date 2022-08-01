@@ -57,7 +57,8 @@ let tail ~readfn n =
     let rec aux = function
       | n when n <= 0 -> Lwt.return_unit
       | n ->
-        readfn fs key ~offset:(size - ascii_denom) ~length:ascii_denom >>= function
+        (* look for `ascii_denom + 1` as a cheap and cheerful way of testing short reads *)
+        readfn fs key ~offset:(size - ascii_denom) ~length:(2 * ascii_denom + 1) >>= function
         | Error e -> Alcotest.failf "error reading test key: %a" Chamelon.pp_error e
         | Ok subset ->
           Alcotest.(check string) "tail subset" comparator subset;

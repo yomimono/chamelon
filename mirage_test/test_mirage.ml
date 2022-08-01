@@ -309,20 +309,22 @@ let test_get_partial_bad_length block _ () =
     Chamelon.get_partial fs key ~offset:0 ~length:(-10) >>= function
     | Ok v -> Alcotest.failf "partial read with negative length succeeded, returning %S" v
     | Error _ -> 
-      Chamelon.get_partial fs key ~offset:0 ~length:(2 * (String.length content)) >>= function
-      | Ok v -> Alcotest.failf "partial read with excessive length succeeded, returning %S" v
+      Chamelon.get_partial fs key ~offset:0 ~length:0 >>= function
+      | Ok v -> Alcotest.failf "partial read with zero length succeeded, returning %S" v
       | Error _ ->
-        Chamelon.get_partial fs key ~offset:0 ~length:0 >>= function
-        | Ok v -> Alcotest.failf "partial read with zero length succeeded, returning %S" v
-        | Error _ -> Lwt.return_unit
+        Chamelon.get_partial fs key ~offset:0 ~length:(2 * (String.length content)) >>= function
+        | Error _ -> Alcotest.failf "should've gotten a short read, but got an outright failure"
+        | Ok v -> Alcotest.(check string) "short reads" content v;
+          Lwt.return_unit
 
 let test_get_partial_bad_combos block _ () =
   let key = Mirage_kv.Key.v "/file" and content = "important stuff" in
   format_and_mount block >>= fun fs ->
   Chamelon.set fs key content >>= function | Error e -> fail_write e | Ok () ->
   Chamelon.get_partial fs key ~offset:5 ~length:(String.length content) >>= function
-  | Ok v -> Alcotest.failf "partial read with excessive length succeeded, returning %S" v
-  | Error _ -> Lwt.return_unit
+  | Error e -> Alcotest.failf "should've gotten a short read, but got an outright failure: %a" Chamelon.pp_error e
+  | Ok v -> Alcotest.(check string) "short reads" (String.sub content 5 ((String.length content) - 5)) v;
+    Lwt.return_unit
 
 let test_get_partial_in_dir block _ () =
   let key = Mirage_kv.Key.v "/files/more files/some more files/file"
