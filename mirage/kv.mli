@@ -1,3 +1,7 @@
+(** Kv.Make provides the module fulfilling Mirage_kv.RW, plus a few bonus calls.
+ * Many functions contain calls to the Fs module, which provides lower-level operations
+ * dealing directly with on-disk structures. *)
+
 module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) : sig
 
   include Mirage_kv.RW

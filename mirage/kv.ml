@@ -1,5 +1,7 @@
 open Lwt.Infix
 
+(* in LittleFS, the superblock and the root of the filesystem
+ * is always at a constant pair - addresses (0, 1) *)
 let root_pair = (0L, 1L)
 
 module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
@@ -61,7 +63,7 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       | `No_id path -> begin
           Log.debug (fun m -> m "path component %s had no id; making it and its children" path);
           (* something along the path is missing, so make it. *)
-          (* note we need to call mkdir with the whole path (save the basename),
+          (* note we need to call mkdir with the whole path (except for the basename),
            * so that we get all levels of directory we may need,
            * not just the first thing that was found missing. *)
           Fs.mkdir t root_pair (Mirage_kv.Key.segments dir) >>= function

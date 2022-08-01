@@ -316,7 +316,9 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
   module Find : sig
     type blockwise_entry_list = blockpair * (Chamelon.Entry.t list)
 
-    (** entries in the directory are split up by block,
+    (** [all_entries_in_dir t head] gives an *uncompacted* list of all
+     * entries in the directory starting at [head].
+     * the returned entries in the directory are split up by block,
      * so the caller can distinguish between re-uses of the same ID number
      * when the directory spans multiple block numbers *)
     val all_entries_in_dir : t -> directory_head ->
