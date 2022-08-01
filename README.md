@@ -18,7 +18,7 @@ It is least space-efficient with many files of size > 1/4 block size and < 1 blo
 
 The above limitations become more alarming with the knowledge that items within a directory are an unordered linked list, so many operations on directories are O(n) in the number of items within the directory.  If performance begins to be of concern, some thought on the filesystem layout is advised.
 
-# why though?
+# why did you build this?
 
 Sometimes you just gotta store some stuff. You don't have to store much stuff and you don't have to do it very often but people are gonna get real mad if you don't do it at least a little.
 
@@ -29,6 +29,18 @@ Sure, if you want. `chamelon` is released under the ISC license (like many Mirag
 # why would I use it over other MirageOS filesystem implementations?
 
 Good question. I'm using it because I didn't want to end up using an unmaintained filesystem implementation or maintaining someone else's filesystem implementation. Obviously that's not going to apply to you (or if it does, you're unlikely to decide this software is the right choice).
+
+# how can I get started understanding it?
+
+I would recommend reading the [littlefs](https://github.com/littlefs-project/littlefs) `DESIGN.md` document first. After that, if you prefer to drill down from high-level abstractions, start at `mirage/kv.mli`. If you'd rather start from the details and build abstractions from there, check out the contents of `lib/`, specifically `tag.ml`, `commit.ml`, and `block.ml`. (You'll probably also be interested in littlefs's `SPEC.md`.)
+
+There are several sets of tests for `chamelon`:
+
+* `src/dune` describes some tests using the `chamelon-unix` command-line tools.
+* `mirage_test/` contains tests of the higher-level functions provided by the `Kv` module, as I expect them to be used in unikernels.
+* `lib_test/` contains lower-level unit tests, largely of serializers and deserializers and their accompanying error handling.
+* `fuzz/` contains a few property-based tests exercised via `crowbar` and `afl-fuzz`.
+* `bench/` contains some microbenchmarking tests built with `bechamel`.
 
 # how does it differ from littlefs?
 
