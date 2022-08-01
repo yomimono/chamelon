@@ -647,7 +647,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       end
 
     let get_ctz_partial t key ~offset ~length (pointer, file_size) =
-      let rec read_block ~offset_index l index pointer =
+      let rec read_raw_blocks ~offset_index l index pointer =
         let data = Cstruct.create t.block_size in
         This_Block.read t.block pointer [data] >>= function
         | Error _ as e -> Lwt.return e
@@ -657,21 +657,19 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
           if index <= offset_index then Lwt.return @@ Ok accumulated_data else
           match pointers with
           | next::_ ->
-            read_block ~offset_index accumulated_data (index - 1) (Int64.of_int32 next)
+            read_raw_blocks ~offset_index accumulated_data (index - 1) (Int64.of_int32 next)
           | [] ->
             Lwt.return @@ Ok accumulated_data
       in
       let last_byte = min file_size (offset + length) in
       let last_overall_block_index = Chamelon.File.last_block_index ~file_size
           ~block_size:t.block_size in
-      (* TODO this all needs some renaming *)
       let last_byte_of_interest_index = Chamelon.File.last_block_index ~file_size:last_byte ~block_size:t.block_size in
       address_of_index t ~desired_index:last_byte_of_interest_index (pointer, last_overall_block_index) >>= function
       | Error _ as e -> Lwt.return e
       | Ok last_byte_of_interest_pointer ->
         let offset_index = Chamelon.File.last_block_index ~file_size:offset ~block_size:t.block_size in
-        (* TODO we're pretty likely to be reading multiple blocks *)
-        read_block ~offset_index [] last_byte_of_interest_index last_byte_of_interest_pointer >>= function
+        read_raw_blocks ~offset_index [] last_byte_of_interest_index last_byte_of_interest_pointer >>= function
         | Error _ -> Lwt.return @@ Error (`Not_found key)
         | Ok [] -> Lwt.return @@ Ok ""
         | Ok (h::more_blocks) ->
