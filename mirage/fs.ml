@@ -324,15 +324,18 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     val all_entries_in_dir : t -> directory_head ->
       (blockwise_entry_list list, error) result Lwt.t
 
+    (** [entries_of_name t head name] scans [head] (and any subsequent blockpairs in the directory's
+     * hardtail list) for `id` entries matching [name]. If an `id` is found for [name],
+     * all entries matching `id` from the directory are returned (compacted). *)
     val entries_of_name : t -> directory_head -> string -> (blockwise_entry_list list,
                                                            [`No_id of key
                                                            | `Not_found of key]
                                                           ) result Lwt.t
 
-(** [find_first_blockpair_of_directory t head l] finds and enters
- *  the segments in [l] recursively until none remain.
- *  It returns `No_id if an entry is not present and `No_structs if an entry
- *  is present, but does not represent a valid directory. *)
+    (** [find_first_blockpair_of_directory t head l] finds and enters
+     *  the segments in [l] recursively until none remain.
+     *  It returns `No_id if an entry is not present and `No_structs if an entry
+     *  is present, but does not represent a valid directory. *)
     val find_first_blockpair_of_directory : t -> directory_head -> string list ->
       [`Basename_on of directory_head | `No_id of string | `No_structs] Lwt.t
 
@@ -410,6 +413,37 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
             find_first_blockpair_of_directory t next_blocks remaining
 
   end
+
+  let last_modified_value t key =
+    (* find (parent key) on the filesystem *)
+    Find.find_first_blockpair_of_directory t root_pair Mirage_kv.Key.(segments @@ parent key) >>= function
+    | `No_structs -> Lwt.return @@ Error (`Not_found key)
+    | `No_id k -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v k))
+    | `Basename_on block_pair ->
+      (* get all the entries in (parent key) *)
+      Find.entries_of_name t block_pair @@ Mirage_kv.Key.basename key >>= function
+      | Error (`No_id k) | Error (`Not_found k) -> Lwt.return @@ Error (`Not_found k)
+      | Ok l ->
+	(* [l] contains all entries associated with (basename key),
+	 * some of which are hopefully last-updated metadata entries. *)
+	(* We don't care which block any of the entries were on *)
+	let l = List.(map snd l |> flatten) in
+	(* find the mtime-looking entries *)
+	match List.find_opt (fun (tag, _data) ->
+	    Chamelon.Tag.(fst @@ tag.type3) = LFS_TYPE_USERATTR &&
+	    Chamelon.Tag.(snd @@ tag.type3) = 0x74
+	  ) l with
+	| None ->
+	  Log.warn (fun m -> m "Key %a found but it had no time attributes associated" Mirage_kv.Key.pp key);
+	  Lwt.return @@ Error (`Not_found key)
+	| Some (_tag, data) ->
+	  match Chamelon.Entry.ctime_of_cstruct data with
+	  | None ->
+	    Log.err (fun m -> m "Time attributes (%a) found for %a but they were not parseable" Cstruct.hexdump_pp data Mirage_kv.Key.pp key);
+
+	    Lwt.return @@ Error (`Not_found key)
+	  | Some k -> Lwt.return @@ Ok k
+
 
   let rec mkdir t parent_blockpair key =
     (* mkdir has its own function for traversing the directory structure
