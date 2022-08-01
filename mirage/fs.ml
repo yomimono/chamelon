@@ -327,8 +327,12 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
                                                            | `Not_found of key]
                                                           ) result Lwt.t
 
+(** [find_first_blockpair_of_directory t head l] finds and enters
+ *  the segments in [l] recursively until none remain.
+ *  It returns `No_id if an entry is not present and `No_structs if an entry
+ *  is present, but does not represent a valid directory. *)
     val find_first_blockpair_of_directory : t -> directory_head -> string list ->
-      [`Basename_on of directory_head | `No_entry | `No_id of string | `No_structs] Lwt.t
+      [`Basename_on of directory_head | `No_id of string | `No_structs] Lwt.t
 
   end = struct
     type blockwise_entry_list = blockpair * (Chamelon.Entry.t list)
@@ -727,7 +731,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         Log.debug (fun f -> f "descending into segments %a" Fmt.(list ~sep:comma string) segments);
         Find.find_first_blockpair_of_directory t root_pair segments >>= function
         | `Basename_on p -> size_all t p >|= fun i -> Ok i
-        | `No_entry | `No_id _ | `No_structs -> begin
+        | `No_id _ | `No_structs -> begin
             (* no directory by that name, so try for a file *)
             Find.find_first_blockpair_of_directory t root_pair segments >>= function
             | `Basename_on pair -> begin

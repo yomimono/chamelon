@@ -73,35 +73,44 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
                       );
             Fs.File_write.set_in_directory block_pair t (Mirage_kv.Key.basename key) data
         end
-      | `No_entry ->
-        Log.err (fun m -> m "id was present but no matching entries");
-        Lwt.return @@ Error (`Not_found key)
+      (* No_structs represents an inconsistent on-disk structure.
+       * We can't do the right thing, so we return an error. *)
       | `No_structs ->
-        Log.err (fun m -> m "id was present but no matching structure");
+        Log.err (fun m -> m "id was present but no matching directory structure");
         Lwt.return @@ Error (`Not_found key)
     end
 
   let list t key : ((string * [`Dictionary | `Value]) list, error) result Lwt.t =
     let cmp (name1, _) (name2, _) = String.compare name1 name2 in
-    let translate entries = List.filter_map Chamelon.Entry.info_of_entry entries |> List.sort cmp in
+    (* once we've found the (first) directory pair of the *parent* directory,
+     * get the list of all entries naming files or directories
+     * and sort them *)
     let ls_in_dir dir_pair =
       Fs.Find.all_entries_in_dir t dir_pair >>= function
       | Error _ -> Lwt.return @@ Error (`Not_found key)
       | Ok entries_by_block ->
+        let translate entries = List.filter_map Chamelon.Entry.info_of_entry entries |> List.sort cmp in
         (* we have to compact first, because IDs are unique per *block*, not directory.
          * If we compact after flattening the list, we might wrongly conflate multiple
          * entries in the same directory, but on different blocks. *)
         let compacted = List.map (fun (_block, entries) -> Chamelon.Entry.compact entries) entries_by_block in
         Lwt.return @@ Ok (translate @@ List.flatten compacted)
     in
+    (* find the parent directory of the [key] *)
     match (Mirage_kv.Key.segments key) with
     | [] -> ls_in_dir root_pair
     | segments ->
       (* descend into each segment until we run out, at which point we'll be in the
        * directory we want to list *)
       Fs.Find.find_first_blockpair_of_directory t root_pair segments >>= function
-      | `No_id k -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v k))
-      | `No_structs | `No_entry -> Lwt.return @@ Error (`Not_found key)
+      | `No_id k ->
+        (* be sure to return `k` as the error value, so the user might find out
+         * which part of a complex path is missing and be more easily able to fix the problem *)
+        Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v k))
+
+      (* No_structs is returned if part of the path is present, but not a directory (usually meaning
+       * it's a file instead) *)
+      | `No_structs -> Lwt.return @@ Error (`Not_found key)
       | `Basename_on pair -> ls_in_dir pair
 
   let exists t key =
@@ -130,14 +139,14 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
                       Mirage_kv.Key.pp key Fmt.(pair ~sep:comma int64 int64) 
                       pair);
         Fs.Delete.delete_in_directory pair t (Mirage_kv.Key.basename key)
-      | `No_entry | `No_id _ | `No_structs -> Lwt.return @@ Ok ()
+      | `No_id _ | `No_structs -> Lwt.return @@ Ok ()
 
   let last_modified t key =
     (* easy case: `key` represents a value, not a dictionary. Find the associated
      * metadata for the timestamp at which it was last modified and return it. *)
     let last_modified_value t key =
       Fs.Find.find_first_blockpair_of_directory t root_pair Mirage_kv.Key.(segments @@ parent key) >>= function
-      | `No_entry | `No_structs -> Lwt.return @@ Error (`Not_found key)
+      | `No_structs -> Lwt.return @@ Error (`Not_found key)
       | `No_id k -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v k))
       | `Basename_on block_pair ->
         Fs.Find.entries_of_name t block_pair @@ Mirage_kv.Key.basename key >>= function
@@ -161,7 +170,7 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
             | Some k -> Lwt.return @@ Ok k
     in
     Fs.Find.find_first_blockpair_of_directory t root_pair (Mirage_kv.Key.segments key) >>= function
-    | `No_id _ | `No_entry | `No_structs -> last_modified_value t key
+    | `No_id _ | `No_structs -> last_modified_value t key
     | `Basename_on _block_pair ->
       let open Lwt_result.Infix in
       (* we were asked to get the last_modified time of a directory :/ *)
