@@ -22,6 +22,8 @@ The above limitations become more alarming with the knowledge that items within 
 
 Sometimes you just gotta store some stuff. You don't have to store much stuff and you don't have to do it very often but people are gonna get real mad if you don't do it at least a little.
 
+A bit more background is available in [a personal blog post announcing `chamelon`](https://somerandomidiot.com/blog/2022/03/04/chamelon/).
+
 # can I use it?
 
 Sure, if you want. `chamelon` is released under the ISC license (like many MirageOS libraries and its core tooling). Prospective users are encouraged to remember that THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE.
