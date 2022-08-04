@@ -1,3 +1,7 @@
+# v0.1.2 (2022-08-04)
+
+* bugfix: `get_partial` will now return short reads if called with (`offset` + `length`) > the file length, instead of an error. (reported by @palainp, fix by @yomimono)
+
 # v0.1.1 (2022-07-28, all changes by @yomimono)
 
 * bugfix: remove dependency cycle between chamelon and chamelon-unix
