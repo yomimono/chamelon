@@ -337,6 +337,24 @@ let test_get_partial_in_dir block _ () =
   | Ok v -> Alcotest.(check string) "offset read of a file in a directory" (String.sub content 1 @@ (String.length content) - 1) v;
     Lwt.return_unit
 
+let test_rename_roundtrip block _ () =
+  let key_a = Mirage_kv.Key.v "/Schmutzie/Dog"
+  and key_b = Mirage_kv.Key.v "/Schmutzie/Samoyed"
+  and content = "awooooo"
+  in
+  format_and_mount block >>= fun fs ->
+  Chamelon.set fs key_a content >>= function | Error e -> fail_write e | Ok () ->
+  Chamelon.rename fs key_a key_b >>= function | Error e -> fail_write e | Ok () ->
+  Chamelon.rename fs key_b key_a >>= function | Error e -> fail_write e | Ok () ->
+  Chamelon.get fs key_b >>= function
+  | Ok _ -> Alcotest.fail "expected error"
+  | Error (`Not_found _) ->
+    begin Chamelon.get fs key_a >>= function | Error e -> fail_read e | Ok s ->
+      Alcotest.(check string) "rename roundtrip" "awooooo" s;
+      Lwt.return_unit
+    end
+  | Error _ -> Alcotest.fail "unexpected error"
+
 let test_size_nonexistent block _ () =
   let key = Mirage_kv.Key.v "/thedeep/filenotfound" in
   format_and_mount block >>= fun fs ->
@@ -501,6 +519,10 @@ let test img =
          test_case "get partial data w/bad offset+length" `Quick (test_get_partial_bad_combos block);
          test_case "get partial data in a file within a dir" `Quick (test_get_partial_in_dir block);
        ]
+      );
+      ("rename",
+      [ test_case "rename roundtrip" `Quick (test_rename_roundtrip block);
+      ]
       );
       ("size",
       [ test_case "size of something missing" `Quick (test_size_nonexistent block);

@@ -149,6 +149,15 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       (* if we couldn't find (parent key), it's already pretty deleted *)
       | `No_id _ | `No_structs -> Lwt.return @@ Ok ()
 
+  let rename t src dst : (unit, write_error) result Lwt.t =
+    get t src >>= function
+    | Error e -> Lwt.return (Error (e :> write_error))
+    | Ok data ->
+      set t dst data >>= function
+      | Error _ as e -> Lwt.return e
+      | Ok () ->
+        remove t src
+
   (* [last_modified t key] gives the timestamp metadata for a file/value,
    * or (for a directory) the most recently modified file/value within the directory.
    * We don't have to recurse, thankfully, so we only have to examine files. *)
