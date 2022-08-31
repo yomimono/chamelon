@@ -2,7 +2,7 @@
  * Many functions contain calls to the Fs module, which provides lower-level operations
  * dealing directly with on-disk structures. *)
 
-module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) : sig
+module type S = sig
 
   include Mirage_kv.RW
 
@@ -15,3 +15,5 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) : sig
   val get_partial : t -> key -> offset:int -> length:int -> (string, error) result Lwt.t
 
 end
+
+module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) : S
