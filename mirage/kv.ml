@@ -4,6 +4,20 @@ open Lwt.Infix
  * is always at a constant pair - addresses (0, 1) *)
 let root_pair = (0L, 1L)
 
+module type S = sig
+
+  include Mirage_kv.RW
+
+  type sectors
+
+  val format : program_block_size:int -> sectors -> (unit, write_error) result Lwt.t
+  val connect : program_block_size:int -> sectors -> (t, error) result Lwt.t
+  val size : t -> key -> (int, error) result Lwt.t
+
+  val get_partial : t -> key -> offset:int -> length:int -> (string, error) result Lwt.t
+
+end
+
 module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
   module Fs = Fs.Make(Sectors)(Clock)
 
