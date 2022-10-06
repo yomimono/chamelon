@@ -462,14 +462,32 @@ let test_rm_slash block _ () =
   | Ok () -> Alcotest.fail "succeeded in removing the empty key (in other words, /)"
   | Error _ -> Lwt.return_unit
 
+let test_set_2mb_set_2mb_reset_2mb block _ () =
+  let md5s = Mirage_kv.Key.v "md5s" and sha512s = Mirage_kv.Key.v "sha512s" in
+  format_and_mount block >>= fun fs ->
+  Chamelon.set fs md5s
+    (String.init (2 * 1024 * 1024) (Fun.const '\001'))
+  >>= function Error e -> fail_write e | Ok () ->
+  Chamelon.set fs sha512s
+    (String.init (2 * 1024 * 1024) (Fun.const '\002'))
+  >>= function Error e -> fail_write e | Ok () ->
+  Chamelon.disconnect fs >>= fun () ->
+  Chamelon.connect ~program_block_size block
+  >>= function Error e -> fail_read e | Ok fs ->
+  Chamelon.set fs md5s (String.init (2 * 1024 * 1024 + 16 * 1024) (Fun.const '\003'))
+  >>= function Error e -> fail_write e | Ok () ->
+  Lwt.return ()
+
 let test img =
+  let prefered_sector_size = Some 512 in
   Logs.set_level (Some Logs.Debug);
   Logs.set_reporter @@ Logs_fmt.reporter ();
   let open Alcotest_lwt in
   let open Lwt.Infix in
   Lwt_main.run @@ (
     Mirage_crypto_rng_lwt.initialize ();
-    Block.connect ~prefered_sector_size:(Some 512) img >>= fun block ->
+    Block.connect ~prefered_sector_size img >>= fun block ->
+    Block.connect ~prefered_sector_size "64mbfile" >>= fun block' ->
     run "mirage-kv" [
       ("format",
        [ test_case "format" `Quick (test_format block) ;
@@ -525,6 +543,10 @@ let test img =
        [
          test_case "removals are recursive" `Quick (test_recursive_rm block);
          test_case "can't remove /" `Quick (test_rm_slash block);
+       ]);
+      ("reynir",
+       [
+         test_case "we can write two 2MB files, reconnect and then replace one of the files with a slightly larger file in a 64 MB filesystem" `Quick (test_set_2mb_set_2mb_reset_2mb block');
        ]);
     ]
   )

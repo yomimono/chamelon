@@ -7,6 +7,7 @@
   (alias runtest)
   (action (progn
             (run dd if=/dev/zero of=emptyfile bs=4K count=10)
+            (run fallocate -l 64M 64mbfile)
             (run %{exe:test_mirage.exe})
             (run dd if=/dev/zero of=emptyfile bs=1M count=10)
             (run %{exe:test_dirs.exe})
