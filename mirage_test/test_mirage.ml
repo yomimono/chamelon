@@ -583,6 +583,8 @@ let test_multiple_big_writes block _ () =
 
 let test_set_2mb_set_2mb_reset_2mb block _ () =
   let md5s = Mirage_kv.Key.v "md5s" and sha512s = Mirage_kv.Key.v "sha512s" in
+  (* disable debug logging while writing large files *)
+  Logs.set_level (Some Logs.Info);
   format_and_mount block >>= fun fs ->
   Chamelon.set fs md5s
     (String.init (2 * 1024 * 1024) (Fun.const '\001'))
@@ -590,10 +592,12 @@ let test_set_2mb_set_2mb_reset_2mb block _ () =
   Chamelon.set fs sha512s
     (String.init (2 * 1024 * 1024) (Fun.const '\002'))
   >>= function Error e -> fail_write e | Ok () ->
+  (* reenable debug logging *)
+  Logs.set_level (Some Logs.Debug);
   Chamelon.disconnect fs >>= fun () ->
   Chamelon.connect ~program_block_size block
   >>= function Error e -> fail_read e | Ok fs ->
-  Chamelon.set fs md5s (String.init (2 * 1024 * 1024 + 16 * 1024) (Fun.const '\003'))
+  Chamelon.set fs md5s (String.init (2 * 1024) (Fun.const '\003'))
   >>= function Error e -> fail_write e | Ok () ->
   Lwt.return ()
 
