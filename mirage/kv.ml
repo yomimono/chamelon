@@ -246,7 +246,7 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
 
 
   (* These (set_partial and rename) are really simple implementations just to be compliant with mirage-kv 5.0.0 *)
-  let set_partial t key offset data: (unit, write_error) result Lwt.t =
+  let set_partial t key ~offset data =
     get t key >>= function
     | Ok v ->
       let v' = String.sub v 0 (min offset (String.length v)) in
@@ -258,7 +258,7 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     | Error (`Not_found _) -> set t key data
     | Error _ -> Lwt.return @@ Error (`Not_found key) (* fall back to a "generic error" *)
 
-  let rename t source dest: (unit, write_error) result Lwt.t =
+  let rename t ~source ~dest =
     get t source >>= function
     | Ok v ->
       set t dest v >>= begin function
