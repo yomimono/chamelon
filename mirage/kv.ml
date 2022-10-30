@@ -243,4 +243,30 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     Sectors.get_info block >>= fun info ->
     let block_size = info.Mirage_block.sector_size in
     Fs.format ~program_block_size ~block_size block
+
+
+  (* These (set_partial and rename) are really simple implementations just to be compliant with mirage-kv 5.0.0 *)
+  let set_partial t key offset data: (unit, write_error) result Lwt.t =
+    get t key >>= function
+    | Ok v ->
+      let v' = String.sub v 0 (min offset (String.length v)) in
+      let v'' =
+        let start = min (String.length v) (offset + String.length data) in
+        String.sub v start (String.length v - start)
+      in
+      set t key (v' ^ data ^ v'')
+    | Error (`Not_found _) -> set t key data
+    | Error _ -> Lwt.return @@ Error (`Not_found key) (* fall back to a "generic error" *)
+
+  let rename t source dest: (unit, write_error) result Lwt.t =
+    get t source >>= function
+    | Ok v ->
+      set t dest v >>= begin function
+      | Ok _ -> remove t source
+      | Error _ -> Lwt.return @@ Error (`Not_found dest) (* fall back to a "generic error" *)
+      end
+    | Error (`Not_found _) -> Lwt.return @@ Error (`Value_expected source)
+    | Error _ -> Lwt.return @@ Error (`Not_found source) (* fall back to a "generic error" *)
+
+
 end

@@ -29,6 +29,6 @@ depends: [
   "mirage-block-unix" {>= "2.13.0"}
   "mirage-clock" {>= "2.0.0"}
   "mirage-clock-unix" {>= "4.0.0"}
-  "mirage-kv" {>= "4.0.1"}
+  "mirage-kv" {>= "5.0.0"}
   "mirage-logs" {>= "1.2.0"}
 ]
