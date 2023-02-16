@@ -1,4 +1,4 @@
-type t = Tag.t * Cstruct.t
+type t = Entry0.t
 type link = | Metadata of (int64 * int64)
             | Data of (int32 * int32)
 
