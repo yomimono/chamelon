@@ -23,6 +23,8 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     | `No_space                (** No space left on the device. *)
     | `Too_many_retries of int (** {!batch} has been trying to commit [n] times
                                    without success. *)
+    | `Rename_source_prefix of key * key (** The source is a prefix of destination in rename. *)
+    | `Already_present of key  (** The key is already present. *)
   ]
 
   let pp_error fmt = function
@@ -33,6 +35,8 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
   let pp_write_error fmt = function
     | `No_space -> Format.fprintf fmt "no space left on device"
     | `Too_many_retries n -> Format.fprintf fmt "tried to write %d times and didn't succeed" n
+    | `Rename_source_prefix (src, dst) -> Format.fprintf fmt "%a is a prefix of %a" Mirage_kv.Key.pp src Mirage_kv.Key.pp dst
+    | `Already_present key -> Format.fprintf fmt "%a is already present" Mirage_kv.Key.pp key
     | #error as e -> pp_error fmt e
 
   type t = Fs.t
@@ -85,7 +89,7 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
   (** [list t key], where [key] is a reachable directory,
    * gives the files and directories (values and dictionaries) in [key].
    * It is not a recursive listing. *)
-  let list t key : ((string * [`Dictionary | `Value]) list, error) result Lwt.t =
+  let list t key : ((key * [`Dictionary | `Value]) list, error) result Lwt.t =
     let cmp (name1, _) (name2, _) = String.compare name1 name2 in
     (* once we've found the (first) directory pair of the *parent* directory,
      * get the list of all entries naming files or directories
@@ -99,7 +103,8 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
          * If we compact after flattening the list, we might wrongly conflate multiple
          * entries in the same directory, but on different blocks. *)
         let compacted = List.map (fun (_block, entries) -> Chamelon.Entry.compact entries) entries_by_block in
-        Lwt.return @@ Ok (translate @@ List.flatten compacted)
+        let keys_of_strings l = List.map (fun (s,t) -> (Mirage_kv.Key.v s,t)) l in
+        Lwt.return @@ Ok (keys_of_strings (translate @@ List.flatten compacted))
     in
     (* find the parent directory of the [key] *)
     match (Mirage_kv.Key.segments key) with
@@ -124,7 +129,7 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     | Error _ as e -> Lwt.return e
     | Ok l ->
       let lookup (name, dict_or_val) =
-        if (String.compare name (Mirage_kv.Key.basename key)) = 0 then
+        if (Mirage_kv.Key.compare name key) = 0 then
           Some dict_or_val
         else None
       in
@@ -171,26 +176,14 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
           | Error _ as e -> Lwt.return e
           | Ok prev ->
             match entry with
-            | _, `Dictionary -> Lwt.return (Ok prev)
+            | _, `Dictionary -> Lwt.return @@ Ok prev
             | (name, `Value) ->
-              Fs.last_modified_value t Mirage_kv.Key.(key / name) >>= fun new_span ->
-              match Ptime.Span.of_d_ps prev, Ptime.Span.of_d_ps new_span with
-              | None, _ | _, None -> Lwt.return @@ Error (`Not_found key)
-              | Some p, Some n ->
-                match Ptime.of_span p, Ptime.of_span n with
-                | None, _ | _, None -> Lwt.return @@ Error (`Not_found key)
-                | Some p_ts, Some a_ts ->
-                  if Ptime.is_later a_ts ~than:p_ts
-                  then Lwt.return @@ Ok new_span
-                  else Lwt.return @@ Ok prev
+              Fs.last_modified_value t name >>= fun new_span ->
+              if Ptime.is_later new_span ~than:prev
+              then Lwt.return @@ Ok new_span
+              else Lwt.return @@ Ok prev
         )
-        (Ok Ptime.Span.(zero |> to_d_ps)) l
-
-  (* this is probably a surprising implementation for `batch`. Concurrent writes are not
-   * supported by this implementation (there's a global write mutex) so we don't have
-   * to do any work to make sure that writes don't get in each other's way. *)
-  let batch t ?(retries=13) f =
-    let _ = retries in f t
+        (Ok Ptime.min) l
 
   (** [digest t key] is the SHA256 sum of `key` if `key` is a value.
    * If [key] is a dictionary, it's a recursive digest of `key`'s contents. *)
@@ -215,11 +208,10 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
               (* There's no explicit statement in the mli about whether
                * we should descend beyond 1 dictionary for `digest`,
                * but I'm not sure how we can meaningfully have a digest if we don't *)
-              Lwt_list.fold_left_s (fun ctx_result (basename, _) ->
+              Lwt_list.fold_left_s (fun ctx_result (path, _) ->
                   match ctx_result with
                   | Error _ as e -> Lwt.return e
                   | Ok ctx ->
-                    let path = Mirage_kv.Key.add key basename in
                     aux ctx t path
                 ) (Ok ctx) l
             end
@@ -244,9 +236,9 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     let block_size = info.Mirage_block.sector_size in
     Fs.format ~program_block_size ~block_size block
 
-
-  (* These (set_partial and rename) are really simple implementations just to be compliant with mirage-kv 5.0.0 *)
+  (* These (set_partial, rename, allocate) are really simple implementations just to be compliant with mirage-kv 6.0.0 *)
   let set_partial t key ~offset data =
+    let offset = Optint.Int63.to_int offset in
     get t key >>= function
     | Ok v ->
       let v' = String.sub v 0 (min offset (String.length v)) in
@@ -268,5 +260,8 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     | Error (`Not_found _) -> Lwt.return @@ Error (`Value_expected source)
     | Error _ -> Lwt.return @@ Error (`Not_found source) (* fall back to a "generic error" *)
 
+  let allocate t key ?last_modified size =
+    let data = String.make (Optint.Int63.to_int size) '\000' in
+    set t key data
 
 end

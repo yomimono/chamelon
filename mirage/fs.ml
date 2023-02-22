@@ -41,6 +41,8 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     | `No_space                (** No space left on the device. *)
     | `Too_many_retries of int (** {!batch} has been trying to commit [n] times
                                    without success. *)
+    | `Rename_source_prefix of key * key (** The source is a prefix of destination in rename. *)
+    | `Already_present of key  (** The key is already present. *)
   ]
 
   module Read = struct
@@ -442,7 +444,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
 	    Log.err (fun m -> m "Time attributes (%a) found for %a but they were not parseable" Cstruct.hexdump_pp data Mirage_kv.Key.pp key);
 
 	    Lwt.return @@ Error (`Not_found key)
-	  | Some k -> Lwt.return @@ Ok k
+	  | Some k -> Lwt.return @@ Ok (Ptime.v k)
 
 
   let rec mkdir t parent_blockpair key =
@@ -534,7 +536,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
 
   module File_read : sig
     val get : t -> Mirage_kv.Key.t -> (string, error) result Lwt.t
-    val get_partial : t -> Mirage_kv.Key.t -> offset:int -> length:int ->
+    val get_partial : t -> Mirage_kv.Key.t -> offset:Optint.Int63.t -> length:int ->
        (string, error) result Lwt.t
 
   end = struct
@@ -693,6 +695,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
           Lwt.return @@ Ok (String.sub offset_cs 0 final_length)
 
     let get_partial t key ~offset ~length : (string, error) result Lwt.t =
+      let offset = Optint.Int63.to_int offset in
       if offset < 0 then begin
         Log.err (fun f -> f "read requested with negative offset");
         Lwt.return @@ Error (`Not_found key)
@@ -743,10 +746,10 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         match inline_files entries, ctz_files entries with
         | None, None -> Error (`Not_found (Mirage_kv.Key.v filename))
         | Some (tag, _data), None ->
-          Ok tag.Chamelon.Tag.length
+          Ok (Optint.Int63.of_int (tag.Chamelon.Tag.length))
         | _, Some (_tag, data) ->
           match Chamelon.File.ctz_of_cstruct data with
-          | Some (_pointer, length) -> Ok (Int32.to_int length)
+          | Some (_pointer, length) -> Ok (Optint.Int63.of_int (Int32.to_int length))
           | None -> Error (`Value_expected (Mirage_kv.Key.v filename))
 
     let rec size_all t blockpair =
@@ -763,15 +766,15 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
               size_all t p >>= fun s -> Lwt.return @@ s + acc
           ) 0 entries
 
-    let size t key : (int, error) result Lwt.t =
+    let size t key : (Optint.Int63.t, error) result Lwt.t =
       Log.debug (fun f -> f "getting size on key %a" Mirage_kv.Key.pp key);
       match Mirage_kv.Key.segments key with
-      | [] -> size_all t root_pair >>= fun i -> Lwt.return @@ Ok i
+      | [] -> size_all t root_pair >>= fun i -> Lwt.return @@ Ok (Optint.Int63.of_int i)
       | basename::[] -> get_file_size t root_pair basename
       | segments ->
         Log.debug (fun f -> f "descending into segments %a" Fmt.(list ~sep:comma string) segments);
         Find.find_first_blockpair_of_directory t root_pair segments >>= function
-        | `Basename_on p -> size_all t p >|= fun i -> Ok i
+        | `Basename_on p -> size_all t p >|= fun i -> Ok (Optint.Int63.of_int i)
         | `No_id _ | `No_structs -> begin
             (* no directory by that name, so try for a file *)
             Find.find_first_blockpair_of_directory t root_pair segments >>= function

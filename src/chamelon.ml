@@ -54,9 +54,6 @@ let remove common_options path =
       (* it's unclear to me how we'd end up here, which means we definitely want a clear error message *)
       Format.eprintf "value expected for %a but there wasn't one\n%!" Mirage_kv.Key.pp k;
       exit 1
-    | Error (`Too_many_retries i) ->
-      Format.eprintf "couldn't execute deletion batch after %d tries\n%!" i;
-      exit 1
     | Error e -> Format.eprintf "error deleting: %a" Littlefs.pp_write_error e; exit 1
   )
 
