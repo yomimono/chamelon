@@ -1,6 +1,6 @@
 (executables
   (names mem_test_read test_cycles test_dirs test_mirage)
-  (libraries mirage-block-combinators mirage-block-unix mirage-clock-unix mirage-crypto-rng mirage-crypto-rng.lwt mirage-kv logs.cli logs.fmt lwt chamelon chamelon.kv fpath alcotest alcotest-lwt)
+  (libraries mirage-block-combinators mirage-block-unix mirage-clock-unix mirage-crypto-rng mirage-crypto-rng-lwt mirage-kv logs.cli logs.fmt lwt chamelon chamelon.kv fpath alcotest alcotest-lwt)
 )
 
 (rule
