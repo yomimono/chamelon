@@ -260,7 +260,7 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     | Error (`Not_found _) -> Lwt.return @@ Error (`Value_expected source)
     | Error _ -> Lwt.return @@ Error (`Not_found source) (* fall back to a "generic error" *)
 
-  let allocate t key ?last_modified size =
+  let allocate t key ?last_modified:_ size =
     let data = String.make (Optint.Int63.to_int size) '\000' in
     set t key data
 
