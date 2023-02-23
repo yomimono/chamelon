@@ -490,6 +490,17 @@ let test_rm_slash block _ () =
   | Ok () -> Alcotest.fail "succeeded in removing the empty key (in other words, /)"
   | Error _ -> Lwt.return_unit
 
+let test_allocate block _ () =
+  let key = Mirage_kv.Key.v "/allocated" in
+  let size = 240 in
+  format_and_mount block >>= fun fs ->
+  Chamelon.allocate fs key (Optint.Int63.of_int size) >>= function | Error e -> fail_write e | Ok () ->
+  Chamelon.size fs key >>= function
+  | Error e -> Alcotest.failf "rename failed: %a" Chamelon.pp_error e
+  | Ok s ->
+    Alcotest.(check int) "size of allocated file mismatch" (Optint.Int63.to_int s) size ;
+    Lwt.return_unit
+
 let test_rename block _ () =
   let key1 = Mirage_kv.Key.v "/original1" in
   let key2 = Mirage_kv.Key.v "/original2" in
@@ -555,6 +566,7 @@ let test img =
         test_case "size of an empty fs" `Quick (test_size_empty block);
         test_case "size of a directory" `Quick (test_size_dir block);
         test_case "size of some nested stuff" `Quick (test_nested_dir block);
+        test_case "size of allocated file" `Quick (test_allocate block);
        ]
       );
       ("digest",
