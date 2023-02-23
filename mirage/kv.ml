@@ -87,14 +87,14 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     end
 
   (** [list t key], where [key] is a reachable directory,
-   * gives the files and directories (values and dictionaries) in [key].
+   * gives the files and directories (values and dictionaries) in [key] as absolute pathname.
    * It is not a recursive listing. *)
   let list t key : ((key * [`Dictionary | `Value]) list, error) result Lwt.t =
     let cmp (name1, _) (name2, _) = String.compare name1 name2 in
     (* once we've found the (first) directory pair of the *parent* directory,
      * get the list of all entries naming files or directories
      * and sort them *)
-    let ls_in_dir dir_pair =
+    let ls_in_dir dir_pair parent_key =
       Fs.Find.all_entries_in_dir t dir_pair >>= function
       | Error _ -> Lwt.return @@ Error (`Not_found key)
       | Ok entries_by_block ->
@@ -103,12 +103,12 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
          * If we compact after flattening the list, we might wrongly conflate multiple
          * entries in the same directory, but on different blocks. *)
         let compacted = List.map (fun (_block, entries) -> Chamelon.Entry.compact entries) entries_by_block in
-        let keys_of_strings l = List.map (fun (s,t) -> (Mirage_kv.Key.v s,t)) l in
-        Lwt.return @@ Ok (keys_of_strings (translate @@ List.flatten compacted))
+        let absolute_keys_of_strings l = List.map (fun (s,t) -> (Mirage_kv.Key.append parent_key (Mirage_kv.Key.v s),t)) l in
+        Lwt.return @@ Ok (absolute_keys_of_strings (translate @@ List.flatten compacted))
     in
     (* find the parent directory of the [key] *)
     match (Mirage_kv.Key.segments key) with
-    | [] -> ls_in_dir root_pair
+    | [] -> ls_in_dir root_pair (Mirage_kv.Key.v "")
     | segments ->
       (* descend into each segment until we run out, at which point we'll be in the
        * directory we want to list *)
@@ -120,7 +120,7 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       (* No_structs is returned if part of the path is present, but not a directory (usually meaning
        * it's a file instead) *)
       | `No_structs -> Lwt.return @@ Error (`Not_found key)
-      | `Basename_on pair -> ls_in_dir pair
+      | `Basename_on pair -> ls_in_dir pair key
 
   (** [exists t key] returns true *only* for a file/value called (basename key) set in (dirname key).
    * A directory/dictionary doesn't cut it. *)
@@ -178,7 +178,7 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
             match entry with
             | _, `Dictionary -> Lwt.return @@ Ok prev
             | (name, `Value) ->
-              Fs.last_modified_value t (Mirage_kv.Key.append key name) >>= fun new_span ->
+              Fs.last_modified_value t name >>= fun new_span ->
               if Ptime.is_later new_span ~than:prev
               then Lwt.return @@ Ok new_span
               else Lwt.return @@ Ok prev
@@ -212,7 +212,7 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
                   match ctx_result with
                   | Error _ as e -> Lwt.return e
                   | Ok ctx ->
-                    aux ctx t (Mirage_kv.Key.append key path)
+                    aux ctx t path
                 ) (Ok ctx) l
             end
         end

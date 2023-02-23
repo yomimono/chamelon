@@ -72,6 +72,17 @@ let test_set_too_big_key block _ () =
   | Ok () -> Alcotest.fail "allowed a write to way too big a key"
   | Error e -> Format.printf "%a" Chamelon.pp_write_error e; Lwt.return_unit
 
+let test_set_partial block _ () =
+  let key = Mirage_kv.Key.v "/original" in
+  let contents = "I need less coffee" in
+  format_and_mount block >>= fun fs ->
+  Chamelon.set fs key contents >>= function | Error e -> fail_write e | Ok () ->
+  let offset = Optint.Int63.of_int 7 in
+  Chamelon.set_partial fs key ~offset "more" >>= function | Error e -> fail_write e | Ok () ->
+  Chamelon.get fs key >>= function | Error e -> fail_read e
+  | Ok actual ->
+    Alcotest.(check string) "set_partial" "I need more coffee" actual;
+    Lwt.return_unit
 
 let test_set_empty_key block _ () =
   let path = Mirage_kv.Key.v "" in
@@ -92,7 +103,7 @@ let test_set_deep block _ () =
   Chamelon.list fs slash >>= function | Error e -> fail_read e | Ok l ->
     Alcotest.(check int) (Format.asprintf "size of ls / after setting %a" Mirage_kv.Key.pp key) 1 @@ List.length l;
     let e = List.hd l in
-    Alcotest.(check string) "list entry name" "set" (Mirage_kv.Key.basename (fst e));
+    Alcotest.(check string) "list entry name" "/set" (Mirage_kv.Key.to_string (fst e));
     match (snd e) with 
     | `Value -> Alcotest.fail "value where dictionary was expected"
     | `Dictionary ->
@@ -102,7 +113,7 @@ let test_set_deep block _ () =
         let pp_key = Mirage_kv.Key.pp in
         Alcotest.(check int) (Format.asprintf "size of ls %a after setting %a" pp_key (Mirage_kv.Key.parent key) pp_key key) 1 @@ List.length l;
         let e = List.hd l in
-        Alcotest.(check string) "list entry name" "filesystem" (Mirage_kv.Key.basename (fst e));
+        Alcotest.(check string) "list entry name" "/set/deep/fs/filesystem" (Mirage_kv.Key.to_string (fst e));
         Lwt.return_unit
 
 let test_last_modified block _ () =
@@ -479,6 +490,24 @@ let test_rm_slash block _ () =
   | Ok () -> Alcotest.fail "succeeded in removing the empty key (in other words, /)"
   | Error _ -> Lwt.return_unit
 
+let test_rename block _ () =
+  let key1 = Mirage_kv.Key.v "/original1" in
+  let key2 = Mirage_kv.Key.v "/original2" in
+  let contents = "A dummy file" in
+  format_and_mount block >>= fun fs ->
+  Chamelon.set fs key1 contents >>= function | Error e -> fail_write e | Ok () ->
+  Chamelon.rename fs ~source:key1 ~dest:key2 >>= function
+  | Error e -> Alcotest.failf "rename a key failed: %a" Chamelon.pp_write_error e
+  | Ok () ->
+    Chamelon.exists fs key2 >>= function
+    | Error e -> Alcotest.failf "rename failed: %a" Chamelon.pp_error e
+    | Ok None -> Alcotest.failf "the new name doesn't exists"
+    | Ok (Some _) ->
+      Chamelon.exists fs key1 >>= function
+      | Error e -> Alcotest.failf "rename failed: %a" Chamelon.pp_error e
+      | Ok (Some _) -> Alcotest.failf "the old name still exists"
+      | Ok None -> Lwt.return_unit
+
 let test img =
   Logs.set_level (Some Logs.Debug);
   Logs.set_reporter @@ Logs_fmt.reporter ();
@@ -500,6 +529,7 @@ let test img =
          test_case "try to set too big a key" `Quick (test_set_too_big_key block);
          test_case "mkdir -p" `Quick (test_set_deep block);
          test_case "disk full" `Quick (test_no_space block);
+         test_case "set_partial" `Quick (test_set_partial block);
        ]
       );
       ("last modified",
@@ -542,6 +572,10 @@ let test img =
        [
          test_case "removals are recursive" `Quick (test_recursive_rm block);
          test_case "can't remove /" `Quick (test_rm_slash block);
+       ]);
+      ("rename",
+       [
+         test_case "rename" `Quick (test_rename block);
        ]);
     ]
   )
