@@ -433,7 +433,7 @@ let test_many_files block _ () =
   Logs.debug (fun f -> f "last written file was %d" last_written);
   Alcotest.(check bool) "we managed to write at least one file" true (last_written > 0);
   Chamelon.list fs Mirage_kv.Key.empty >>= function | Error e -> fail_read e | Ok l ->
-  let names = List.map (fun (n, _) -> Mirage_kv.Key.to_string n) l |> List.fast_sort (fun a b -> Int.compare (int_of_string a) (int_of_string b)) in
+  let names = List.map (fun (n, _) -> Mirage_kv.Key.basename n) l |> List.fast_sort (fun a b -> Int.compare (int_of_string a) (int_of_string b)) in
   Logs.debug (fun f -> f "%a" Fmt.(list ~sep:sp string) names);
   Alcotest.(check int) "ls contains all written files" (last_written + 1) (List.length l);
   (* make sure each key has the correct corresponding value *)

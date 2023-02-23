@@ -178,7 +178,7 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
             match entry with
             | _, `Dictionary -> Lwt.return @@ Ok prev
             | (name, `Value) ->
-              Fs.last_modified_value t name >>= fun new_span ->
+              Fs.last_modified_value t (Mirage_kv.Key.append key name) >>= fun new_span ->
               if Ptime.is_later new_span ~than:prev
               then Lwt.return @@ Ok new_span
               else Lwt.return @@ Ok prev
@@ -212,7 +212,7 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
                   match ctx_result with
                   | Error _ as e -> Lwt.return e
                   | Ok ctx ->
-                    aux ctx t path
+                    aux ctx t (Mirage_kv.Key.append key path)
                 ) (Ok ctx) l
             end
         end

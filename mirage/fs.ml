@@ -442,7 +442,6 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
 	  match Chamelon.Entry.ctime_of_cstruct data with
 	  | None ->
 	    Log.err (fun m -> m "Time attributes (%a) found for %a but they were not parseable" Cstruct.hexdump_pp data Mirage_kv.Key.pp key);
-
 	    Lwt.return @@ Error (`Not_found key)
 	  | Some k -> Lwt.return @@ Ok (Ptime.v k)
 

@@ -69,7 +69,7 @@ let list fs ~ty n =
   Chamelon.list fs Mirage_kv.Key.empty >|= Result.get_ok >>= fun l ->
   let matching = List.filter
       (fun (name, val_or_dict) -> String.equal name s && val_or_dict = ty)
-      (List.map (fun (k,t) -> (Mirage_kv.Key.to_string k, t)) l) in
+      (List.map (fun (k,t) -> (Mirage_kv.Key.basename k, t)) l) in
   Alcotest.(check int) "each directory appears once in ls /" 1 (List.length matching);
   Lwt.return_unit
 
