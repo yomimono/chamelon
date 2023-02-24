@@ -16,5 +16,6 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) : sig
 
   val set_partial : t -> key -> offset:Optint.Int63.t -> string -> (unit, write_error) result Lwt.t
   val rename : t -> source:key -> dest:key -> (unit, write_error) result Lwt.t
+  val allocate : t -> key -> ?last_modified:Ptime.t -> Optint.Int63.t -> (unit, write_error) result Lwt.t
 
 end

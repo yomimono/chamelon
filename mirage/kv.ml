@@ -94,7 +94,7 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     (* once we've found the (first) directory pair of the *parent* directory,
      * get the list of all entries naming files or directories
      * and sort them *)
-    let ls_in_dir dir_pair parent_key =
+    let ls_in_dir dir_pair dir_key =
       Fs.Find.all_entries_in_dir t dir_pair >>= function
       | Error _ -> Lwt.return @@ Error (`Not_found key)
       | Ok entries_by_block ->
@@ -103,12 +103,12 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
          * If we compact after flattening the list, we might wrongly conflate multiple
          * entries in the same directory, but on different blocks. *)
         let compacted = List.map (fun (_block, entries) -> Chamelon.Entry.compact entries) entries_by_block in
-        let absolute_keys_of_strings l = List.map (fun (s,t) -> (Mirage_kv.Key.append parent_key (Mirage_kv.Key.v s),t)) l in
+        let absolute_keys_of_strings l = List.map (fun (s,t) -> (Mirage_kv.Key.append dir_key (Mirage_kv.Key.v s),t)) l in
         Lwt.return @@ Ok (absolute_keys_of_strings (translate @@ List.flatten compacted))
     in
     (* find the parent directory of the [key] *)
     match (Mirage_kv.Key.segments key) with
-    | [] -> ls_in_dir root_pair (Mirage_kv.Key.v "")
+    | [] -> ls_in_dir root_pair (Mirage_kv.Key.v "/")
     | segments ->
       (* descend into each segment until we run out, at which point we'll be in the
        * directory we want to list *)
@@ -120,7 +120,7 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       (* No_structs is returned if part of the path is present, but not a directory (usually meaning
        * it's a file instead) *)
       | `No_structs -> Lwt.return @@ Error (`Not_found key)
-      | `Basename_on pair -> ls_in_dir pair key
+      | `Basename_on pair -> ls_in_dir pair @@ key
 
   (** [exists t key] returns true *only* for a file/value called (basename key) set in (dirname key).
    * A directory/dictionary doesn't cut it. *)
@@ -262,6 +262,9 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
 
   let allocate t key ?last_modified:_ size =
     let data = String.make (Optint.Int63.to_int size) '\000' in
-    set t key data
+    exists t key >>= function
+    | Ok None -> set t key data
+    | Ok Some _ -> Lwt.return @@ Error (`Already_present key)
+    | Error _ -> Lwt.return @@ Error `No_space (* fall back to a "generic error" *)
 
 end

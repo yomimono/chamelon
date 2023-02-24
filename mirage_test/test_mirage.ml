@@ -72,6 +72,55 @@ let test_set_too_big_key block _ () =
   | Ok () -> Alcotest.fail "allowed a write to way too big a key"
   | Error e -> Format.printf "%a" Chamelon.pp_write_error e; Lwt.return_unit
 
+let test_set_partial_new_file block _ () =
+  let key = Mirage_kv.Key.v "/newfile_for_set_partial" in
+  let contents = "new content" in
+  format_and_mount block >>= fun fs ->
+  let offset = Optint.Int63.of_int 0 in
+  Chamelon.set_partial fs key ~offset contents >>= function | Error e -> fail_write e | Ok () ->
+  Chamelon.get fs key >>= function | Error e -> fail_read e
+  | Ok actual ->
+    Alcotest.(check string) "set_partial" contents actual;
+    Lwt.return_unit
+
+let test_set_partial_at_begining block _ () =
+  let key = Mirage_kv.Key.v "/newfile_for_set_partial2" in
+  let contents = "new" in
+  format_and_mount block >>= fun fs ->
+  Chamelon.set fs key "limited string" >>= function | Error e -> fail_write e | Ok () ->
+  let offset = Optint.Int63.of_int 0 in
+  Chamelon.set_partial fs key ~offset contents >>= function | Error e -> fail_write e | Ok () ->
+  Chamelon.get fs key >>= function | Error e -> fail_read e
+  | Ok actual ->
+    Alcotest.(check string) "set_partial" "newited string" actual;
+    Lwt.return_unit
+
+let test_set_partial_deep_file block _ () =
+  let key = Mirage_kv.Key.v "/folder/file_set_partial" in
+  let contents = "new content" in
+  format_and_mount block >>= fun fs ->
+  let offset = Optint.Int63.of_int 0 in
+  Chamelon.set_partial fs key ~offset contents >>= function | Error e -> fail_write e | Ok () ->
+  Chamelon.get fs key >>= function | Error e -> fail_read e
+  | Ok actual ->
+    Alcotest.(check string) "set_partial" contents actual;
+    Lwt.return_unit
+
+let test_set_partial_deep_file_not_first_created block _ () =
+  let key0 = Mirage_kv.Key.v "/folder0/file1" in
+  let key1 = Mirage_kv.Key.v "/folder/file1" in
+  let key2 = Mirage_kv.Key.v "/folder/file2" in
+  let contents = "new content" in
+  format_and_mount block >>= fun fs ->
+  Chamelon.set fs key0 "dummy" >>= function | Error e -> fail_write e | Ok () ->
+  Chamelon.set fs key1 "dummy" >>= function | Error e -> fail_write e | Ok () ->
+  let offset = Optint.Int63.of_int 0 in
+  Chamelon.set_partial fs key2 ~offset contents >>= function | Error e -> fail_write e | Ok () ->
+  Chamelon.get fs key2 >>= function | Error e -> fail_read e
+  | Ok actual ->
+    Alcotest.(check string) "set_partial" contents actual;
+    Lwt.return_unit
+
 let test_set_partial block _ () =
   let key = Mirage_kv.Key.v "/original" in
   let contents = "I need less coffee" in
@@ -496,10 +545,20 @@ let test_allocate block _ () =
   format_and_mount block >>= fun fs ->
   Chamelon.allocate fs key (Optint.Int63.of_int size) >>= function | Error e -> fail_write e | Ok () ->
   Chamelon.size fs key >>= function
-  | Error e -> Alcotest.failf "rename failed: %a" Chamelon.pp_error e
+  | Error e -> Alcotest.failf "size of allocated file failed: %a" Chamelon.pp_error e
   | Ok s ->
     Alcotest.(check int) "size of allocated file mismatch" (Optint.Int63.to_int s) size ;
     Lwt.return_unit
+
+let test_allocate_existing_file block _ () =
+  let key = Mirage_kv.Key.v "/allocated" in
+  let size = 240 in
+  format_and_mount block >>= fun fs ->
+  Chamelon.set fs key "dummy" >>= function | Error e -> fail_write e | Ok () ->
+  Chamelon.allocate fs key (Optint.Int63.of_int size) >>= function
+  | Error (`Already_present _) -> Lwt.return_unit
+  | Error e -> Alcotest.failf "allocate failed: %a" Chamelon.pp_write_error e
+  | _ -> Alcotest.fail "succeeded in allocation of an already existing file"
 
 let test_rename block _ () =
   let key1 = Mirage_kv.Key.v "/original1" in
@@ -541,6 +600,10 @@ let test img =
          test_case "mkdir -p" `Quick (test_set_deep block);
          test_case "disk full" `Quick (test_no_space block);
          test_case "set_partial" `Quick (test_set_partial block);
+         test_case "set_partial for a file creation" `Quick (test_set_partial_new_file block);
+         test_case "set_partial at the begining of a file" `Quick (test_set_partial_at_begining block);
+         test_case "set_partial deeply stored" `Quick (test_set_partial_deep_file block);
+         test_case "set_partial deeply stored and not the first file of the directory" `Quick (test_set_partial_deep_file_not_first_created block);
        ]
       );
       ("last modified",
@@ -566,7 +629,11 @@ let test img =
         test_case "size of an empty fs" `Quick (test_size_empty block);
         test_case "size of a directory" `Quick (test_size_dir block);
         test_case "size of some nested stuff" `Quick (test_nested_dir block);
-        test_case "size of allocated file" `Quick (test_allocate block);
+       ]
+      );
+      ("allocate",
+      [ test_case "size of allocated file" `Quick (test_allocate block);
+        test_case "allocate an existing file" `Quick (test_allocate_existing_file block);
        ]
       );
       ("digest",
