@@ -2,16 +2,16 @@
  * if [t] is a hard tail entry *)
 val hard_tail_links : Tag.t * Cstruct.t -> (int64 * int64) option
 
-val hard_tail_at : (int64 * int64) -> Entry.t
+val hard_tail_at : (int64 * int64) -> Entry0.t
 
 (** [of_entry t] returns the blockpair on which the directory contents start
  * if [t] is a directory structure entry *)
-val of_entry : Entry.t -> (int64 * int64) option
+val of_entry : Entry0.t -> (int64 * int64) option
 
 (** [name str id] makes an entry linking [id] with [name]. *)
-val name : string -> int -> Entry.t
+val name : string -> int -> Entry0.t
 
 (** [mkdir ~to_pair id] makes a directory structure entry. *)
-val mkdir : to_pair:(int64 * int64) -> int -> Entry.t
+val mkdir : to_pair:(int64 * int64) -> int -> Entry0.t
 
 val dirstruct_of_cstruct : Cstruct.t -> (int64 * int64) option
