@@ -437,7 +437,22 @@ let test_size_empty block _ () =
     let n = Optint.Int63.to_int n in
     Alcotest.(check int) "fresh filesystem size /" 0 n;
     Lwt.return_unit
-  
+
+let test_size_append block _ () =
+  format_and_mount block >>= fun fs ->
+  let key = Mirage_kv.Key.v "/not_so_empty_file" in
+  let contents = "some data" in
+  Chamelon.set fs key "" >>= function | Error e -> fail_write e | Ok () ->
+  let offset = Optint.Int63.of_int 0 in
+  let length = String.length contents in
+  Chamelon.set_partial fs key ~offset contents >>= function | Error e -> fail_write e | Ok () ->
+  Chamelon.size fs key >>= function
+  | Error e -> fail_read e
+  | Ok n -> 
+    let n = Optint.Int63.to_int n in
+    Alcotest.(check int) "size of a after appending data" length n;
+    Lwt.return_unit
+
 let test_size_dir block _ () =
   let key1 = Mirage_kv.Key.v "/important do not lose/1"
   and key2 = Mirage_kv.Key.v "/important do not lose/2"
@@ -629,6 +644,7 @@ let test img =
         test_case "size of an empty fs" `Quick (test_size_empty block);
         test_case "size of a directory" `Quick (test_size_dir block);
         test_case "size of some nested stuff" `Quick (test_nested_dir block);
+        test_case "size of an appended file" `Quick (test_size_append block);
        ]
       );
       ("allocate",

@@ -726,12 +726,11 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
   end
 
   module Size = struct
-
     let get_file_size t parent_dir_head filename =
       Find.entries_of_name t parent_dir_head filename >|= function
       | Error _ | Ok [] -> Error (`Not_found (Mirage_kv.Key.v filename))
       | Ok compacted ->
-        let entries = snd @@ List.(hd @@ rev compacted) in
+        let compacted = snd @@ List.(hd @@ rev compacted) in
         let inline_files = List.find_opt (fun (tag, _data) ->
             Chamelon.Tag.((fst tag.type3) = LFS_TYPE_STRUCT) &&
             Chamelon.Tag.((snd tag.type3) = 0x01)
@@ -742,7 +741,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
                           Chamelon.Tag.((snd tag.type3 = 0x02)
                                        ))) in
         Log.debug (fun m -> m "found %d entries with name %s" (List.length compacted) filename);
-        match inline_files entries, ctz_files entries with
+        match inline_files compacted, ctz_files compacted with
         | None, None -> Error (`Not_found (Mirage_kv.Key.v filename))
         | Some (tag, _data), None ->
           Ok (Optint.Int63.of_int (tag.Chamelon.Tag.length))
@@ -770,13 +769,15 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       match Mirage_kv.Key.segments key with
       | [] -> size_all t root_pair >>= fun i -> Lwt.return @@ Ok (Optint.Int63.of_int i)
       | basename::[] -> get_file_size t root_pair basename
-      | segments ->
+      | _ ->
+        let segments = Mirage_kv.Key.segments key in
         Log.debug (fun f -> f "descending into segments %a" Fmt.(list ~sep:comma string) segments);
         Find.find_first_blockpair_of_directory t root_pair segments >>= function
         | `Basename_on p -> size_all t p >|= fun i -> Ok (Optint.Int63.of_int i)
         | `No_id _ | `No_structs -> begin
             (* no directory by that name, so try for a file *)
-            Find.find_first_blockpair_of_directory t root_pair segments >>= function
+            let dirname = Mirage_kv.Key.(parent key |> segments) in 
+            Find.find_first_blockpair_of_directory t root_pair dirname >>= function
             | `Basename_on pair -> begin
                 get_file_size t pair (Mirage_kv.Key.basename key)
               end
