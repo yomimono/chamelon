@@ -8,7 +8,6 @@ let pp_ty fmt = function
 let pp_time fmt = function
   | Error `No_last_modified -> Stdlib.Format.fprintf fmt "no last modified info"
   | Error `Unparseable_span -> Stdlib.Format.fprintf fmt "(last modified span unparseable)"
-  | Ok (`Span span) -> Ptime.Span.pp fmt span
   | Ok (`Ptime timestamp) -> Ptime.pp fmt timestamp
 
 let ls {Common_options.image; block_size; program_block_size} timestamp path =
@@ -16,16 +15,7 @@ let ls {Common_options.image; block_size; program_block_size} timestamp path =
   let check_time t path =
     Chamelon.last_modified t path >>= function
     | Error _ -> Lwt.return @@ Error `No_last_modified
-    | Ok (d, ps) ->
-      match Ptime.Span.of_d_ps (d, ps) with
-      | None ->
-        Lwt.return @@ Error `Unparseable_span
-      | Some span ->
-        match Ptime.of_span span with
-        | None ->
-          Lwt.return @@ Ok (`Span span)
-        | Some timestamp ->
-          Lwt.return @@ Ok (`Ptime timestamp)
+    | Ok timestamp -> Lwt.return @@ Ok (`Ptime timestamp)
   in
   Lwt_main.run @@ (
   Mirage_block.connect ~prefered_sector_size:(Some block_size) image >>= fun block ->
@@ -59,12 +49,11 @@ let ls {Common_options.image; block_size; program_block_size} timestamp path =
       in
       let print (name, key_or_dict) =
         if timestamp then begin
-          let fullpath = Mirage_kv.Key.(append requested_path @@ v name) in
-          check_time t fullpath >>= fun time ->
-          Stdlib.Format.printf "%a (%a)\n%!" pp (name, key_or_dict) pp_time time;
+          check_time t name >>= fun time ->
+          Stdlib.Format.printf "%a (%a)\n%!" pp ((Mirage_kv.Key.to_string name), key_or_dict) pp_time time;
           Lwt.return_unit
         end else begin
-          Stdlib.Format.printf "%a\n%!" pp (name, key_or_dict);
+          Stdlib.Format.printf "%a\n%!" pp ((Mirage_kv.Key.to_string name), key_or_dict);
           Lwt.return_unit
         end
       in
