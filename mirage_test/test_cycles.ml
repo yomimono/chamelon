@@ -1,5 +1,5 @@
 module Chamelon_lib = Chamelon
-module Chamelon = Kv.Make(Block)(Pclock)
+module Chamelon = Kv.Make(Block)
 open Lwt.Infix
 
 let fail pp e = Lwt.fail_with (Format.asprintf "%a" pp e)

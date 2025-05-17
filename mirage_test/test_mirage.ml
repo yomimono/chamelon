@@ -1,4 +1,4 @@
-module Chamelon = Kv.Make(Block)(Pclock)
+module Chamelon = Kv.Make(Block)
 open Lwt.Infix
 
 let fail pp e = Lwt.fail_with (Format.asprintf "%a" pp e)
@@ -92,8 +92,8 @@ let test_set_deep block _ () =
   Chamelon.list fs slash >>= function | Error e -> fail_read e | Ok l ->
     Alcotest.(check int) (Format.asprintf "size of ls / after setting %a" Mirage_kv.Key.pp key) 1 @@ List.length l;
     let e = List.hd l in
-    Alcotest.(check string) "list entry name" "set" (fst e);
-    match (snd e) with 
+    Alcotest.(check string) "list entry name" "/set" (Mirage_kv.Key.to_string (fst e));
+    match (snd e) with
     | `Value -> Alcotest.fail "value where dictionary was expected"
     | `Dictionary ->
       Chamelon.list fs (Mirage_kv.Key.parent key) >>= function
@@ -102,7 +102,7 @@ let test_set_deep block _ () =
         let pp_key = Mirage_kv.Key.pp in
         Alcotest.(check int) (Format.asprintf "size of ls %a after setting %a" pp_key (Mirage_kv.Key.parent key) pp_key key) 1 @@ List.length l;
         let e = List.hd l in
-        Alcotest.(check string) "list entry name" "filesystem" (fst e);
+        Alcotest.(check string) "list entry name" "/set/deep/fs/filesystem" (Mirage_kv.Key.to_string (fst e));
         Lwt.return_unit
 
 let test_last_modified block _ () =
@@ -113,13 +113,13 @@ let test_last_modified block _ () =
   Chamelon.get fs path >>= function | Error e -> fail_read e
   | Ok _contents ->
     Chamelon.last_modified fs path >>= function | Error e -> fail_read e | Ok first_write_time ->
-      let first_timestamp = Ptime.unsafe_of_d_ps first_write_time in
-      let now_timestamp = Pclock.(now_d_ps ()) |> Ptime.unsafe_of_d_ps in
+      let first_timestamp = first_write_time in
+      let now_timestamp = Mirage_ptime.now () in
       Alcotest.(check bool) "last modified time is before now" true (Ptime.is_later now_timestamp ~than:first_timestamp);
       Chamelon.set fs path "do it again!!" >>= function | Error e -> fail_write e
       | Ok () ->
         Chamelon.last_modified fs path >>= function | Error e -> fail_read e | Ok second_write_time ->
-          let second_timestamp = Ptime.unsafe_of_d_ps second_write_time in
+          let second_timestamp = second_write_time in
           Alcotest.(check bool) "after modifying, last modified time is later" true
             (Ptime.is_later second_timestamp ~than:now_timestamp);
           Lwt.return_unit
@@ -135,7 +135,8 @@ let test_last_modified_dir block _ () =
   Chamelon.last_modified fs @@ Mirage_kv.Key.parent cheese2 >>= function
   | Error e -> fail_read e
   | Ok cheeses_modified ->
-    Alcotest.(check (pair int int64) "dir has same last modified time as the last thing modified" cheese2_modified cheeses_modified);
+    Alcotest.(check bool "dir has same last modified time as the last thing modified" true
+                (Ptime.equal cheese2_modified cheeses_modified));
     Lwt.return_unit
 
 let test_last_modified_depth block _ () =
@@ -148,7 +149,8 @@ let test_last_modified_depth block _ () =
   Chamelon.set fs key2 contents2 >>= function | Error e -> fail_write e | Ok () ->
   Chamelon.last_modified fs (Mirage_kv.Key.parent key1) >>= function | Error e -> fail_read e | Ok calico_modified ->
   Chamelon.last_modified fs key1 >>= function | Error e -> fail_read e | Ok key1_modified ->
-  Alcotest.(check (pair int int64) "last modified for parent only goes down 1 level" key1_modified calico_modified);
+  Alcotest.(check bool "last modified for parent only goes down 1 level" true
+              (Ptime.equal key1_modified calico_modified));
   Lwt.return_unit
 
 let test_digest_empty block _ () =
@@ -257,13 +259,13 @@ let test_get_big_value block _ () =
   format_and_mount block >>= fun fs ->
   let g = Mirage_crypto_rng.default_generator () in
   let value = Mirage_crypto_rng.generate ~g (block_size * 4) in
-  Chamelon.set fs key (Cstruct.to_string value) >>= function
+  Chamelon.set fs key value >>= function
   | Error e -> Alcotest.fail (Format.asprintf "setting a large key failed: %a" Chamelon.pp_write_error e)
   | Ok () ->
     Chamelon.get fs key >>= function
     | Error e -> Alcotest.fail (Format.asprintf "getting a large key failed: %a" Chamelon.pp_error e)
     | Ok retrieved_value ->
-      Alcotest.(check string "retrieved big file is the same as what we set" (Cstruct.to_string value) retrieved_value);
+      Alcotest.(check string "retrieved big file is the same as what we set" value retrieved_value);
       Lwt.return_unit
 
 let test_get_valid_partial block _ () =
@@ -278,7 +280,7 @@ let test_get_valid_partial block _ () =
   | Error e -> fail_write e
   | Ok () ->
     Chamelon.get_partial fs key
-      ~offset:(String.length negation)
+      ~offset:(Optint.Int63.of_int (String.length negation))
       ~length:(String.length content) >>= function
     | Error e -> fail_read e
     | Ok partial -> Alcotest.(check string) "partial read" content partial;
@@ -291,11 +293,11 @@ let test_get_partial_bad_offsets block _ () =
   | Error e -> fail_write e
   | Ok () ->
     (* offset too big *)
-    Chamelon.get_partial fs key ~offset:(String.length content + 10) ~length:1 >>= function
+    Chamelon.get_partial fs key ~offset:(Optint.Int63.of_int (String.length content + 10)) ~length:1 >>= function
     | Ok v -> Alcotest.failf "partial read off end of file succeeded, returning %S" v
     | Error _ ->
       (* offset too *small* *)
-      Chamelon.get_partial fs key ~offset:(-10) ~length:1 >>= function
+      Chamelon.get_partial fs key ~offset:(Optint.Int63.of_int (-10)) ~length:1 >>= function
       | Ok v -> Alcotest.failf "negative offset succeeded, returning %S" v
       | Error _ -> Lwt.return_unit
 
@@ -306,13 +308,13 @@ let test_get_partial_bad_length block _ () =
   | Error e -> fail_write e
   | Ok () ->
     (* negative length *)
-    Chamelon.get_partial fs key ~offset:0 ~length:(-10) >>= function
+    Chamelon.get_partial fs key ~offset:(Optint.Int63.of_int 0) ~length:(-10) >>= function
     | Ok v -> Alcotest.failf "partial read with negative length succeeded, returning %S" v
-    | Error _ -> 
-      Chamelon.get_partial fs key ~offset:0 ~length:0 >>= function
+    | Error _ ->
+      Chamelon.get_partial fs key ~offset:(Optint.Int63.of_int 0) ~length:0 >>= function
       | Ok v -> Alcotest.failf "partial read with zero length succeeded, returning %S" v
       | Error _ ->
-        Chamelon.get_partial fs key ~offset:0 ~length:(2 * (String.length content)) >>= function
+        Chamelon.get_partial fs key ~offset:(Optint.Int63.of_int 0) ~length:(2 * (String.length content)) >>= function
         | Error _ -> Alcotest.failf "should've gotten a short read, but got an outright failure"
         | Ok v -> Alcotest.(check string) "short reads" content v;
           Lwt.return_unit
@@ -321,7 +323,7 @@ let test_get_partial_bad_combos block _ () =
   let key = Mirage_kv.Key.v "/file" and content = "important stuff" in
   format_and_mount block >>= fun fs ->
   Chamelon.set fs key content >>= function | Error e -> fail_write e | Ok () ->
-  Chamelon.get_partial fs key ~offset:5 ~length:(String.length content) >>= function
+  Chamelon.get_partial fs key ~offset:(Optint.Int63.of_int 5) ~length:(String.length content) >>= function
   | Error e -> Alcotest.failf "should've gotten a short read, but got an outright failure: %a" Chamelon.pp_error e
   | Ok v -> Alcotest.(check string) "short reads" (String.sub content 5 ((String.length content) - 5)) v;
     Lwt.return_unit
@@ -332,7 +334,7 @@ let test_get_partial_in_dir block _ () =
   in
   format_and_mount block >>= fun fs ->
   Chamelon.set fs key content >>= function | Error e -> fail_write e | Ok () ->
-  Chamelon.get_partial fs key ~offset:1 ~length:((String.length content) - 1) >>= function
+  Chamelon.get_partial fs key ~offset:(Optint.Int63.of_int 1) ~length:((String.length content) - 1) >>= function
   | Error e -> Alcotest.failf "error reading successfully set key: %a" Chamelon.pp_error e
   | Ok v -> Alcotest.(check string) "offset read of a file in a directory" (String.sub content 1 @@ (String.length content) - 1) v;
     Lwt.return_unit
@@ -416,8 +418,8 @@ let test_many_files block _ () =
   Logs.debug (fun f -> f "last written file was %d" last_written);
   Alcotest.(check bool) "we managed to write at least one file" true (last_written > 0);
   Chamelon.list fs Mirage_kv.Key.empty >>= function | Error e -> fail_read e | Ok l ->
-  let names = List.map (fun (n, _) -> n) l |> List.fast_sort (fun a b -> Int.compare (int_of_string a) (int_of_string b)) in
-  Logs.debug (fun f -> f "%a" Fmt.(list ~sep:sp string) names);
+  let names = List.map (fun (n, _) -> n) l |> List.fast_sort (fun a b -> Int.compare (int_of_string (Mirage_kv.Key.basename a)) (int_of_string (Mirage_kv.Key.basename b))) in
+  Logs.debug (fun f -> f "%a" Fmt.(list ~sep:sp Mirage_kv.Key.pp) names);
   Alcotest.(check int) "ls contains all written files" (last_written + 1) (List.length l);
   (* make sure each key has the correct corresponding value *)
   read_all fs last_written 0 >>= fun () ->
@@ -468,7 +470,7 @@ let test img =
   let open Alcotest_lwt in
   let open Lwt.Infix in
   Lwt_main.run @@ (
-    Mirage_crypto_rng_lwt.initialize ();
+    Mirage_crypto_rng_unix.use_default ();
     Block.connect ~prefered_sector_size:(Some 512) img >>= fun block ->
     run "mirage-kv" [
       ("format",

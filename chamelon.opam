@@ -28,8 +28,8 @@ depends: [
   "alcotest-lwt" {>= "1.5.0" & with-test}
   "mirage-block-combinators" {>= "3.0.0" & with-test}
   "mirage-block-unix" {>= "2.13.0" & with-test}
-  "mirage-clock-unix" {>= "4.0.0" & with-test}
-  "mirage-crypto-rng" {>= "0.10.6" & with-test}
+  "mirage-ptime" {>= "5.0.0"}
+  "mirage-crypto-rng" {>= "1.2.0" & with-test}
   "bechamel" {>= "0.2.0" & with-test}
   "bechamel-js" {>= "0.2.0" & with-test}
   "checkseum" {>= "0.3.2"}
@@ -40,8 +40,7 @@ depends: [
   "lwt" {>= "5.3.0"}
   "ptime" {>= "0.8.6"}
   "mirage-block" {>= "3.0.0"}
-  "mirage-clock" {>= "2.0.0"}
-  "mirage-kv" {>= "4.0.1"}
+  "mirage-kv" {>= "6.0.1"}
   "mirage-logs" {>= "1.2.0"}
   "optint" {>= "0.0.4"}
 ]

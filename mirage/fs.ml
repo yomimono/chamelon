@@ -7,7 +7,7 @@ let pp_blockpair = Fmt.(pair ~sep:comma int64 int64)
 
 open Lwt.Infix
 
-module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
+module Make(Sectors: Mirage_block.S) = struct
   module This_Block = Block_ops.Make(Sectors)
   type lookahead = {
     offset : int;
@@ -39,8 +39,8 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
   type write_error = [
     | error
     | `No_space                (** No space left on the device. *)
-    | `Too_many_retries of int (** {!batch} has been trying to commit [n] times
-                                   without success. *)
+    | `Already_present of key (** The key is already present. *)
+    | `Rename_source_prefix of key * key (** The source is a prefix of destination in rename. *)
   ]
 
   module Read = struct
@@ -65,7 +65,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       if Chamelon.Block.(compare (revision_count b1) (revision_count b2)) < 0
       then Lwt.return @@ Ok b2
       else Lwt.return @@ Ok b1
-          
+
   end
 
   module Traverse = struct
@@ -469,7 +469,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
           match List.filter_map Chamelon.Dir.of_entry l with
           | [] -> Lwt.return `No_structs
           | next_blocks::_ -> Lwt.return (`Continue (remaining, next_blocks))
-    in 
+    in
     (* [find_or_mkdir t parent_blockpair dirname] will:
      * attempt to find [dirname] in the directory starting at [parent_blockpair] or any other blockpairs in its hardtail linked list
      * if no valid entries corresponding to [dirname] are found:
@@ -789,7 +789,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     val set_in_directory : directory_head -> t -> string -> string ->
       (unit, write_error) result Lwt.t
 
-  end = struct  
+  end = struct
 
     (* write_ctz_block continues writing a CTZ `data` to `t` from the block list `blocks`. *)
     let rec write_ctz_block t blocks written index so_far data =
@@ -859,7 +859,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
               | Some n -> n + 1
             in
             let name = Chamelon.File.name filename next in
-            let ctime = Chamelon.Entry.ctime next (Clock.now_d_ps ()) in
+            let ctime = Chamelon.Entry.ctime next (Mirage_ptime.now_d_ps ()) in
             let ctz = Chamelon.File.create_ctz next
                 ~pointer:last_pointer ~file_size:(Int32.of_int file_size)
             in
@@ -886,7 +886,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
             | None -> 1
             | Some n -> n + 1
           in
-          let ctime = Chamelon.Entry.ctime next (Clock.now_d_ps ()) in
+          let ctime = Chamelon.Entry.ctime next (Mirage_ptime.now_d_ps ()) in
           let file = Chamelon.File.write_inline filename next (Cstruct.of_string data) in
           let commit = entries @ (ctime :: file) in
           Log.debug (fun m -> m "writing %d entries for inline file %s" (List.length file) filename);
@@ -998,7 +998,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     This_Block.connect ~block_size device >>= fun block ->
     Log.debug (fun f -> f "initiating filesystem with block size %d (0x%x)" block_size block_size);
     let block0, block1= Cstruct.create block_size, Cstruct.create block_size in
-    Lwt_result.both 
+    Lwt_result.both
       (This_Block.read block 0L [block0])
       (This_Block.read block 1L [block1])
     >>= function

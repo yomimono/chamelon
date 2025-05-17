@@ -1,5 +1,5 @@
 module Mirage_sectors = Block (* disambiguate this from Littlefs.Block *)
-module Littlefs = Kv.Make(Mirage_sectors)(Pclock) (* Pclock comes from mirage-clock-unix *)
+module Littlefs = Kv.Make(Mirage_sectors) (* Pclock comes from mirage-clock-unix *)
 
 let format {Common_options.program_block_size; block_size; image} =
   let aux () =
@@ -47,15 +47,12 @@ let remove common_options path =
     | Error (`Dictionary_expected k) ->
       Format.eprintf "%a is not a dictionary and elements could not be removed from it\n%!" Mirage_kv.Key.pp k;
       exit 1
-    | Error `No_space -> 
+    | Error `No_space ->
       Format.eprintf "no space available to execute deletion\n%!";
       exit 1
     | Error (`Value_expected k) ->
       (* it's unclear to me how we'd end up here, which means we definitely want a clear error message *)
       Format.eprintf "value expected for %a but there wasn't one\n%!" Mirage_kv.Key.pp k;
-      exit 1
-    | Error (`Too_many_retries i) ->
-      Format.eprintf "couldn't execute deletion batch after %d tries\n%!" i;
       exit 1
     | Error e -> Format.eprintf "error deleting: %a" Littlefs.pp_write_error e; exit 1
   )

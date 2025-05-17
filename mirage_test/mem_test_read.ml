@@ -1,12 +1,12 @@
 module Block = Mirage_block_combinators.Mem
 
-module Chamelon = Kv.Make(Block)(Pclock)
+module Chamelon = Kv.Make(Block)
 module Log = (val Logs.src_log Logs.default : Logs.LOG)
 
 let key = Mirage_kv.Key.v "/file"
 let ascii_denom = 128
 let comparator = String.init ascii_denom (fun f -> Char.chr f)
- 
+
 let mount_and_write =
   let open Lwt.Infix in
   Block.connect "mount chamelon" >>= fun block ->
@@ -35,7 +35,7 @@ let head ~readfn n =
     let rec aux = function
       | n when n <= 0 -> Lwt.return_unit
       | n ->
-        readfn fs key ~offset:0 ~length:128 >>= function
+        readfn fs key ~offset:(Optint.Int63.of_int 0) ~length:128 >>= function
         | Error e ->
           Alcotest.failf "error reading test key: %a" Chamelon.pp_error e
         | Ok subset ->
@@ -58,7 +58,7 @@ let tail ~readfn n =
       | n when n <= 0 -> Lwt.return_unit
       | n ->
         (* look for `ascii_denom + 1` as a cheap and cheerful way of testing short reads *)
-        readfn fs key ~offset:(size - ascii_denom) ~length:(2 * ascii_denom + 1) >>= function
+        readfn fs key ~offset:(Optint.Int63.of_int (size - ascii_denom)) ~length:(2 * ascii_denom + 1) >>= function
         | Error e -> Alcotest.failf "error reading test key: %a" Chamelon.pp_error e
         | Ok subset ->
           Alcotest.(check string) "tail subset" comparator subset;
@@ -78,9 +78,9 @@ let block_straddling_read () =
   Lwt_main.run @@ (
     let open Lwt.Infix in
     mount_and_write >>= fun fs ->
-    Chamelon.get_partial fs key ~offset:511 ~length:3 >>= function
+    Chamelon.get_partial fs key ~offset:(Optint.Int63.of_int 511) ~length:3 >>= function
     | Error e -> Alcotest.failf "error reading test key: %a" Chamelon.pp_error e
-    | Ok read -> 
+    | Ok read ->
       Alcotest.(check string) "block-straddling read" "\x7f\x00\x01" read;
       Lwt.return_unit
   )
