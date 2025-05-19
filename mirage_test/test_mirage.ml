@@ -319,13 +319,13 @@ let test_get_big_value block _ () =
   format_and_mount block >>= fun fs ->
   let g = Mirage_crypto_rng.default_generator () in
   let value = Mirage_crypto_rng.generate ~g (block_size * 4) in
-  Chamelon.set fs key (Cstruct.to_string value) >>= function
+  Chamelon.set fs key value >>= function
   | Error e -> Alcotest.fail (Format.asprintf "setting a large key failed: %a" Chamelon.pp_write_error e)
   | Ok () ->
     Chamelon.get fs key >>= function
     | Error e -> Alcotest.fail (Format.asprintf "getting a large key failed: %a" Chamelon.pp_error e)
     | Ok retrieved_value ->
-      Alcotest.(check string "retrieved big file is the same as what we set" (Cstruct.to_string value) retrieved_value);
+      Alcotest.(check string "retrieved big file is the same as what we set" value retrieved_value);
       Lwt.return_unit
 
 let test_get_valid_partial block _ () =
@@ -599,7 +599,6 @@ let test img =
   let open Alcotest_lwt in
   let open Lwt.Infix in
   Lwt_main.run @@ (
-    Mirage_crypto_rng_lwt.initialize (module Mirage_crypto_rng.Fortuna);
     Block.connect ~prefered_sector_size:(Some 512) img >>= fun block ->
     run "mirage-kv" [
       ("format",
@@ -674,4 +673,7 @@ let test img =
        ]);
     ]
   )
-let () = test "emptyfile"
+
+let () =
+  Mirage_crypto_rng_unix.use_default ();
+  test "emptyfile"
