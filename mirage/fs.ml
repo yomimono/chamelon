@@ -769,8 +769,7 @@ module Make(Sectors: Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       match Mirage_kv.Key.segments key with
       | [] -> size_all t root_pair >>= fun i -> Lwt.return @@ Ok (Optint.Int63.of_int i)
       | basename::[] -> get_file_size t root_pair basename
-      | _ ->
-        let segments = Mirage_kv.Key.segments key in
+      | segments ->
         Log.debug (fun f -> f "descending into segments %a" Fmt.(list ~sep:comma string) segments);
         Find.find_first_blockpair_of_directory t root_pair segments >>= function
         | `Basename_on p -> size_all t p >|= fun i -> Ok (Optint.Int63.of_int i)
