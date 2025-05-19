@@ -10,6 +10,7 @@ let ascii_denom = 128
 let comparator = String.init ascii_denom (fun f -> Char.chr f)
  
 let simple_get_partial t key ~offset ~length =
+  let offset = Optint.Int63.to_int offset in
   if offset < 0 then begin
     Logs.err (fun f -> f "read requested with negative offset");
     Lwt.return @@ Error (`Not_found key)
@@ -55,7 +56,7 @@ let head ~readfn n =
     let rec aux = function
       | n when n <= 0 -> Lwt.return_unit
       | n ->
-        readfn fs key ~offset:0 ~length:ascii_denom >>= function
+        readfn fs key ~offset:(Optint.Int63.of_int 0) ~length:ascii_denom >>= function
         | Error e -> Format.eprintf "error reading test key: %a" Chamelon.pp_error e;
           assert false
         | Ok subset ->
@@ -77,7 +78,7 @@ let tail ~readfn n =
     let rec aux = function
       | n when n <= 0 -> Lwt.return_unit
       | n ->
-        readfn fs key ~offset:(size - ascii_denom) ~length:ascii_denom >>= function
+        readfn fs key ~offset:(Optint.Int63.of_int ((Optint.Int63.to_int size) - ascii_denom)) ~length:ascii_denom >>= function
         | Error e -> Format.eprintf "error reading test key: %a" Chamelon.pp_error e;
           assert false
         | Ok subset ->
