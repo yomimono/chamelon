@@ -103,12 +103,12 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
          * If we compact after flattening the list, we might wrongly conflate multiple
          * entries in the same directory, but on different blocks. *)
         let compacted = List.map (fun (_block, entries) -> Chamelon.Entry.compact entries) entries_by_block in
-        let absolute_keys_of_strings l = List.map (fun (s,t) -> (Mirage_kv.Key.append dir_key (Mirage_kv.Key.v s),t)) l in
+        let absolute_keys_of_strings l = List.map (fun (s,t) -> (Mirage_kv.Key.(dir_key / s),t)) l in
         Lwt.return @@ Ok (absolute_keys_of_strings (translate @@ List.flatten compacted))
     in
     (* find the parent directory of the [key] *)
     match (Mirage_kv.Key.segments key) with
-    | [] -> ls_in_dir root_pair (Mirage_kv.Key.v "/")
+    | [] -> ls_in_dir root_pair Mirage_kv.Key.empty
     | segments ->
       (* descend into each segment until we run out, at which point we'll be in the
        * directory we want to list *)
@@ -265,6 +265,6 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     exists t key >>= function
     | Ok None -> set t key data
     | Ok Some _ -> Lwt.return @@ Error (`Already_present key)
-    | Error _ -> Lwt.return @@ Error `No_space (* fall back to a "generic error" *)
+    | Error e -> Lwt.return @@ Error (e :> write_error)
 
 end
