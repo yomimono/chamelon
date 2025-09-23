@@ -31,7 +31,7 @@
             (setenv OCAMLRUNPARAM b (run %{exe:chamelon.exe} format test.img))
             (setenv OCAMLRUNPARAM b (with-stdin-from colossal (run %{exe:chamelon.exe} write --verbosity=debug test.img 4096 "colossal.bak" -)))
 
-            (with-stdout-to colossal-ls.expected (run echo "colossal.bak : file"))
+            (with-stdout-to colossal-ls.expected (run echo "/colossal.bak : file"))
             (setenv OCAMLRUNPARAM b (with-stdout-to colossal-ls.output (run %{exe:chamelon.exe} ls test.img 4096 "/")))
             (diff colossal-ls.expected colossal-ls.output)
             
@@ -87,14 +87,14 @@
       (run chmod 666 test.img)
       (setenv OCAMLRUNPARAM b (run %{exe:chamelon.exe} write test.img 4096 "secrets/mom_dont_look" "I SAID NOT TO LOOK JEEZ"))
       (setenv OCAMLRUNPARAM b (with-stdout-to ls-secrets.output (run %{exe:chamelon.exe} ls test.img 4096 "/secrets")))
-      (with-stdout-to ls-secrets.expected (run echo "mom_dont_look : file"))
+      (with-stdout-to ls-secrets.expected (run echo "/secrets/mom_dont_look : file"))
       (diff ls-secrets.expected ls-secrets.output)
       (setenv OCAMLRUNPARAM b (with-stdout-to read-secrets.output (run %{exe:chamelon.exe} read test.img 4096 "secrets/mom_dont_look")))
       (with-stdout-to read-secrets.expected (run echo -n "I SAID NOT TO LOOK JEEZ"))
       (diff read-secrets.expected read-secrets.output)
       (setenv OCAMLRUNPARAM b
               (run %{exe:chamelon.exe} rm --verbosity=debug test.img 4096 "secrets"))
-      (setenv OCAMLRUNPARAM b (with-accepted-exit-codes 1 
+      (setenv OCAMLRUNPARAM b (with-accepted-exit-codes 1
               (run %{exe:chamelon.exe} ls test.img 4096 "/secrets")))
       )))
 

@@ -4,8 +4,8 @@ open Lwt.Infix
  * is always at a constant pair - addresses (0, 1) *)
 let root_pair = (0L, 1L)
 
-module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
-  module Fs = Fs.Make(Sectors)(Clock)
+module Make(Sectors : Mirage_block.S) = struct
+  module Fs = Fs.Make(Sectors)
 
   type key = Mirage_kv.Key.t
 
@@ -21,8 +21,8 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
   type write_error = [
     | error
     | `No_space                (** No space left on the device. *)
-    | `Too_many_retries of int (** {!batch} has been trying to commit [n] times
-                                   without success. *)
+    | `Already_present of key (** The key is already present. *)
+    | `Rename_source_prefix of key * key (** The source is a prefix of destination in rename. *)
   ]
 
   let pp_error fmt = function
@@ -32,14 +32,16 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
 
   let pp_write_error fmt = function
     | `No_space -> Format.fprintf fmt "no space left on device"
-    | `Too_many_retries n -> Format.fprintf fmt "tried to write %d times and didn't succeed" n
+    | `Already_present key -> Format.fprintf fmt "key %a is already present" Mirage_kv.Key.pp key
+    | `Rename_source_prefix (k1, k2) -> Format.fprintf fmt "rename %a is a prefix of %a" Mirage_kv.Key.pp k1 Mirage_kv.Key.pp k2
     | #error as e -> pp_error fmt e
 
   type t = Fs.t
 
   let get = Fs.File_read.get
 
-  let get_partial = Fs.File_read.get_partial
+  let get_partial t key ~offset ~length =
+    Fs.File_read.get_partial t key ~offset:(Optint.Int63.to_int offset) ~length
 
   (* [set] does a little work on top of the filesystem's set functions, because
    * we need to make directories if the key has >1 segment in it. *)
@@ -82,10 +84,21 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
         Lwt.return @@ Error (`Not_found key)
     end
 
+  let set_partial t key ~offset data =
+    get t key >>= function
+    | Error e -> Lwt.return (Error (e :> write_error))
+    | Ok d ->
+      let offset = Optint.Int63.to_int offset in
+      Bytes.blit_string data 0 (Bytes.unsafe_of_string d) offset (String.length data);
+      set t key d
+
+  let allocate _t _key ?last_modified:_ _size =
+    Lwt.return (Error `No_space)
+
   (** [list t key], where [key] is a reachable directory,
    * gives the files and directories (values and dictionaries) in [key].
    * It is not a recursive listing. *)
-  let list t key : ((string * [`Dictionary | `Value]) list, error) result Lwt.t =
+  let list t key : ((key * [`Dictionary | `Value]) list, error) result Lwt.t =
     let cmp (name1, _) (name2, _) = String.compare name1 name2 in
     (* once we've found the (first) directory pair of the *parent* directory,
      * get the list of all entries naming files or directories
@@ -99,7 +112,8 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
          * If we compact after flattening the list, we might wrongly conflate multiple
          * entries in the same directory, but on different blocks. *)
         let compacted = List.map (fun (_block, entries) -> Chamelon.Entry.compact entries) entries_by_block in
-        Lwt.return @@ Ok (translate @@ List.flatten compacted)
+        let to_key (k, x) = Mirage_kv.Key.add key k, x in
+        Lwt.return @@ Ok (List.map to_key (translate @@ List.flatten compacted))
     in
     (* find the parent directory of the [key] *)
     match (Mirage_kv.Key.segments key) with
@@ -124,7 +138,7 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     | Error _ as e -> Lwt.return e
     | Ok l ->
       let lookup (name, dict_or_val) =
-        if (String.compare name (Mirage_kv.Key.basename key)) = 0 then
+        if Mirage_kv.Key.equal name key then
           Some dict_or_val
         else None
       in
@@ -149,6 +163,12 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
       (* if we couldn't find (parent key), it's already pretty deleted *)
       | `No_id _ | `No_structs -> Lwt.return @@ Ok ()
 
+  let rename  t ~source ~dest =
+    get t source >>= function
+    | Ok data ->
+      set t dest data
+    | Error e -> Lwt.return (Error (e :> write_error))
+
   (* [last_modified t key] gives the timestamp metadata for a file/value,
    * or (for a directory) the most recently modified file/value within the directory.
    * We don't have to recurse, thankfully, so we only have to examine files. *)
@@ -157,40 +177,43 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
     Fs.Find.find_first_blockpair_of_directory t root_pair (Mirage_kv.Key.segments key) >>= function
     | `No_id _ | `No_structs ->
       (* [key] either doesn't exist or is a value; Fs.last_modified_value handles both *)
-      Fs.last_modified_value t key
+      begin
+        Fs.last_modified_value t key >|= function
+        | Error e -> Error e
+        | Ok (d, ps) -> match Ptime.Span.of_d_ps (d, ps) with
+          | None -> Error (`Not_found key)
+          | Some span -> match Ptime.of_span span with
+            | None -> Error (`Not_found key)
+            | Some p -> Ok p
+      end
     | `Basename_on _block_pair ->
       (* we were asked to get the last_modified time of a directory :/ *)
-      let open Lwt_result.Infix in
-      list t key >>= fun l ->
+      list t key >>= function
+      | Error e -> Lwt.return (Error e)
+      | Ok l ->
       (* luckily, the spec says we should only check last_modified dates to a depth of 1 *)
       (* unfortunately, the spec *doesn't* say what the last_modified time of an empty directory is :/ *)
       (* it's convenient for us to say it's the earliest possible time,
        * such that our fold can just use the latest time it's seen in the list as the accumulator *)
-      Lwt_list.fold_left_s (fun span entry ->
-          match span with
-          | Error _ as e -> Lwt.return e
-          | Ok prev ->
-            match entry with
-            | _, `Dictionary -> Lwt.return (Ok prev)
-            | (name, `Value) ->
-              Fs.last_modified_value t Mirage_kv.Key.(key / name) >>= fun new_span ->
-              match Ptime.Span.of_d_ps prev, Ptime.Span.of_d_ps new_span with
-              | None, _ | _, None -> Lwt.return @@ Error (`Not_found key)
-              | Some p, Some n ->
-                match Ptime.of_span p, Ptime.of_span n with
-                | None, _ | _, None -> Lwt.return @@ Error (`Not_found key)
-                | Some p_ts, Some a_ts ->
-                  if Ptime.is_later a_ts ~than:p_ts
-                  then Lwt.return @@ Ok new_span
-                  else Lwt.return @@ Ok prev
+      Lwt_list.fold_left_s (fun ts entry ->
+          match entry with
+          | _, `Dictionary -> Lwt.return ts
+          | (name, `Value) ->
+            Fs.last_modified_value t name >>= function
+            | Error e -> Lwt.return (Error e)
+            | Ok new_span ->
+              match Ptime.Span.of_d_ps new_span with
+              | None -> Lwt.return @@ Error (`Not_found key)
+              | Some n ->
+                match ts, Ptime.of_span n with
+                | Error e, _ -> Lwt.return (Error e)
+                | Ok _, None -> Lwt.return @@ Error (`Not_found key)
+                | Ok ts, Some a_ts ->
+                  if Ptime.is_later a_ts ~than:ts
+                  then Lwt.return @@ Ok a_ts
+                  else Lwt.return @@ Ok ts
         )
-        (Ok Ptime.Span.(zero |> to_d_ps)) l
-
-  (* this is probably a surprising implementation for `batch`. Concurrent writes are not
-   * supported by this implementation (there's a global write mutex) so we don't have
-   * to do any work to make sure that writes don't get in each other's way. *)
-  let batch t ?(retries=13) f =
-    let _ = retries in f t
+        (Ok Ptime.epoch) l
 
   (** [digest t key] is the SHA256 sum of `key` if `key` is a value.
    * If [key] is a dictionary, it's a recursive digest of `key`'s contents. *)
@@ -215,12 +238,10 @@ module Make(Sectors : Mirage_block.S)(Clock : Mirage_clock.PCLOCK) = struct
               (* There's no explicit statement in the mli about whether
                * we should descend beyond 1 dictionary for `digest`,
                * but I'm not sure how we can meaningfully have a digest if we don't *)
-              Lwt_list.fold_left_s (fun ctx_result (basename, _) ->
+              Lwt_list.fold_left_s (fun ctx_result (path, _) ->
                   match ctx_result with
                   | Error _ as e -> Lwt.return e
-                  | Ok ctx ->
-                    let path = Mirage_kv.Key.add key basename in
-                    aux ctx t path
+                  | Ok ctx -> aux ctx t path
                 ) (Ok ctx) l
             end
         end

@@ -1,6 +1,6 @@
 (* implementation of a subset of littlefs's tests/test_dirs.toml *)
 
-module Chamelon = Kv.Make(Block)(Pclock)
+module Chamelon = Kv.Make(Block)
 open Lwt.Infix
 
 let fail pp e = Lwt.fail_with (Format.asprintf "%a" pp e)
@@ -30,7 +30,7 @@ let assert_slash_empty fs =
   Chamelon.list fs Mirage_kv.Key.empty >>= function
   | Error e -> fail_read e
   | Ok l ->
-    Format.printf "%a\n%!" Fmt.(list ~sep:comma string) (List.map fst l);
+    Format.printf "%a\n%!" Fmt.(list ~sep:comma Mirage_kv.Key.pp) (List.map fst l);
     Alcotest.(check int) "fs should be empty after deleting everything" 0 (List.length l); Lwt.return_unit
 
 (* root *)
@@ -68,7 +68,7 @@ let list fs ~ty n =
   let s = string_of_int n in
   Chamelon.list fs Mirage_kv.Key.empty >|= Result.get_ok >>= fun l ->
   let matching = List.filter
-      (fun (name, val_or_dict) -> String.equal name s && val_or_dict = ty)
+      (fun (name, val_or_dict) -> String.equal (Mirage_kv.Key.basename name) s && val_or_dict = ty)
       l in
   Alcotest.(check int) "each directory appears once in ls /" 1 (List.length matching);
   Lwt.return_unit

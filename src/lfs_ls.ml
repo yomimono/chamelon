@@ -1,5 +1,5 @@
 module Mirage_block = Block (* disambiguate this from Chamelon.Block *)
-module Chamelon = Kv.Make(Mirage_block)(Pclock)
+module Chamelon = Kv.Make(Mirage_block)
 
 let pp_ty fmt = function
   | `Value -> Stdlib.Format.fprintf fmt "%s" "file"
@@ -7,25 +7,14 @@ let pp_ty fmt = function
 
 let pp_time fmt = function
   | Error `No_last_modified -> Stdlib.Format.fprintf fmt "no last modified info"
-  | Error `Unparseable_span -> Stdlib.Format.fprintf fmt "(last modified span unparseable)"
-  | Ok (`Span span) -> Ptime.Span.pp fmt span
-  | Ok (`Ptime timestamp) -> Ptime.pp fmt timestamp
+  | Ok timestamp -> Ptime.pp fmt timestamp
 
 let ls {Common_options.image; block_size; program_block_size} timestamp path =
   let open Lwt.Infix in
   let check_time t path =
-    Chamelon.last_modified t path >>= function
-    | Error _ -> Lwt.return @@ Error `No_last_modified
-    | Ok (d, ps) ->
-      match Ptime.Span.of_d_ps (d, ps) with
-      | None ->
-        Lwt.return @@ Error `Unparseable_span
-      | Some span ->
-        match Ptime.of_span span with
-        | None ->
-          Lwt.return @@ Ok (`Span span)
-        | Some timestamp ->
-          Lwt.return @@ Ok (`Ptime timestamp)
+    Chamelon.last_modified t path >|= function
+    | Error _ -> Error `No_last_modified
+    | Ok ts -> Ok ts
   in
   Lwt_main.run @@ (
   Mirage_block.connect ~prefered_sector_size:(Some block_size) image >>= fun block ->
@@ -38,7 +27,7 @@ let ls {Common_options.image; block_size; program_block_size} timestamp path =
     | Error (`Not_found key) -> begin
       (* if the key is a value, we'd like to output its information *)
       Chamelon.exists t requested_path >>= function
-      | Ok None -> 
+      | Ok None ->
         Stdlib.Format.eprintf "key %a not found\n%!" Mirage_kv.Key.pp key; exit 1
       | Error _ ->
         Stdlib.Format.eprintf "error attempting to find %a\n%!" Mirage_kv.Key.pp key; exit 2
@@ -54,17 +43,16 @@ let ls {Common_options.image; block_size; program_block_size} timestamp path =
     end
     | Error _ -> Stdlib.Format.eprintf "filesystem was opened, but ls failed\n%!"; exit 2
     | Ok l ->
-      let pp fmt (name, key_or_dict) =
-        Stdlib.Format.fprintf fmt "%s : %a" name pp_ty key_or_dict
+      let pp fmt (path, key_or_dict) =
+        Stdlib.Format.fprintf fmt "%a : %a" Mirage_kv.Key.pp path pp_ty key_or_dict
       in
-      let print (name, key_or_dict) =
+      let print (path, key_or_dict) =
         if timestamp then begin
-          let fullpath = Mirage_kv.Key.(append requested_path @@ v name) in
-          check_time t fullpath >>= fun time ->
-          Stdlib.Format.printf "%a (%a)\n%!" pp (name, key_or_dict) pp_time time;
+          check_time t path >>= fun time ->
+          Stdlib.Format.printf "%a (%a)\n%!" pp (path, key_or_dict) pp_time time;
           Lwt.return_unit
         end else begin
-          Stdlib.Format.printf "%a\n%!" pp (name, key_or_dict);
+          Stdlib.Format.printf "%a\n%!" pp (path, key_or_dict);
           Lwt.return_unit
         end
       in
