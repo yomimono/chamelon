@@ -743,25 +743,25 @@ module Make(Sectors: Mirage_block.S) = struct
         match inline_files entries, ctz_files entries with
         | None, None -> Error (`Not_found (Mirage_kv.Key.v filename))
         | Some (tag, _data), None ->
-          Ok (Optint.Int63.of_int (tag.Chamelon.Tag.length))
+          Ok (Optint.Int63.of_int tag.Chamelon.Tag.length)
         | _, Some (_tag, data) ->
           match Chamelon.File.ctz_of_cstruct data with
-          | Some (_pointer, length) -> Ok (Optint.Int63.of_int (Int32.to_int length))
+          | Some (_pointer, length) -> Ok (Optint.Int63.of_int32 length)
           | None -> Error (`Value_expected (Mirage_kv.Key.v filename))
 
     let rec size_all t blockpair =
       Find.all_entries_in_dir t blockpair >>= function
-      | Error _ -> Lwt.return 0
+      | Error _ -> Lwt.return Optint.Int63.zero
       | Ok l ->
         let entries = List.(map snd l |> flatten) in
         Lwt_list.fold_left_s (fun acc e ->
             match Chamelon.Content.size e with
-            | `File n -> Lwt.return @@ acc + n
+            | `File n -> Lwt.return @@ Optint.Int63.add n acc
             | `Skip -> Lwt.return @@ acc
             | `Dir p ->
               Log.debug (fun f -> f "descending into dirpair %a" pp_blockpair p);
-              size_all t p >>= fun s -> Lwt.return @@ s + acc
-          ) 0 entries
+              size_all t p >>= fun s -> Lwt.return @@ Optint.Int63.add s acc
+          ) Optint.Int63.zero entries
 
     let size t key : (Optint.Int63.t, error) result Lwt.t =
       Log.debug (fun f -> f "getting size on key %a" Mirage_kv.Key.pp key);

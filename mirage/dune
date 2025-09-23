@@ -2,5 +2,5 @@
   (public_name chamelon.kv)
   (name kv)
   (instrumentation (backend bisect_ppx))
-  (libraries fmt digestif chamelon mirage-block mirage-ptime mirage-kv mirage-logs lwt)
+  (libraries fmt digestif chamelon mirage-block mirage-ptime mirage-kv mirage-logs lwt optint)
 )
