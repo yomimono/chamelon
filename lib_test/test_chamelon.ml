@@ -261,12 +261,14 @@ module File = struct
       match Chamelon.Content.size ctz with
       | `Dir _ | `Skip -> Alcotest.fail "didn't get file size for a ctz"
       | `File n ->
-        Alcotest.(check int) "file size for a ctz" 10 n;
+        Alcotest.(check int) "file size for a ctz" 10 (Optint.Int63.to_int n);
         let v = Cstruct.of_string "pies" in
         let inline = Chamelon.File.create_inline 3 v in
         match Chamelon.Content.size (inline, v) with
         | `Dir _ | `Skip -> Alcotest.fail "didn't get filesize for inlien file"
-        | `File n -> Alcotest.(check int) "file size for an inline file" (Cstruct.length v) n
+        | `File n ->
+          Alcotest.(check int) "file size for an inline file" 
+            (Cstruct.length v) (Optint.Int63.to_int n)
 
 end
 

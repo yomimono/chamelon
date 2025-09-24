@@ -345,7 +345,9 @@ let test_size_nonexistent block _ () =
   Chamelon.size fs key >>= function
   | Error (`Not_found _) -> Lwt.return_unit
   | Error e -> Alcotest.fail (Format.asprintf "size on a nonexistent key failed with misleading error: %a" Chamelon.pp_error e)
-  | Ok s -> Alcotest.fail (Format.asprintf "size on a nonexistent key succeeded, and gave us %d" s)
+  | Ok s -> Alcotest.fail @@
+              Format.asprintf "size on a nonexistent key succeeded, and gave us %a"
+                             Optint.Int63.pp s
 
 let test_size_small_file block _ () =
   let key = Mirage_kv.Key.v "/smallfile"
@@ -357,14 +359,14 @@ let test_size_small_file block _ () =
   | Ok () ->
     Chamelon.size fs key >>= function
     | Error e -> fail_read e
-    | Ok s -> Alcotest.(check int) "size of small file is correct" (String.length contents) s;
+    | Ok s -> Alcotest.(check int) "size of small file is correct" (String.length contents) (Optint.Int63.to_int s);
       Lwt.return_unit
 
 let test_size_empty block _ () =
   format_and_mount block >>= fun fs ->
   Chamelon.size fs Mirage_kv.Key.empty >>= function
   | Error e -> fail_read e
-  | Ok n -> Alcotest.(check int) "fresh filesystem size /" 0 n;
+  | Ok n -> Alcotest.(check int) "fresh filesystem size /" 0 (Optint.Int63.to_int n);
     Lwt.return_unit
   
 let test_size_dir block _ () =
@@ -377,7 +379,9 @@ let test_size_dir block _ () =
   Chamelon.set fs key2 contents >>= function | Error e -> fail_write e | Ok () ->
   Chamelon.size fs Mirage_kv.Key.empty >>= function
   | Error e -> fail_read e
-  | Ok n -> Alcotest.(check int) "directory file size" ((String.length contents) * 2) n;
+  | Ok n -> Alcotest.(check int) "directory file size"
+              ((String.length contents) * 2)
+              (Optint.Int63.to_int n);
     Lwt.return_unit
 
 let test_nested_dir block _ () =
@@ -390,7 +394,9 @@ let test_nested_dir block _ () =
   Chamelon.set fs key2 contents >>= function | Error e -> fail_write e | Ok () ->
   Chamelon.size fs @@ Mirage_kv.Key.v "/files/boring" >>= function
   | Error e -> fail_read e
-  | Ok n -> Alcotest.(check int) "deeply nested directory file size" (2 * (String.length contents)) n;
+  | Ok n -> Alcotest.(check int)
+              "deeply nested directory file size"
+              (2 * (String.length contents)) (Optint.Int63.to_int n);
     Lwt.return_unit
 
 let test_many_files block _ () =

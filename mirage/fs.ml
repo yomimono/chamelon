@@ -766,12 +766,12 @@ module Make(Sectors: Mirage_block.S) = struct
     let size t key : (Optint.Int63.t, error) result Lwt.t =
       Log.debug (fun f -> f "getting size on key %a" Mirage_kv.Key.pp key);
       match Mirage_kv.Key.segments key with
-      | [] -> size_all t root_pair >>= fun i -> Lwt.return @@ Ok (Optint.Int63.of_int i)
+      | [] -> size_all t root_pair >>= fun i -> Lwt.return @@ Ok i
       | basename::[] -> get_file_size t root_pair basename
       | segments ->
         Log.debug (fun f -> f "descending into segments %a" Fmt.(list ~sep:comma string) segments);
         Find.find_first_blockpair_of_directory t root_pair segments >>= function
-        | `Basename_on p -> size_all t p >|= fun i -> Ok (Optint.Int63.of_int i)
+        | `Basename_on p -> size_all t p >|= fun i -> Ok i
         | `No_id _ | `No_structs -> begin
             (* no directory by that name, so try for a file *)
             Find.find_first_blockpair_of_directory t root_pair segments >>= function

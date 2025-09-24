@@ -4,11 +4,11 @@ let size (tag, data) =
   else begin
     match tag.Tag.type3 with
     | Tag.LFS_TYPE_STRUCT, c when c = Tag.Magic.struct_inline ->
-      `File tag.Tag.length
+      `File (Optint.Int63.of_int tag.Tag.length)
     | Tag.LFS_TYPE_STRUCT, c when c = Tag.Magic.struct_ctz -> begin
       match File.ctz_of_cstruct data with
       | None -> `Skip
-      | Some (_, file_size) -> `File (Int32.to_int file_size)
+      | Some (_, file_size) -> `File (Optint.Int63.of_int32 file_size)
     end
     | Tag.LFS_TYPE_STRUCT, c when c = Tag.Magic.struct_dir -> begin
         match Dir.dirstruct_of_cstruct data with
