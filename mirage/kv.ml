@@ -56,8 +56,8 @@ module Make(Sectors : Mirage_block.S) = struct
       let dir = Mirage_kv.Key.parent key in
       Fs.Find.find_first_blockpair_of_directory t root_pair
         (Mirage_kv.Key.segments dir) >>= function
-      | `Basename_on block_pair ->
-        Log.debug (fun m -> m "found basename of path %a on block pair %Ld, %Ld"
+      | `Final_dir_on block_pair ->
+        Log.debug (fun m -> m "found dir for %a on block pair %Ld, %Ld"
                       Mirage_kv.Key.pp key
                       (fst block_pair) (snd block_pair));
         (* the directory already exists, so just write the file *)
@@ -129,7 +129,7 @@ module Make(Sectors : Mirage_block.S) = struct
       (* No_structs is returned if part of the path is present, but not a directory (usually meaning
        * it's a file instead) *)
       | `No_structs -> Lwt.return @@ Error (`Not_found key)
-      | `Basename_on pair -> ls_in_dir pair
+      | `Final_dir_on pair -> ls_in_dir pair
 
   (** [exists t key] returns true *only* for a file/value called (basename key) set in (dirname key).
    * A directory/dictionary doesn't cut it. *)
@@ -155,7 +155,7 @@ module Make(Sectors : Mirage_block.S) = struct
     end else
       (* first, find the parent directory from which to delete (basename key) *)
       Fs.Find.find_first_blockpair_of_directory t root_pair Mirage_kv.Key.(segments @@ parent key) >>= function
-      | `Basename_on pair ->
+      | `Final_dir_on pair ->
         Log.debug (fun f -> f "found %a in a directory starting at %a, will delete"
                       Mirage_kv.Key.pp key Fmt.(pair ~sep:comma int64 int64) 
                       pair);
@@ -186,7 +186,7 @@ module Make(Sectors : Mirage_block.S) = struct
             | None -> Error (`Not_found key)
             | Some p -> Ok p
       end
-    | `Basename_on _block_pair ->
+    | `Final_dir_on _block_pair ->
       (* we were asked to get the last_modified time of a directory :/ *)
       list t key >>= function
       | Error e -> Lwt.return (Error e)

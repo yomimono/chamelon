@@ -337,7 +337,7 @@ module Make(Sectors: Mirage_block.S) = struct
      *  It returns `No_id if an entry is not present and `No_structs if an entry
      *  is present, but does not represent a valid directory. *)
     val find_first_blockpair_of_directory : t -> directory_head -> string list ->
-      [`Basename_on of directory_head | `No_id of string | `No_structs] Lwt.t
+      [`Final_dir_on of directory_head | `No_id of string | `No_structs] Lwt.t
 
   end = struct
     type blockwise_entry_list = blockpair * (Chamelon.Entry.t list)
@@ -386,7 +386,7 @@ module Make(Sectors: Mirage_block.S) = struct
           Log.debug (fun m -> m "found %d entries for id %d in %a"
                          (List.length entries) id pp_blockpair block);
           let compacted = Chamelon.Entry.compact entries in
-          Log.debug (fun m -> m "after compaction, there were %d entries for id %d in %a"
+          Log.debug (fun m -> m "after compaction, %d entries for id %d in %a"
                          (List.length compacted) id pp_blockpair block);
           Ok (block, compacted)
       in
@@ -399,7 +399,7 @@ module Make(Sectors: Mirage_block.S) = struct
 
     let rec find_first_blockpair_of_directory t block_pair key =
       match key with
-      | [] -> Lwt.return @@ `Basename_on block_pair
+      | [] -> Lwt.return @@ `Final_dir_on block_pair
       | key::remaining ->
         entries_of_name t block_pair key >>= function
         | Error _ -> Lwt.return @@ `No_id key
@@ -419,7 +419,7 @@ module Make(Sectors: Mirage_block.S) = struct
     Find.find_first_blockpair_of_directory t root_pair Mirage_kv.Key.(segments @@ parent key) >>= function
     | `No_structs -> Lwt.return @@ Error (`Not_found key)
     | `No_id k -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v k))
-    | `Basename_on block_pair ->
+    | `Final_dir_on block_pair ->
       (* get all the entries in (parent key) *)
       Find.entries_of_name t block_pair @@ Mirage_kv.Key.basename key >>= function
       | Error (`No_id k) | Error (`Not_found k) -> Lwt.return @@ Error (`Not_found k)
@@ -613,7 +613,7 @@ module Make(Sectors: Mirage_block.S) = struct
       | _ ->
         let dirname = Mirage_kv.Key.(parent key |> segments) in
         Find.find_first_blockpair_of_directory t root_pair dirname >>= function
-        | `Basename_on pair -> begin
+        | `Final_dir_on pair -> begin
             get_value t pair (Mirage_kv.Key.basename key) >>= map_result
           end
         | _ -> Lwt.return @@ Error (`Not_found key)
@@ -716,7 +716,7 @@ module Make(Sectors: Mirage_block.S) = struct
         | _ ->
           let dirname = Mirage_kv.Key.(parent key |> segments) in
           Find.find_first_blockpair_of_directory t root_pair dirname >>= function
-          | `Basename_on pair -> begin
+          | `Final_dir_on pair -> begin
               get_value t pair (Mirage_kv.Key.basename key) >>= map_result
             end
           | _ -> Lwt.return @@ Error (`Not_found key)
@@ -771,11 +771,11 @@ module Make(Sectors: Mirage_block.S) = struct
       | segments ->
         Log.debug (fun f -> f "descending into segments %a" Fmt.(list ~sep:comma string) segments);
         Find.find_first_blockpair_of_directory t root_pair segments >>= function
-        | `Basename_on p -> size_all t p >|= fun i -> Ok i
+        | `Final_dir_on p -> size_all t p >|= fun i -> Ok i
         | `No_id _ | `No_structs -> begin
             (* no directory by that name, so try for a file *)
             Find.find_first_blockpair_of_directory t root_pair segments >>= function
-            | `Basename_on pair -> begin
+            | `Final_dir_on pair -> begin
                 get_file_size t pair (Mirage_kv.Key.basename key)
               end
             | _ -> Lwt.return @@ Error (`Not_found key)
@@ -905,7 +905,7 @@ module Make(Sectors: Mirage_block.S) = struct
         Find.entries_of_name t block_pair filename >>= function
         | Error (`Not_found _ ) as e -> Lwt.return e
         | Ok [] | Ok ((_, [])::_) | Error (`No_id _) -> begin
-            Log.debug (fun m -> m "writing new file %s, size %d" filename (String.length data));
+            Log.debug (fun m -> m "writing new file %s, size %d to blocks %a" filename (String.length data) pp_blockpair block_pair);
             if (String.length data) > (t.block_size / 4) then
               write_in_ctz block_pair t filename data []
             else
@@ -918,17 +918,20 @@ module Make(Sectors: Mirage_block.S) = struct
            * in the same commit, I think this saves us some potentially
            * error-prone work *)
           let id = Chamelon.Tag.((fst hd).id) in
-          Log.debug (fun m -> m "deleting existing entry %s at id %d" filename id);
+          Log.debug (fun m -> m "deleting existing entry %s at id %d on block %a" filename id pp_blockpair block);
           let delete = (Chamelon.Tag.(delete id), Cstruct.create 0) in
           (* we need to make sure our deletion and new items go in the same block pair as
            * the originals did *)
-          if (String.length data) > (t.block_size / 4) then
+          if (String.length data) > (t.block_size / 4) then begin
+            Log.debug (fun m -> m "writing %s at id %d to ctz" filename id);
             write_in_ctz block t filename data [delete]
-          else
+          end else begin
+            Log.debug (fun m -> m "writing %s at id %d inline on blockpair %a" filename id pp_blockpair block);
             write_inline block t filename data [delete]
         (* TODO: we should probably handle separately the case where multiple
          * blocks have entries matching the name in question -- currently we
          * will only handle the first such block (that remains after compaction) *)
+          end
       end
 
   end
