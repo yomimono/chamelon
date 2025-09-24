@@ -8,6 +8,6 @@ module Make(Sectors: Mirage_block.S) : sig
 
   val format : program_block_size:int -> Sectors.t -> (unit, write_error) result Lwt.t
   val connect : program_block_size:int -> Sectors.t -> (t, error) result Lwt.t
-  val size : t -> key -> (int, error) result Lwt.t
+  val size : t -> key -> (Optint.Int63.t, error) result Lwt.t
 
 end
