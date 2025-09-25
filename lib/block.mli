@@ -2,6 +2,8 @@ type t
 
 module IdSet : Set.S with type elt := int
 
+val pp : Format.formatter -> t -> unit
+
 (* [entries t] is equivalent to mapping `Commit.entries` over all commits in `t`,
  * and is provided for convenience *)
 val entries : t -> Entry.t list

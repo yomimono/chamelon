@@ -264,4 +264,6 @@ module Make(Sectors : Mirage_block.S) = struct
     Sectors.get_info block >>= fun info ->
     let block_size = info.Mirage_block.sector_size in
     Fs.format ~program_block_size ~block_size block
+
+  let dump fmt t = Fs.dump fmt t
 end

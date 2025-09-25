@@ -1060,4 +1060,20 @@ module Make(Sectors: Mirage_block.S) = struct
     | Ok ((), ()) -> Lwt.return @@ Ok ()
     | _ -> Lwt.return @@ Error `No_space
 
+  let dump fmt t =
+    let block_buffer = Cstruct.create t.block_size in
+    let print_block n =
+      This_Block.read t.block n [block_buffer] >>= function
+      | Error e -> Lwt.return @@ Fmt.pf fmt "@[block %Ld (%Lx)@ block-level read error: %a@]" n n
+        This_Block.pp_error e
+      | Ok () ->
+        let program_block_size = t.program_block_size in
+        match Chamelon.Block.of_cstruct ~program_block_size block_buffer with
+        | Error (`Msg s) -> Lwt.return @@ Fmt.pf fmt "@[block %Ld (%Lx)@ chamelon-level parse error: %s@]" n n s
+        | Ok block -> Lwt.return @@ Fmt.pf fmt "@[block %Ld (%Lx)@ parsed contents: %a@]" n n Chamelon.Block.pp block
+    in
+    let block_count = This_Block.block_count t.block in
+    let l = List.init block_count (fun n -> Int64.of_int n)  in
+    Lwt_list.iter_s print_block l
+
 end

@@ -2,6 +2,10 @@ type t = Tag.t * Cstruct.t
 type link = | Metadata of (int64 * int64)
             | Data of (int32 * int32)
 
+let pp_link fmt = function
+  | Metadata m -> Fmt.pf fmt "metadata %a" Fmt.(pair int64 int64) m
+  | Data d -> Fmt.pf fmt "data %a" Fmt.(pair int32 int32) d
+
 let sizeof t =
   Cstruct.length (snd t) + Tag.size
 
@@ -55,6 +59,16 @@ let links (tag, data) =
     | None -> None
     | Some (next_metadata) -> Some (Metadata next_metadata)
   end else None
+
+let pp fmt (tag, data) =
+  match links (tag, data) with
+  | None ->
+    Fmt.pf fmt "@[entry: @[tag: %a@]@ @[contents:@ %a@]@]" Tag.pp tag Cstruct.hexdump_pp data
+  | Some link ->
+    Fmt.pf fmt "@[entry: @[tag: %a@]@ @[contents:@ @[(parsed as %a)@]@ %a@]@]"
+      Tag.pp tag
+      pp_link link
+      Cstruct.hexdump_pp data
 
 let compact entries =
   let remove_entries_matching id l =

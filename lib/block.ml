@@ -17,6 +17,13 @@ let revision_count t = t.revision_count
 
 let entries t = List.(flatten @@ map Commit.entries t.commits)
 
+let pp fmt t =
+  Fmt.pf fmt "@[block:@ ";
+  Fmt.pf fmt "@[revision count: %d@]@ " t.revision_count;
+  Fmt.pf fmt "@[hardtail: %a@]@ " Fmt.(option Entry.pp) t.hardtail;
+  Fmt.pf fmt "@[commits: %a@]@ " Fmt.(list Commit.pp) t.commits;
+  Fmt.pf fmt "@]"
+
 let crc_of_revision_count revision_count =
   let start_crc = Checkseum.Crc32.default in
   let cs = Cstruct.create 4 in

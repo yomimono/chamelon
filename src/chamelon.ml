@@ -21,6 +21,13 @@ let mount {Common_options.image; block_size; program_block_size} =
   | Error _ -> Format.eprintf "Error doing the initial filesystem read\n%!"; exit 1
   | Ok t -> Lwt.return t
 
+let parse common_options =
+  let open Lwt.Infix in
+  Lwt_main.run @@ (
+    mount common_options >>= fun t ->
+    Littlefs.dump Format.std_formatter t
+  )
+
 let read common_options path =
   let open Lwt.Infix in
   Lwt_main.run @@ (
@@ -131,6 +138,11 @@ let write_command =
   let info = Cmdliner.Cmd.info "write" ~doc in
   Cmdliner.Cmd.v info Cmdliner.Term.(const write $ common_options_t $ path $ data)
 
+let parse_command =
+  let doc = "attempt to parse the filesystem and display all known data from doing so" in
+  let info = Cmdliner.Cmd.info "parse" ~doc in
+  Cmdliner.Cmd.v info Cmdliner.Term.(const parse $ common_options_t)
+
 let main_cmd =
   let doc = "filesystem operations on chamelon images" in
   let info = Cmdliner.Cmd.info "chamelon" ~doc in
@@ -140,6 +152,8 @@ let main_cmd =
                                     list_command;
                                     read_command;
                                     write_command;
-                                    remove_command;]
+                                    remove_command;
+                                    parse_command;
+                                   ]
 
 let () = exit (Cmdliner.Cmd.eval main_cmd)

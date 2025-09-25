@@ -5,6 +5,13 @@ type t = {
   start_crc : Optint.t; (* either the default CRC or the CRC of the revision count (for the first commit in a block) *)
 }
 
+let pp fmt t =
+  Fmt.pf fmt "@[commit: ";
+  Fmt.pf fmt "@[seed: %a@ @]" Cstruct.hexdump_pp t.seed_tag;
+  Fmt.pf fmt "@[last: %a@ @]" Cstruct.hexdump_pp t.last_tag;
+  Fmt.pf fmt "@[entries: %a@ @]" Fmt.(list Entry.pp) t.entries;
+  Fmt.pf fmt "@]"
+
 let sizeof_crc = 4
 
 let last_tag t = t.last_tag

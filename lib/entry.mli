@@ -5,6 +5,9 @@ type link = | Metadata of (int64 * int64)
 val links : t -> link option
 val info_of_entry : t -> (string * [ `Value | `Dictionary]) option
 
+val pp : Format.formatter -> t -> unit
+val pp_link : Format.formatter -> link -> unit
+
 (** [compact l] checks to see whether [l] contains any deletion entries;
  * if so, it removes the entries to be deleted and the corresponding deletion entry,
  * and returns the resulting list.

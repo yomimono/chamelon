@@ -31,17 +31,23 @@ module Magic = struct
 end
 
 type t = {
-  valid : bool;
+  valid : bool; (* "valid" does not have the meaning
+                   the reader probably expects.
+                   From SPEC.md in littlefs,
+                   "Each tag contains a valid bit used to
+                   indicate if the tag and containing
+                   commit is valid. After XORing,
+                   this bit should always be zero." *)
   type3 : (abstract_type * Cstruct.uint8);
   id : int;
-  length : int;
+  length : int; (* usually the length or 0, but 0x3ff means "deleted" *)
 }
 
 let size = 4 (* tags are always 32 bits, with internal
                 numerical representations big-endian *)
 
 let pp fmt tag =
-  Format.fprintf fmt "id %d (%x), length %d (%x), valid %b, type is %x with chunk %x" tag.id tag.id
+  Format.fprintf fmt "@[id %d (%x),@ length %d (%x),@ valid %b,@ @[type is %x with chunk %x@]@]" tag.id tag.id
     tag.length tag.length (not tag.valid)
     (abstract_type_to_int (fst tag.type3))
     (snd tag.type3)
