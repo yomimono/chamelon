@@ -358,12 +358,16 @@ module Make(Sectors: Mirage_block.S) = struct
 
     let entries_of_name t block_pair name =
       let entries_of_id entries id =
-        let matches (tag, _) = 0 = compare tag.Chamelon.Tag.id id in
+        let matches (tag, _) = (0 = compare tag.Chamelon.Tag.id id &&
+                                tag.Chamelon.Tag.length < Chamelon.Tag.Magic.deleted_tag)
+        in
         List.find_all matches entries
       in
       let id_of_key entries key =
         let data_matches c = 0 = String.(compare key @@ Cstruct.to_string c) in
-        let tag_matches t = Chamelon.Tag.(fst t.type3 = LFS_TYPE_NAME)
+        let tag_matches t =
+          Chamelon.Tag.(fst t.type3 = LFS_TYPE_NAME) &&
+          Chamelon.Tag.(t.length != Magic.deleted_tag)
         in
         match List.find_opt (fun (tag, data) ->
             tag_matches tag && data_matches data
@@ -385,6 +389,10 @@ module Make(Sectors: Mirage_block.S) = struct
           let entries = entries_of_id entries id in
           Log.debug (fun m -> m "found %d entries for id %d in %a"
                          (List.length entries) id pp_blockpair block);
+          let tags = List.map fst entries in
+          Log.debug (fun m -> m "here are the tags for the entries for id %d: %a"
+                        id
+                        Fmt.(list Chamelon.Tag.pp) tags);
           let compacted = Chamelon.Entry.compact entries in
           Log.debug (fun m -> m "after compaction, %d entries for id %d in %a"
                          (List.length compacted) id pp_blockpair block);
@@ -583,7 +591,9 @@ module Make(Sectors: Mirage_block.S) = struct
                                        ))) in
         Log.debug (fun m -> m "found %d entries with name %s" (List.length compacted) filename);
         match inline_files compacted, ctz_files compacted with
-        | Some (_tag, data), None -> Ok (`Inline (Cstruct.to_string data))
+        | Some (tag, data), None ->
+          Log.debug (fun m -> m "found an inline entry with tag %a" Chamelon.Tag.pp tag);
+          Ok (`Inline (Cstruct.to_string data))
         | None, None -> begin
           (* is it actually a directory? *)
             match List.find_opt (fun (tag, _data) ->

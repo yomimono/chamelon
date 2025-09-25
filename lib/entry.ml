@@ -125,7 +125,7 @@ let of_cstructv ~starting_xor_tag cs =
       | Error _ -> None
       | Ok tag ->
         let total_length = Tag.size + tag.length in
-        if total_length <= Cstruct.length cs
+        if total_length <= Cstruct.length cs && tag.length < Tag.Magic.deleted_tag
         then Some (tag, Cstruct.sub cs Tag.size tag.length)
         else None
     end
