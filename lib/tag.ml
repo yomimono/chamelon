@@ -70,6 +70,10 @@ let is_hardtail {type3; _} =
 let has_links tag =
   is_file_struct tag || is_hardtail tag
 
+(* this tag is LFS_TYPE_DELETED,
+ * which is not the same as setting a *tag's* length value
+ * to indicate that the tag itself has been deleted;
+ * instead, it's to indicate a file is gone *)
 let delete id =
   { valid = true;
     type3 = ( LFS_TYPE_SPLICE, 0xff );

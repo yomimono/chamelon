@@ -79,6 +79,8 @@ let compact entries =
   in
   List.fold_left (fun new_list e ->
       match Tag.((fst e).type3) with
+      (* this is the "LFS_TYPE_DELETE" metadata,
+       * mentioned alongside "LFS_TYPE_CREATE" in littlefs SPEC.md *)
       | Tag.LFS_TYPE_SPLICE, 0xff -> remove_entries_matching Tag.((fst e).id) new_list
       | _ -> e :: new_list
     ) [] entries |> List.rev
