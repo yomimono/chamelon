@@ -909,6 +909,24 @@ module Make(Sectors: Mirage_block.S) = struct
           | Ok () -> Lwt.return @@ Ok ()
 
     let set_in_directory block_pair t (filename : string) data =
+      let delete_entry block id =
+        (* we *could* replace the previous ctz/inline entry,
+         * instead of deleting the whole mapping and replacing it,
+         * but since we do both the deletion and the new addition
+         * in the same commit, I think this saves us some potentially
+         * error-prone work *)
+        Log.debug (fun m -> m "deleting existing entry %s at id %d on block %a" filename id pp_blockpair block);
+        let delete = (Chamelon.Tag.(delete id), Cstruct.create 0) in
+        (* we need to make sure our deletion and new items go in the same block pair as
+         * the originals did *)
+        if (String.length data) > (t.block_size / 4) then begin
+          Log.debug (fun m -> m "writing %s at id %d to ctz" filename id);
+          write_in_ctz block t filename data [delete]
+        end else begin
+          Log.debug (fun m -> m "writing %s at id %d inline on blockpair %a" filename id pp_blockpair block);
+          write_inline block t filename data [delete]
+        end
+      in
       if String.length filename < 1 then Lwt.return @@ Error (`Value_expected Mirage_kv.Key.empty)
       else begin
         Lwt_mutex.with_lock t.new_block_mutex @@ fun () ->
@@ -921,29 +939,20 @@ module Make(Sectors: Mirage_block.S) = struct
             else
               write_inline block_pair t filename data []
           end
-        | Ok ((block, hd::_tl)::_) ->
-          (* we *could* replace the previous ctz/inline entry,
-           * instead of deleting the whole mapping and replacing it,
-           * but since we do both the deletion and the new addition
-           * in the same commit, I think this saves us some potentially
-           * error-prone work *)
-          let id = Chamelon.Tag.((fst hd).id) in
-          Log.debug (fun m -> m "deleting existing entry %s at id %d on block %a" filename id pp_blockpair block);
-          let delete = (Chamelon.Tag.(delete id), Cstruct.create 0) in
-          (* we need to make sure our deletion and new items go in the same block pair as
-           * the originals did *)
-          if (String.length data) > (t.block_size / 4) then begin
-            Log.debug (fun m -> m "writing %s at id %d to ctz" filename id);
-            write_in_ctz block t filename data [delete]
-          end else begin
-            Log.debug (fun m -> m "writing %s at id %d inline on blockpair %a" filename id pp_blockpair block);
-            write_inline block t filename data [delete]
-        (* TODO: we should probably handle separately the case where multiple
-         * blocks have entries matching the name in question -- currently we
-         * will only handle the first such block (that remains after compaction) *)
-          end
+        | Ok ((block, hd::_)::[]) ->
+          delete_entry block Chamelon.Tag.((fst hd).id)
+        | Ok l ->
+          Log.debug (fun m -> m "got multiple blocks (%a) when looking for %s" Fmt.(list ~sep:semi pp_blockpair) (List.map fst l) filename);
+          Lwt_list.fold_left_s (fun acc (block, entries) ->
+            (* really regretting using 'list' here, not gonna lie *)
+            match entries with
+            | [] -> Lwt.return acc (* this should never happen, but if it does, noop is correct *)
+            | entry::_ ->
+              (* since all entries found will have the same id, and all we care about is the id,
+               * we don't care how many entries we got *)
+              delete_entry block Chamelon.Tag.((fst entry).id)
+          ) (Ok ()) l
       end
-
   end
 
   module Delete = struct

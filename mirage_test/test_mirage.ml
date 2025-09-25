@@ -470,6 +470,31 @@ let test_rm_slash block _ () =
   | Ok () -> Alcotest.fail "succeeded in removing the empty key (in other words, /)"
   | Error _ -> Lwt.return_unit
 
+let test_big_inline_writes block _ () =
+  let or_fail = function
+    | Error e -> fail_write e
+    | Ok () -> Lwt.return_unit
+  in
+  format_and_mount block >>= fun fs ->
+  let first_path = Mirage_kv.Key.(v "d0" / "f0") in
+  let second_path = Mirage_kv.Key.(v "d0" / "f1") in
+  Chamelon.set fs first_path (String.make 67 '1') >>= or_fail >>= fun () ->
+  Chamelon.set fs second_path (String.make 127 'A') >>= or_fail >>= fun () ->
+  Chamelon.set fs second_path "\001" >>= or_fail >>= fun () ->
+  (* in the original reproduction case, we saw the correct value at this point *)
+  Chamelon.get fs second_path >>= function
+  | Error e -> fail_read e
+  | Ok v -> Alcotest.(check string) "correct value before expected-bad write" "\001" v;
+    (* after this write, the value is not consistent with expectations *)
+    (* looking at the parse output, after this write we see a deletion for id *2*, whereas
+     * our file was id *1*, I believe *)
+    Chamelon.set fs second_path "\000" >>= or_fail >>= fun () ->
+    Chamelon.get fs second_path >>= function
+    | Error e -> fail_read e
+    | Ok v ->
+      Alcotest.(check string) "correct value after expected-bad write" "\000" v;
+    Lwt.return_unit
+
 let test img =
   Logs.set_level (Some Logs.Debug);
   Logs.set_reporter @@ Logs_fmt.reporter ();
@@ -534,6 +559,11 @@ let test img =
          test_case "removals are recursive" `Quick (test_recursive_rm block);
          test_case "can't remove /" `Quick (test_rm_slash block);
        ]);
+      ("regressions",
+       [
+         test_case "deletion after a block split for big inline writes" `Quick (test_big_inline_writes block) ;
+       ]
+      )
     ]
   )
 let () = test "emptyfile"
