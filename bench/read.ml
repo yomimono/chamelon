@@ -1,6 +1,6 @@
 module Block = Mirage_block_combinators.Mem
 
-module Chamelon = Kv.Make(Block)(Pclock)
+module Chamelon = Kv.Make(Block)
 
 open Bechamel
 open Toolkit
@@ -10,7 +10,7 @@ let ascii_denom = 128
 let comparator = String.init ascii_denom (fun f -> Char.chr f)
  
 let simple_get_partial t key ~offset ~length =
-  if offset < 0 then begin
+  if Optint.Int63.(offset < zero) then begin
     Logs.err (fun f -> f "read requested with negative offset");
     Lwt.return @@ Error (`Not_found key)
   end else if length <= 0 then begin
@@ -21,6 +21,7 @@ let simple_get_partial t key ~offset ~length =
     Chamelon.get t key >|= function
     | Error _ as e -> e
     | Ok v ->
+      let offset = Optint.Int63.to_int offset in
       try Ok (String.sub v offset length)
       with Invalid_argument _ ->
         Logs.err (fun f -> f "partial read request cannot be fulfilled: %d < %d" (String.length v) (offset + length));
@@ -55,7 +56,7 @@ let head ~readfn n =
     let rec aux = function
       | n when n <= 0 -> Lwt.return_unit
       | n ->
-        readfn fs key ~offset:0 ~length:ascii_denom >>= function
+        readfn fs key ~offset:Optint.Int63.zero ~length:ascii_denom >>= function
         | Error e -> Format.eprintf "error reading test key: %a" Chamelon.pp_error e;
           assert false
         | Ok subset ->
@@ -72,19 +73,20 @@ let tail ~readfn n =
     Chamelon.size fs key >>= function
     | Error _ -> assert false
     | Ok size ->
-    (* worst-case for an inefficient partial read, and a common real-world case:
-     * we want the *first* small number of bytes (e.g. `head`) *)
-    let rec aux = function
-      | n when n <= 0 -> Lwt.return_unit
-      | n ->
-        readfn fs key ~offset:(size - ascii_denom) ~length:ascii_denom >>= function
-        | Error e -> Format.eprintf "error reading test key: %a" Chamelon.pp_error e;
-          assert false
-        | Ok subset ->
-          assert (String.equal subset comparator);
-          aux (n-1)
-    in
-    aux n
+      (* worst-case for an inefficient partial read, and a common real-world case:
+       * we want the *last* small number of bytes (e.g. `tail`) *)
+      let rec aux = function
+        | n when n <= 0 -> Lwt.return_unit
+        | n ->
+          let offset = Optint.Int63.(sub size (of_int ascii_denom)) in
+          readfn fs key ~offset ~length:ascii_denom >>= function
+          | Error e -> Format.eprintf "error reading test key: %a" Chamelon.pp_error e;
+            assert false
+          | Ok subset ->
+            assert (String.equal subset comparator);
+            aux (n-1)
+      in
+      aux n
   )
 
 let benchmark instance =
