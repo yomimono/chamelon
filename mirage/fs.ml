@@ -980,7 +980,6 @@ module Make(Sectors: Mirage_block.S) = struct
           Write.block_to_block_pair t new_block blockpair_with_id >>= function
           | Error _ -> Lwt.return @@ Error `No_space
           | Ok () -> Lwt.return @@ Ok ()
-
   end
 
 (* [block_size_device] is the block size used by the underlying block device which
@@ -1019,7 +1018,7 @@ module Make(Sectors: Mirage_block.S) = struct
   let connect ~program_block_size ~block_size device : (t, error) result Lwt.t =
     This_Block.connect ~block_size device >>= fun block ->
     Log.debug (fun f -> f "initiating filesystem with block size %d (0x%x)" block_size block_size);
-    let block0, block1= Cstruct.create block_size, Cstruct.create block_size in
+    let block0, block1 = Cstruct.create block_size, Cstruct.create block_size in
     Lwt_result.both
       (This_Block.read block 0L [block0])
       (This_Block.read block 1L [block1])
