@@ -495,6 +495,27 @@ let test_big_inline_writes block _ () =
       Alcotest.(check string) "correct value after expected-bad write" "\000" v;
     Lwt.return_unit
 
+let test_multiple_big_writes block _ () =
+  let or_fail = function
+    | Error e -> fail_write e
+    | Ok () -> Lwt.return_unit
+  in
+  format_and_mount block >>= fun fs ->
+  let write k n v =
+    Chamelon.set fs k (String.make n v) >>= or_fail
+  in
+  write Mirage_kv.Key.(v "f2") 0x400 '2' >>= fun () ->
+  write Mirage_kv.Key.(v "f0") 0x300 '0' >>= fun () ->
+  write Mirage_kv.Key.(v "f3") 0x7f '3' >>= fun () ->
+  write Mirage_kv.Key.(v "f0") 0x3e 'z' >>= fun () ->
+  write Mirage_kv.Key.(v "f1") 0x05 '1' >>= fun () ->
+  write Mirage_kv.Key.(v "f3") 0x7f '#' >>= fun () ->
+  Chamelon.exists fs Mirage_kv.Key.(v "f1") >>= function
+  | Error e -> fail_read e
+  | Ok None -> Alcotest.fail "value expected but nothing found"
+  | Ok (Some `Dictionary) -> Alcotest.fail "value expected but dictionary found"
+  | Ok (Some `Value) -> Lwt.return_unit
+
 let test img =
   Logs.set_level (Some Logs.Debug);
   Logs.set_reporter @@ Logs_fmt.reporter ();
@@ -561,7 +582,10 @@ let test img =
        ]);
       ("regressions",
        [
-         test_case "deletion after a block split for big inline writes" `Quick (test_big_inline_writes block) ;
+         test_case "deletion after a block split for big inline writes"
+           `Quick (test_big_inline_writes block) ;
+         test_case "more complicated multiple writes"
+           `Quick (test_multiple_big_writes block) ;
        ]
       )
     ]
