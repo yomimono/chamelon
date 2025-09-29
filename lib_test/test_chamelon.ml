@@ -77,7 +77,7 @@ module Block = struct
   let program_block_size = 16
 
   let superblock =
-    let revision_count = 1 in
+    let revision_count = 1l in
     let block_count = 16 in
     let name = Chamelon.Superblock.name in
     let bs = Int32.of_int block_size in
@@ -149,7 +149,7 @@ module Block = struct
     let block = superblock in
     let commits = Chamelon.Block.commits block in
     let revision_count = Chamelon.Block.revision_count block in
-    let new_rev_count = revision_count + 1 in
+    let new_rev_count = Int32.(add revision_count one) in
     let revised_block = Chamelon.Block.of_commits ~hardtail:None ~revision_count:new_rev_count commits in
     let original_block_serialized, _ = Chamelon.Block.to_cstruct ~program_block_size ~block_size block in
     let incremented_block_serialized, _ = Chamelon.Block.to_cstruct ~program_block_size ~block_size revised_block in

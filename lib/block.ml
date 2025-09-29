@@ -5,7 +5,7 @@
 module IdSet = Set.Make(Int)
 
 type t = {
-  revision_count : int;
+  revision_count : int32;
   commits : Commit.t list;
   hardtail : Entry.t option;
 }
@@ -19,16 +19,26 @@ let entries t = List.(flatten @@ map Commit.entries t.commits)
 
 let pp fmt t =
   Fmt.pf fmt "@[block:@ ";
-  Fmt.pf fmt "@[revision count: %d@]@ " t.revision_count;
+  Fmt.pf fmt "@[revision count: %ld@]@ " t.revision_count;
   Fmt.pf fmt "@[hardtail: %a@]@ " Fmt.(option Entry.pp) t.hardtail;
   Fmt.pf fmt "@[commits: %a@]@ " Fmt.(list Commit.pp) t.commits;
   Fmt.pf fmt "@]"
+
+let latest a b =
+  (* if there is a gap of more than (MAXINT / 2), assume an overflow
+   * has occurred, and the "smaller" number is actually more recent *)
+  let max_diff = Int32.(shift_right max_int 1) in
+  let a_minus_b = Int32.(sub a.revision_count b.revision_count) in
+  let b_minus_a = Int32.(sub b.revision_count a.revision_count) in
+  if a.revision_count < b.revision_count && b_minus_a < max_diff then b
+  else if a.revision_count > b.revision_count && a_minus_b > max_diff then b
+  else a (* we will arbitrarily prefer a when a.revision_count = b.revision_count *)
 
 let crc_of_revision_count revision_count =
   let start_crc = Checkseum.Crc32.default in
   let cs = Cstruct.create 4 in
   let sizeof_crc = 4 in
-  Cstruct.LE.set_uint32 cs 0 (Int32.of_int revision_count);
+  Cstruct.LE.set_uint32 cs 0 revision_count;
   Checkseum.Crc32.(digest_bigstring
                      (Cstruct.to_bigarray cs) 0 sizeof_crc start_crc)
 
@@ -58,12 +68,12 @@ let of_entries ~revision_count entries =
   of_commits ~hardtail:None ~revision_count (commit::[])
 
 let compact t =
-  let revision_count = t.revision_count + 1 in
+  let revision_count = Int32.(add t.revision_count one) in
   let entries = List.map Commit.entries t.commits |> List.flatten |> Entry.compact in
   of_entries ~revision_count entries
 
 let add_commit {revision_count; commits; hardtail} entries =
-  let revision_count = revision_count + 1 in
+  let revision_count = Int32.(add revision_count one) in
   match commits with
   | [] -> of_entries ~revision_count entries
   | l ->
@@ -98,7 +108,7 @@ let into_cstruct ~program_block_size cs block =
   match block.commits, block.hardtail with
   | [], None -> `Ok
   | commits, _ ->
-    Cstruct.LE.set_uint32 cs 0 (Int32.of_int block.revision_count);
+    Cstruct.LE.set_uint32 cs 0 block.revision_count;
     try
       let after_last_crc, starting_xor_tag, starting_offset =
         List.fold_left
@@ -134,7 +144,7 @@ let ids t =
 let split block next_blockpair =
   let entry = Dir.hard_tail_at next_blockpair in
   {block with hardtail = Some entry},
-  of_entries ~revision_count:1 []
+  of_entries ~revision_count:1l []
 
 let to_cstruct ~program_block_size ~block_size block =
   let cs = Cstruct.create block_size in
@@ -145,7 +155,7 @@ let of_cstruct ~program_block_size cs =
   if Cstruct.length cs <= Tag.size
   then Error (`Msg "block is too small to contain littlefs commits")
   else begin
-    let revision_count = Cstruct.LE.get_uint32 cs 0 |> Int32.to_int in
+    let revision_count = Cstruct.LE.get_uint32 cs 0 in
     let revision_count_crc = crc_of_revision_count revision_count in
     let commit_list = Cstruct.shift cs 4 in
     let starting_xor_tag = Cstruct.of_string "\xff\xff\xff\xff" in

@@ -62,9 +62,7 @@ module Make(Sectors: Mirage_block.S) = struct
     let block_of_block_pair t (l1, l2) =
       let open Lwt_result.Infix in
       Lwt_result.both (block_of_block_number t l1) (block_of_block_number t l2) >>= fun (b1, b2) ->
-      if Chamelon.Block.(compare (revision_count b1) (revision_count b2)) < 0
-      then Lwt.return @@ Ok b2
-      else Lwt.return @@ Ok b1
+      Lwt.return @@ Ok (Chamelon.Block.latest b1 b2)
 
   end
 
@@ -500,7 +498,7 @@ module Make(Sectors: Mirage_block.S) = struct
         | Ok (dir_block_0, dir_block_1) ->
           (* first, write empty commits to the new blockpair; if that fails,
            * we want to bail before making any more structure *)
-          Write.block_to_block_pair t (Chamelon.Block.of_entries ~revision_count:1 []) (dir_block_0, dir_block_1) >>= function
+          Write.block_to_block_pair t (Chamelon.Block.of_entries ~revision_count:1l []) (dir_block_0, dir_block_1) >>= function
           | Error _ ->
             Log.err (fun f -> f "error initializing a directory at a fresh block pair (%Ld, %Ld)"
                          dir_block_0 dir_block_1);
@@ -1070,8 +1068,8 @@ module Make(Sectors: Mirage_block.S) = struct
     let name = Chamelon.Superblock.name in
     let block_count = This_Block.block_count block in
     let superblock_inline_struct = Chamelon.Superblock.inline_struct (Int32.of_int block_size) (Int32.of_int block_count) in
-    let block_0 = Chamelon.Block.of_entries ~revision_count:1 [name; superblock_inline_struct] in
-    let block_1 = Chamelon.Block.of_entries ~revision_count:2 [name; superblock_inline_struct] in
+    let block_0 = Chamelon.Block.of_entries ~revision_count:1l [name; superblock_inline_struct] in
+    let block_1 = Chamelon.Block.of_entries ~revision_count:2l [name; superblock_inline_struct] in
     Lwt_result.both
     (write_whole_block (fst root_pair) block_0)
     (write_whole_block (snd root_pair) block_1) >>= function

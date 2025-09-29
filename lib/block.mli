@@ -8,17 +8,20 @@ val pp : Format.formatter -> t -> unit
  * and is provided for convenience *)
 val entries : t -> Entry.t list
 val commits : t -> Commit.t list
-val revision_count : t -> int
+val revision_count : t -> int32
+(* [latest a b] compares the revision counts using the sequence math described in
+ * the littlefs spec and returns the block with the latest revision *)
+val latest : t -> t -> t
 
 val split : t -> int64 * int64 -> t * t
 val linked_blocks : t -> Entry.link list
 val hardtail : t -> (int64 * int64) option
 
 (* given a list of commits and a hardtail entry, assemble a block *)
-val of_commits : hardtail:Entry.t option -> revision_count:int -> Commit.t list -> t
+val of_commits : hardtail:Entry.t option -> revision_count:int32 -> Commit.t list -> t
 
 (* start a new block with one commit containing these entries *)
-val of_entries : revision_count:int -> Entry.t list -> t
+val of_entries : revision_count:int32 -> Entry.t list -> t
 
 (* remove entries that have been deleted, and compact all commits into one *)
 val compact : t -> t
