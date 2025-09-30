@@ -92,8 +92,14 @@ module Make(Sectors : Mirage_block.S) = struct
       Bytes.blit_string data 0 (Bytes.unsafe_of_string d) offset (String.length data);
       set t key d
 
-  let allocate _t _key ?last_modified:_ _size =
-    Lwt.return (Error `No_space)
+  let allocate t key ?last_modified:_ size =
+    (* [allocate t key ~last_modified size] should only allocate space
+     * if there is nothing already present for this key *)
+    get t key >>= function
+    | Ok _ -> Lwt.return @@ Error (`Already_present key)
+    | Error (`Not_found key) ->
+      set t key (String.make (Optint.Int63.to_int size) '\000')
+    | Error e -> Lwt.return @@ Error (e :> write_error)
 
   (** [list t key], where [key] is a reachable directory,
    * gives the files and directories (values and dictionaries) in [key].
@@ -163,7 +169,7 @@ module Make(Sectors : Mirage_block.S) = struct
       (* if we couldn't find (parent key), it's already pretty deleted *)
       | `No_id _ | `No_structs -> Lwt.return @@ Ok ()
 
-  let rename  t ~source ~dest =
+  let rename t ~source ~dest =
     get t source >>= function
     | Ok data ->
       set t dest data
