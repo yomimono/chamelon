@@ -62,28 +62,45 @@ let links (tag, data) =
 
 let pp fmt (tag, data) =
   match links (tag, data) with
-  | None ->
-    Fmt.pf fmt "@[entry: @[tag: %a@]@ @[contents:@ %a@]@]" Tag.pp tag Cstruct.hexdump_pp data
+  | None -> begin
+    match (fst tag.type3) with
+    | LFS_TYPE_NAME ->
+      Fmt.pf fmt "@[entry: @[tag: %a@]@ @[contents:@ %S@ (hexdump %a)@]@]" Tag.pp tag (Cstruct.to_string data) Cstruct.hexdump_pp data
+    | _ ->
+      Fmt.pf fmt "@[entry: @[tag: %a@]@ @[contents:@ hexdump %a@]@]" Tag.pp tag Cstruct.hexdump_pp data
+    end
   | Some link ->
     Fmt.pf fmt "@[entry: @[tag: %a@]@ @[contents:@ @[(parsed as %a)@]@ %a@]@]"
       Tag.pp tag
       pp_link link
       Cstruct.hexdump_pp data
 
+(* the 'compact' operation tries to ensure that we keep
+ * only the most recent entries for each id. we may have many entries
+ * across multiple commits for any given id,
+ * and we want to be sure we keep only one tag type each for that id. *)
 let compact entries =
-  let remove_entries_matching id l =
-    List.filter_map (fun e ->
-        if 0 = (Int.compare Tag.((fst e).id) id) then None
-        else Some e
-      ) l
+  let module TagMap = Map.Make(Tag) in
+  let map = TagMap.empty in
+  let map = List.fold_left (fun map (tag, content) ->
+      (* if the length is 0x3ff, the tag itself has been 'deleted' and shouldn't be retained *)
+      if tag.Tag.length >= 0x3ff then begin
+        Format.eprintf "tag %a looked deleted so I skipped it\n%!" Tag.pp tag;
+        map
+      end else begin
+      match tag.Tag.type3 with
+      | Tag.LFS_TYPE_SPLICE, 0xff -> (* this is a "deletion" tag, so remove all
+                                        the existing entries for this id *)
+        let map, _removed_from_map = TagMap.partition (fun candidate_tag _value -> candidate_tag.Tag.id != tag.Tag.id) map in
+        TagMap.add tag content map
+      | _ -> (* for any other tag, as long as it hasn't been deleted (length 0x3ff),
+                replace any previous tag with the same id and type3 but don't
+                otherwise change other tags *)
+        TagMap.add tag content map
+    end
+    ) map entries
   in
-  List.fold_left (fun new_list e ->
-      match Tag.((fst e).type3) with
-      (* this is the "LFS_TYPE_DELETE" metadata,
-       * mentioned alongside "LFS_TYPE_CREATE" in littlefs SPEC.md *)
-      | Tag.LFS_TYPE_SPLICE, 0xff -> remove_entries_matching Tag.((fst e).id) new_list
-      | _ -> e :: new_list
-    ) [] entries |> List.rev
+  TagMap.bindings map
 
 let lenv_with_hardtail l =
   List.fold_left (fun sum t ->

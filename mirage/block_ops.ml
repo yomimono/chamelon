@@ -6,10 +6,14 @@
  * Provide an intermediate interface that implements block operations on top of
  * the sector-based API provided by a Mirage_block.S implementor. *)
 
-module Make(Sectors : Mirage_block.S) : sig
+module type Block_shim = sig
   include Mirage_block.S
-  val connect : block_size:int -> Sectors.t -> t Lwt.t
   val block_count : t -> int
+end
+
+module Make(Sectors : Mirage_block.S) : sig
+  include Block_shim
+  val connect : block_size:int -> Sectors.t -> t Lwt.t
 end = struct
   type t = { sectors : Sectors.t;
              sector_size : int; (* how big is each sector? *)

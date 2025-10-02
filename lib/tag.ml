@@ -2,21 +2,22 @@
 (* be careful when editing to remember this :) *)
 
 [%%cenum
-type abstract_type =
-  | LFS_TYPE_NAME [@id 0x0] (* associates IDs with file names and file types OR initializes them as files, directories, or superblocks *)
-  | LFS_TYPE_STRUCT [@id 0x2] (* gives an id a structure (inline or CTZ) *)
-  | LFS_TYPE_USERATTR [@id 0x3] (* 'user-defined', gross. "currently no standard user attributes" so we can just ignore them *)
-  | LFS_TYPE_SPLICE [@id 0x4] (* create or delete file with a given ID depending on chunk info *)
-  | LFS_TYPE_CRC [@id 0x5] (* CRC-32 for commits to the metadata block; polynomial of 0x04c11db7 initialized with 0xffffffff *)
-  | LFS_TYPE_TAIL [@id 0x6] (* tail pointer for the metadata pair; hard or soft *)
-  | LFS_TYPE_GSTATE [@id 0x7] (* global state entries; currently, only movestate *)
-    (* data checksummed includes all metadata since previous CRC tag, including the CRC tag itself *)
+  type abstract_type =
+    | LFS_TYPE_NAME [@id 0x0] (* associates IDs with file names and file types OR initializes them as files, directories, or superblocks *)
+    | LFS_TYPE_STRUCT [@id 0x2] (* gives an id a structure (inline or CTZ) *)
+    | LFS_TYPE_USERATTR [@id 0x3] (* 'user-defined', gross. "currently no standard user attributes" so we can just ignore them *)
+    | LFS_TYPE_SPLICE [@id 0x4] (* create or delete file with a given ID depending on chunk info *)
+    | LFS_TYPE_CRC [@id 0x5] (* CRC-32 for commits to the metadata block; polynomial of 0x04c11db7 initialized with 0xffffffff *)
+    | LFS_TYPE_TAIL [@id 0x6] (* tail pointer for the metadata pair; hard or soft *)
+    | LFS_TYPE_GSTATE [@id 0x7] (* global state entries; currently, only movestate *)
+  (* data checksummed includes all metadata since previous CRC tag, including the CRC tag itself *)
 [@@uint8_t]]
 
 module Magic = struct
   let struct_dir = 0x00
   let struct_inline = 0x01
   let struct_ctz = 0x02
+  let name_superblock = 0xff
 
   let tail_soft = 0x00
   let tail_hard = 0x01
@@ -43,12 +44,30 @@ type t = {
   length : int; (* usually the length or 0, but 0x3ff means "deleted" *)
 }
 
+let compare a b =
+  let ids = Int.compare a.id b.id in
+  let ty = compare_abstract_type (fst a.type3) (fst b.type3) in
+  let str = Int.compare (snd a.type3) (snd b.type3) in
+  if ids = 0 && ty = 0 then str
+  else if ids = 0 then ty
+  else ids
+
 let size = 4 (* tags are always 32 bits, with internal
                 numerical representations big-endian *)
 
 let pp fmt tag =
-  Format.fprintf fmt "@[id %d (%x),@ length %d (%x),@ valid %b,@ @[type is %x with chunk %x@]@]" tag.id tag.id
-    tag.length tag.length (not tag.valid)
+  let str_of_type3 = function
+    | LFS_TYPE_NAME -> "LFS_TYPE_NAME"
+    | LFS_TYPE_STRUCT -> "LFS_TYPE_STRUCT"
+    | LFS_TYPE_USERATTR -> "LFS_TYPE_USERATTR"
+    | LFS_TYPE_SPLICE -> "LFS_TYPE_SPLICE"
+    | LFS_TYPE_CRC -> "LFS_TYPE_CRC"
+    | LFS_TYPE_TAIL -> "LFS_TYPE_TAIL"
+    | LFS_TYPE_GSTATE -> "LFS_TYPE_GSTATE"
+  in
+  Format.fprintf fmt "@[id %d (%x),@ length %d (%x),@ valid %b,@ @[type is %s %x with chunk %x@]@]" tag.id tag.id
+    tag.length tag.length tag.valid
+    (str_of_type3 (fst tag.type3))
     (abstract_type_to_int (fst tag.type3))
     (snd tag.type3)
 

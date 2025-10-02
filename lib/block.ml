@@ -18,11 +18,11 @@ let revision_count t = t.revision_count
 let entries t = List.(flatten @@ map Commit.entries t.commits)
 
 let pp fmt t =
-  Fmt.pf fmt "@[block:@ ";
-  Fmt.pf fmt "@[revision count: %ld@]@ " t.revision_count;
-  Fmt.pf fmt "@[hardtail: %a@]@ " Fmt.(option Entry.pp) t.hardtail;
-  Fmt.pf fmt "@[commits: %a@]@ " Fmt.(list Commit.pp) t.commits;
-  Fmt.pf fmt "@]"
+  Fmt.pf fmt "@[---@[block:@ ";
+  Fmt.pf fmt "@[revision count: %ld (0x%lx)@]@ " t.revision_count t.revision_count;
+  Fmt.pf fmt "@[hardtail: [%a]@]@ " Fmt.(option Entry.pp) t.hardtail;
+  Fmt.pf fmt "@[commits: [%a]@]@ " Fmt.(list Commit.pp) t.commits;
+  Fmt.pf fmt "@]---end block@]"
 
 let latest a b =
   (* if there is a gap of more than (MAXINT / 2), assume an overflow
@@ -69,8 +69,9 @@ let of_entries ~revision_count entries =
 
 let compact t =
   let revision_count = Int32.(add t.revision_count one) in
-  let entries = List.map Commit.entries t.commits |> List.flatten |> Entry.compact in
-  of_entries ~revision_count entries
+  let old_entries = List.map Commit.entries t.commits |> List.flatten in
+  let new_entries = Entry.compact old_entries in
+  of_entries ~revision_count new_entries
 
 let add_commit {revision_count; commits; hardtail} entries =
   let revision_count = Int32.(add revision_count one) in
@@ -136,8 +137,12 @@ let into_cstruct ~program_block_size cs block =
     | Invalid_argument _ -> `Unwriteable
 
 let ids t =
-  let id_of_entry e = (fst e).Tag.id in
-  let commit_ids c = List.map id_of_entry (Commit.entries c) in
+  let id_of_entry e =
+    match (fst e).Tag.id with
+    | n when n < 0x3ff -> Some n
+    | _ -> None
+  in
+  let commit_ids c = List.filter_map id_of_entry (Commit.entries c) in
   let block_ids = List.(flatten @@ map commit_ids t.commits) in
   IdSet.of_list block_ids
 

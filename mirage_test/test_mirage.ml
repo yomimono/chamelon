@@ -153,6 +153,23 @@ let test_last_modified_depth block _ () =
               (Ptime.equal key1_modified calico_modified));
   Lwt.return_unit
 
+let test_last_modified_errors block _ () =
+  let key1 = Mirage_kv.Key.v "/financial information" in
+  let key2 = Mirage_kv.Key.v "/d0/d1" in
+  let key3 = Mirage_kv.Key.v "/d0/d1/f1" in
+  format_and_mount block >>= fun fs ->
+  Chamelon.last_modified fs key1 >>= function
+  | Ok ts -> Alcotest.failf "bogus last-modified time: %a" Ptime.pp ts
+  | Error (`Not_found key) -> begin
+    Alcotest.(check testable_key) "top-level key not found" key key1;
+    Chamelon.set fs key2 "I'm a file" >>= function | Error e -> fail_write e | Ok () ->
+    Chamelon.last_modified fs key3 >>= function
+    | Ok ts -> Alcotest.failf "bogus last-modified time: %a" Ptime.pp ts
+    | Error (`Dictionary_expected k) -> Alcotest.(check testable_key) "part of path that is a file is correctly identified" k (Mirage_kv.Key.v "d1"); Lwt.return_unit
+    | Error e -> fail_read e
+  end
+  | Error e -> Alcotest.failf "wrong error for last_modified on key that isn't there: %a" Chamelon.pp_error e
+
 let test_digest_empty block _ () =
   let path1 = Mirage_kv.Key.v "trans" and path2 = Mirage_kv.Key.v "rights" in
   format_and_mount block >>= fun fs ->
@@ -234,6 +251,30 @@ let test_no_space block _ () =
   | Error `No_space -> Lwt.return_unit
   | Ok _ -> Alcotest.fail "setting last key succeeded when we expected No_space"
   | Error e -> Alcotest.failf "setting last key failed with %a instead of No_space" Chamelon.pp_write_error e
+
+let test_set_partial block _ () =
+  format_and_mount block >>= fun fs ->
+  let key = Mirage_kv.Key.v "item" in
+  Chamelon.set fs key "here's some stuff" >>= function
+  | Error e -> Alcotest.failf "couldn't set test key: %a" Chamelon.pp_write_error e
+  | Ok () ->
+    Chamelon.set_partial fs key ~offset:(Optint.Int63.of_int 1) "ow much   " >>= function
+    | Error e -> Alcotest.failf "couldn't set_partial: %a" Chamelon.pp_write_error e
+    | Ok () ->
+      Chamelon.get fs key >>= function
+      | Error e -> Alcotest.failf "couldn't get key: %a" Chamelon.pp_error e
+      | Ok s -> Alcotest.(check string) "overwritten string for set_partial" s "how much    stuff" |> Lwt.return
+
+let test_allocate block _ () =
+  format_and_mount block >>= fun fs ->
+  let key = Mirage_kv.Key.v "reserved for future use" in
+  let size = 2048 in
+  Chamelon.allocate fs key (Optint.Int63.of_int size) >>= function
+  | Error e -> Alcotest.failf "couldn't allocate: %a" Chamelon.pp_write_error e
+  | Ok () ->
+    Chamelon.get fs key >>= function
+    | Error e -> Alcotest.failf "couldn't read allocated key back" Chamelon.pp_error e
+    | Ok v -> Alcotest.(check string) "allocated value" v (String.make size '\000') |> Lwt.return
 
 let test_nonexistent_value block _ () =
   format_and_mount block >>= fun fs ->
@@ -338,6 +379,23 @@ let test_get_partial_in_dir block _ () =
   | Error e -> Alcotest.failf "error reading successfully set key: %a" Chamelon.pp_error e
   | Ok v -> Alcotest.(check string) "offset read of a file in a directory" (String.sub content 1 @@ (String.length content) - 1) v;
     Lwt.return_unit
+
+let test_get_partial_big_boi block _ () =
+  let big_string = String.init (4096 * 4) (fun n -> Char.chr (0x41 + (n / 4096))) in
+  let key = Mirage_kv.Key.v "/big" in
+  format_and_mount block >>= fun fs ->
+  Chamelon.set fs key big_string >>= function | Error e -> fail_write e | Ok () ->
+  Chamelon.get_partial fs key ~offset:(Optint.Int63.of_int 4094) ~length:4 >>= function
+  | Error e -> fail_read e | Ok v ->
+    Alcotest.(check string) "partial read across block boundary" v (String.sub big_string 4094 4); Lwt.return_unit
+
+let test_get_littlefs block _ () =
+  let key = Mirage_kv.Key.v "/littlefs" in
+  format_and_mount block >>= fun fs ->
+  Chamelon.get fs key >>= function
+  | Ok v -> Alcotest.failf "got a value for /littlefs on a brand-new filesystem that should be empty: %S" v
+  | Error (`Not_found k) -> Alcotest.(check testable_key) "not_found key correct?" k key; Lwt.return_unit
+  | Error e -> Alcotest.failf "incorrect error for get /littlefs on empty fs: %a" Chamelon.pp_error e
 
 let test_size_nonexistent block _ () =
   let key = Mirage_kv.Key.v "/thedeep/filenotfound" in
@@ -504,17 +562,24 @@ let test_multiple_big_writes block _ () =
   let write k n v =
     Chamelon.set fs k (String.make n v) >>= or_fail
   in
-  write Mirage_kv.Key.(v "f2") 0x400 '2' >>= fun () ->
-  write Mirage_kv.Key.(v "f0") 0x300 '0' >>= fun () ->
-  write Mirage_kv.Key.(v "f3") 0x7f '3' >>= fun () ->
-  write Mirage_kv.Key.(v "f0") 0x3e 'z' >>= fun () ->
-  write Mirage_kv.Key.(v "f1") 0x05 '1' >>= fun () ->
-  write Mirage_kv.Key.(v "f3") 0x7f '#' >>= fun () ->
+  let pre_bad_write () = 
+    write Mirage_kv.Key.(v "f2") 0x400 '2' >>= fun () ->
+    write Mirage_kv.Key.(v "f0") 0x300 '0' >>= fun () ->
+    write Mirage_kv.Key.(v "f3") 0x7f '3' >>= fun () ->
+    write Mirage_kv.Key.(v "f0") 0x3e 'z' >>= fun () ->
+    write Mirage_kv.Key.(v "f1") 0x05 '1'
+  in
+  let bad_write () =
+    write Mirage_kv.Key.(v "f3") 0x7f '#'
+  in
+  pre_bad_write () >>= fun _ ->
+  bad_write () >>= fun _ ->
   Chamelon.exists fs Mirage_kv.Key.(v "f1") >>= function
   | Error e -> fail_read e
-  | Ok None -> Alcotest.fail "value expected but nothing found"
   | Ok (Some `Dictionary) -> Alcotest.fail "value expected but dictionary found"
   | Ok (Some `Value) -> Lwt.return_unit
+  | Ok None ->
+    Alcotest.fail "value expected but nothing found"
 
 let test img =
   Logs.set_level (Some Logs.Debug);
@@ -537,12 +602,17 @@ let test img =
          test_case "try to set too big a key" `Quick (test_set_too_big_key block);
          test_case "mkdir -p" `Quick (test_set_deep block);
          test_case "disk full" `Quick (test_no_space block);
+         test_case "set_partial" `Quick (test_set_partial block);
+         test_case "allocate" `Quick (test_allocate block);
        ]
       );
       ("last modified",
        [ test_case "last modified increases on overwrite" `Quick (test_last_modified block);
          test_case "last modified of a directory reflects a write in it" `Quick (test_last_modified_dir block);
          test_case "last modified only goes 1 level deep" `Quick (test_last_modified_depth block);
+         (*
+         test_case "last modified correctly errors" `Quick (test_last_modified_errors block);
+         *)
        ]
       );
       ("get",
@@ -554,6 +624,8 @@ let test img =
          test_case "get partial data w/bad length" `Quick (test_get_partial_bad_length block);
          test_case "get partial data w/bad offset+length" `Quick (test_get_partial_bad_combos block);
          test_case "get partial data in a file within a dir" `Quick (test_get_partial_in_dir block);
+         test_case "get_partial pretty far into a big file" `Quick (test_get_partial_big_boi block);
+         test_case "get /littlefs on new fs" `Quick (test_get_littlefs block);
        ]
       );
       ("size",
@@ -584,7 +656,7 @@ let test img =
        [
          test_case "deletion after a block split for big inline writes"
            `Quick (test_big_inline_writes block) ;
-         test_case "more complicated multiple writes"
+         test_case "writes to a freshly-split block"
            `Quick (test_multiple_big_writes block) ;
        ]
       )
