@@ -40,9 +40,8 @@ let n_pointers = function
   | 0 -> 0
   | 1 -> 1
   | n ->
-    (* pricey :/ it'd be better to figure out how to jam the hardware optimization
-     * into a unikernel *)
-    let log2 = Float.log (float_of_int n) /. Float.log (float_of_int 2) in
+    (* as of OCaml 4.13 we have Float.log2 \o/ *)
+    let log2 = Float.log2 (float_of_int n) in
     if Float.is_integer log2 then
       Float.to_int log2
     else 1
