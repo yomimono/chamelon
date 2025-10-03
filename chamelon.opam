@@ -45,3 +45,4 @@ depends: [
   "ppx_cstruct"
   "optint" {>= "0.0.4"}
 ]
+x-maintenance-intent: ["(latest)"]
