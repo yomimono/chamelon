@@ -117,7 +117,7 @@ module Make(Sectors : Mirage_block.S) = struct
     let ptimeify = function
       | Error _ as e -> e
       | Ok s ->
-        let ts = 
+        let ts =
           let (let*) = Option.bind in
           let* span = Ptime.Span.of_d_ps s in
           let* ts = Ptime.of_span span in

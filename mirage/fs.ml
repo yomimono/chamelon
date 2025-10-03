@@ -459,7 +459,6 @@ module Make(Sectors: Mirage_block.S) = struct
             Log.err (fun m -> m "couldn't write a block, because it got too big");
             Lwt.return @@ Error `No_space
           | Ok () -> Lwt.return @@ Ok ()
-    
 
     let set_in_directory block_pair t (filename : string) data =
       let delete_entry block id =
@@ -649,13 +648,12 @@ module Make(Sectors: Mirage_block.S) = struct
         | Ok block ->
            if n < 2L then
              Fmt.pf fmt "@[superblock %Ld (%Lx)@ parsed contents: %a@ @]" n n Chamelon.Block.pp block
-           else 
+           else
              Fmt.pf fmt "@[block %Ld (%Lx)@ parsed contents: %a@ @]" n n Chamelon.Block.pp block;
            Lwt.return_unit
     in
     let block_count = This_Block.block_count t.block in
     let l = List.init block_count (fun n -> Int64.of_int n)  in
     Lwt_list.iter_s print_block l
-
 
 end

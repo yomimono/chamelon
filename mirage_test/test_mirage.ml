@@ -562,7 +562,7 @@ let test_multiple_big_writes block _ () =
   let write k n v =
     Chamelon.set fs k (String.make n v) >>= or_fail
   in
-  let pre_bad_write () = 
+  let pre_bad_write () =
     write Mirage_kv.Key.(v "f2") 0x400 '2' >>= fun () ->
     write Mirage_kv.Key.(v "f0") 0x300 '0' >>= fun () ->
     write Mirage_kv.Key.(v "f3") 0x7f '3' >>= fun () ->

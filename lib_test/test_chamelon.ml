@@ -267,7 +267,7 @@ module File = struct
         match Chamelon.Content.size (inline, v) with
         | `Dir _ | `Skip -> Alcotest.fail "didn't get filesize for inlien file"
         | `File n ->
-          Alcotest.(check int) "file size for an inline file" 
+          Alcotest.(check int) "file size for an inline file"
             (Cstruct.length v) (Optint.Int63.to_int n)
 
 end

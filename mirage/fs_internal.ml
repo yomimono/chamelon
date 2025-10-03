@@ -90,7 +90,7 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
       | `No_id of string
       | `Not_directory of string ] Lwt.t
 
-    val get_directory_head : t -> directory_head -> string -> (directory_head option, 
+    val get_directory_head : t -> directory_head -> string -> (directory_head option,
                                                                [ `Not_found of key ]
                                                               ) result Lwt.t
 
@@ -196,7 +196,7 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
     val follow_links : t -> blockpair list -> Chamelon.Entry.link ->
       (int64 list, Shimmed_block.error) result Lwt.t
 
-    val last_block : t -> blockpair -> (blockpair, 
+    val last_block : t -> blockpair -> (blockpair,
                                        [`Block of Shimmed_block.error |
                                         `Chamelon of [> `Corrupt] ]) result Lwt.t
 
