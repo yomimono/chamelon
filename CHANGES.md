@@ -1,7 +1,7 @@
 # v0.2.0 (2025-10-03)
 
 * improvement: use the new-to-chamelon `Float.log2` for skip-list math (@yomimono)
-* improvement: actually implement Kv.allocate (@yomimono)
+* improvement: actually implement Kv.allocate and Kv.rename (@yomimono)
 * improvement: `chamelon.exe` now provides `chamelon parse`, which outputs a block-by-block parse attempt to stderr. Many types now also have `pp`s to support this. This tool does not distinguish between metadata and data blocks, which makes it primarily useful for debugging rather than recovery. (@yomimono)
 * bugfix: fix many places where tags weren't checked for the 'tag deleted' field (@yomimono)
 * bugfix: fix potential data loss bug when keys are overwritten and the new entry is the first in a newly-split block (reported by independently by @palainp and then by @armael and @gasche with tests and a great writeup, fix by @yomimono)
