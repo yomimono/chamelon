@@ -20,9 +20,6 @@ module Make(Sectors: Mirage_block.S) = struct
 
   let name_length_max t = t.Internal.name_length_max
 
-  (* TODO: I think you're not allowed to make anything at /littlefs,
-   * because if you do that and then delete it, you will also delete the superblock entry *)
-
   let mkdir t key =
     Internal.get_directory ~ensure_path:true t Internal.root_pair key
 
