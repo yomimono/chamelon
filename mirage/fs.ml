@@ -601,10 +601,18 @@ module Make(Sectors: Mirage_block.S) = struct
         | Ok used_blocks ->
           Log.debug (fun f -> f "found %d used blocks on block-based key-value store: %a" (List.length used_blocks) Fmt.(list ~sep:sp int64) used_blocks);
           let open Internal.Allocate in
-          let offset, blocks = unused t used_blocks in
-          let lookahead = Internal.(ref {blocks; offset}) in
-          Lwt_mutex.unlock t.new_block_mutex;
-          Lwt.return @@ Ok {t with lookahead; block; block_size; program_block_size}
+          match unused t used_blocks with
+          | Ok () ->
+            Lwt_mutex.unlock t.new_block_mutex;
+            Log.debug (fun f -> f "populated lookahead allocator with %d blocks" (List.length !(t.lookahead).blocks));
+            Lwt.return @@ Ok {t with block; block_size; program_block_size}
+          | Error `No_space ->
+            (* it's not great that there aren't free blocks,
+             * but the user may well be connecting to try to do something about it,
+             * so refusing to continue is the wrong move *)
+            Log.err (fun f -> f "could not initialize lookahead allocator: no blocks available");
+            Log.err (fun f -> f "writes to the filesystem are likely to fail");
+            Lwt.return @@ Ok {t with block; block_size; program_block_size}
 
   let format ~program_block_size ~block_size (sectors : Sectors.t) :
     (unit, write_error) result Lwt.t =

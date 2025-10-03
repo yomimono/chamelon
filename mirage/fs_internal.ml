@@ -273,7 +273,7 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
         | Some next_pair -> last_block t next_pair
   end
   module Allocate = struct
-    let unused t used_blocks =
+    let rec unused t used_blocks : (unit, [ `No_space ]) result =
       let module IntSet = Set.Make(Int64) in
       let actual_blocks = Shimmed_block.block_count t.block in
       let prev_offset = !(t.lookahead).offset in
@@ -282,10 +282,29 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
         if (prev_offset + alloc_size) >= Shimmed_block.block_count t.block then 0
         else prev_offset + alloc_size
       in
+      Log.debug (fun f -> f "trying to find free blocks. %d were reported in-use out of %d"
+                    (List.length used_blocks) actual_blocks);
+      Log.debug (fun f -> f "will try to initialize %d starting at %d"
+                    alloc_size this_offset);
       let pool = IntSet.of_list @@ List.init alloc_size
           (fun a -> Int64.of_int @@ a + this_offset)
       in
-      this_offset, IntSet.(elements @@ diff pool (of_list used_blocks))
+      let candidate = IntSet.(elements @@ diff pool (of_list used_blocks)) in
+      if List.length candidate < 2 && (actual_blocks - (List.length used_blocks)) > 2 then begin
+        (* that's not enough blocks, and we know there are more. go find them *)
+        t.lookahead := { !(t.lookahead) with offset = this_offset };
+        match unused t (used_blocks @ candidate) with
+        | Ok () ->
+          t.lookahead := { !(t.lookahead) with blocks = candidate @ !(t.lookahead).blocks};
+          Ok ()
+        | Error _ ->
+          Error `No_space
+      end else if (List.length candidate) >= 2 then begin
+        t.lookahead := { !(t.lookahead) with offset = this_offset };
+        t.lookahead := { !(t.lookahead) with blocks = candidate };
+        Ok ()
+      end else
+        Error `No_space
 
     let populate_lookahead ~except t =
       Traverse.follow_links t [] (Chamelon.Entry.Metadata root_pair) >|= function
@@ -328,14 +347,14 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
                     to satisfy the request.
                Claim the blocks that are there already, and try to get more;
                if the allocator can't give us any, give up *)
+            Log.debug (fun f -> f "wanted %d blocks, but the lookahead allocator only has %d"
+                          n (List.length l));
             let open Lwt_result.Infix in
             populate_lookahead ~except:(l @ acc) t >>= function
-            | _, [] ->
+            | Error `No_space ->
               Log.err (fun f -> f "no blocks remain free on filesystem");
               Lwt.return @@ Error `No_space
-            | new_offset, next_l ->
-              t.lookahead := ({offset = new_offset; blocks = next_l});
-              Log.debug (fun f -> f "adding %d blocks to lookahead buffer (%a)" (List.length next_l) Fmt.(list ~sep:comma int64) next_l);
+            | Ok () ->
               aux t (l @ acc) (n - (List.length l))
         in
         aux t [] n

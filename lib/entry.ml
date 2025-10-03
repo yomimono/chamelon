@@ -3,8 +3,9 @@ type link = | Metadata of (int64 * int64)
             | Data of (int32 * int32)
 
 let pp_link fmt = function
-  | Metadata m -> Fmt.pf fmt "metadata %a" Fmt.(pair ~sep:comma int64 int64) m
-  | Data d -> Fmt.pf fmt "data %a" Fmt.(pair int32 ~sep:comma int32) d
+  | Metadata m -> Fmt.pf fmt "metadata -> %a" Fmt.(pair ~sep:comma int64 int64) m
+  | Data (where, how_much) -> Fmt.pf fmt "data -> block %ld (0x%lx), length %ld (0x%lx)"
+                                where where how_much how_much
 
 let sizeof t =
   Cstruct.length (snd t) + Tag.size
