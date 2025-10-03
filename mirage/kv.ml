@@ -106,9 +106,12 @@ module Make(Sectors : Mirage_block.S) = struct
 
   let rename t ~source ~dest =
     get t source >>= function
-    | Ok data ->
-      set t dest data
     | Error e -> Lwt.return (Error (e :> write_error))
+    | Ok data ->
+      set t dest data >>= function
+      | Ok () ->
+        remove t src data
+      | Error _ as e  -> Lwt.return e
 
   (* [last_modified t key] gives the timestamp metadata for a file/value,
    * or (for a directory) the most recently modified file/value within the directory.
