@@ -231,6 +231,24 @@ let test_digest_deep_dictionary block _ () =
   Alcotest.(check string) "digests of things in the fs hierarchy aren't sensitive to unrelated changes" digest_deep_pre_shallow_write digest_deep_post_shallow_write;
   Lwt.return_unit
 
+let test_rename block _ () =
+  let key1 = Mirage_kv.Key.(v "location_1") in
+  let key2 = Mirage_kv.Key.(v "second_location") in
+  let contents = "we must go to next location" in
+  format_and_mount block >>= fun fs ->
+  Chamelon.set fs key1 contents >>= function | Error e -> fail_write e | Ok () ->
+  Chamelon.rename fs ~source:key1 ~dest:key2 >>= function
+  | Error e -> fail_write e
+  | Ok () ->
+    Chamelon.exists fs key1 >>= function
+    | Error e -> fail_read e
+    | Ok (Some `Dictionary) -> Alcotest.failf "renamed key exists and is, weirdly, a dictionary"
+    | Ok (Some `Value) -> Alcotest.failf "renamed key still exists"
+    | Ok None ->
+      Chamelon.get fs key2 >>= function
+      | Error e -> fail_read e
+      | Ok v -> Alcotest.(check string) "renamed contents are the same" v contents; Lwt.return_unit
+
 let test_no_space block _ () =
   let blorp = String.init block_size (fun _ -> 'a') in
   let k n = Mirage_kv.Key.v @@ string_of_int n in
@@ -668,6 +686,10 @@ let test img =
       ("split",
        [
          test_case "we can write files until we run out of space" `Quick (test_many_files block);
+       ]);
+      ("rename",
+       [
+         test_case "rename works" `Quick (test_rename block);
        ]);
       ("rm",
        [
