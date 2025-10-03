@@ -1,5 +1,5 @@
 module Mirage_sectors = Block (* disambiguate this from Littlefs.Block *)
-module Littlefs = Kv.Make(Mirage_sectors) (* Pclock comes from mirage-clock-unix *)
+module Littlefs = Kv.Make(Mirage_sectors) (* Pclock comes from mirage-ptime *)
 
 let format {Common_options.program_block_size; block_size; image} =
   let aux () =
