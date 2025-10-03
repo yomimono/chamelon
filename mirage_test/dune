@@ -4,20 +4,6 @@
 )
 
 (rule
-  (alias regress)
-  (action (progn
-            (run dd if=/dev/zero of=emptyfile bs=4K count=10)
-            (run %{exe:test_mirage.exe} test good_block)
-            (run cp emptyfile before_bad_write.img)
-            (with-stdout-to before_bad_write.txt (run %{exe:../src/chamelon.exe} parse before_bad_write.img 512 ))
-            (run dd if=/dev/zero of=emptyfile bs=4K count=10)
-            (run %{exe:test_mirage.exe} test regressions)
-            (run cp emptyfile after_bad_write.img)
-            (with-stdout-to after_bad_write.txt (run %{exe:../src/chamelon.exe} parse after_bad_write.img 512 ))
-            (run kdiff3 before_bad_write.txt after_bad_write.txt)
-            )))
-
-(rule
   (alias runtest)
   (action (progn
             (run dd if=/dev/zero of=emptyfile bs=4K count=10)
