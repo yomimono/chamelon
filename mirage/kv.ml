@@ -110,7 +110,7 @@ module Make(Sectors : Mirage_block.S) = struct
     | Ok data ->
       set t dest data >>= function
       | Ok () ->
-        remove t src data
+        remove t source
       | Error _ as e  -> Lwt.return e
 
   (* [last_modified t key] gives the timestamp metadata for a file/value,
