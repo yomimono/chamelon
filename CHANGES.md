@@ -1,3 +1,19 @@
+# v0.2.0 (2025-10-03)
+
+* improvement: use the new-to-chamelon `Float.log2` for skip-list math (@yomimono)
+* improvement: actually implement Kv.allocate (@yomimono)
+* improvement: `chamelon.exe` now provides `chamelon parse`, which outputs a block-by-block parse attempt to stderr. Many types now also have `pp`s to support this. This tool does not distinguish between metadata and data blocks, which makes it primarily useful for debugging rather than recovery. (@yomimono)
+* bugfix: fix many places where tags weren't checked for the 'tag deleted' field (@yomimono)
+* bugfix: fix potential data loss bug when keys are overwritten and the new entry is the first in a newly-split block (reported by independently by @palainp and then by @armael and @gasche with tests and a great writeup, fix by @yomimono)
+* bugfix: fix incorrect `No_space` when re-mounting a filesystem where many blocks are already used, but nowhere near all of them (reported by @reynir with tests, fix by @yomimono)
+* bugfix: fix confusion about superblock entry bearing the name `littlefs` (@yomimono)
+* bugfix: check block revision counts with sequence math, as in the spec (@yomimono)
+* maintenance: break dependency cycle between Tag and Entry (@emillon)
+* maintenance: adapt to mirage-kv 6.0.1 type signatures (@hannesm, @palainp)
+* maintenance: various opam updates for the modern age (@hannesm)
+* tests: add a lot of tests (@reynir, @gasche, @armael, @yomimono)
+* miscellaneous: break some logic into `fs_internal.ml`, a precursor to a more general reorganization to get error-prone low-level operations out of `kv` and `fs` (@yomimono)
+
 # v0.1.1 (2022-07-28, all changes by @yomimono)
 
 * bugfix: remove dependency cycle between chamelon and chamelon-unix
