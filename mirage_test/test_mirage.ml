@@ -115,7 +115,12 @@ let test_last_modified block _ () =
     Chamelon.last_modified fs path >>= function | Error e -> fail_read e | Ok first_write_time ->
       let first_timestamp = first_write_time in
       let now_timestamp = Mirage_ptime.now () in
-      Alcotest.(check bool) "last modified time is before now" true (Ptime.is_later now_timestamp ~than:first_timestamp);
+      let pp = Ptime.pp_human () in
+      let name = Format.asprintf "last modified time (%a) is before now (%a)"
+          pp first_timestamp
+          pp now_timestamp
+      in
+      Alcotest.(check bool) name true (Ptime.is_later now_timestamp ~than:first_timestamp);
       Chamelon.set fs path "do it again!!" >>= function | Error e -> fail_write e
       | Ok () ->
         Chamelon.last_modified fs path >>= function | Error e -> fail_read e | Ok second_write_time ->
