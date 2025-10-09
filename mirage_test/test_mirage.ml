@@ -112,6 +112,7 @@ let test_last_modified block _ () =
   Chamelon.set fs path contents >>= function | Error e -> fail_write e | Ok () ->
   Chamelon.get fs path >>= function | Error e -> fail_read e
   | Ok _contents ->
+    Lwt_unix.sleep 1.0 >>= fun () ->
     Chamelon.last_modified fs path >>= function | Error e -> fail_read e | Ok first_write_time ->
       let first_timestamp = first_write_time in
       let now_timestamp = Mirage_ptime.now () in
@@ -123,6 +124,7 @@ let test_last_modified block _ () =
       Alcotest.(check bool) name true (Ptime.is_later now_timestamp ~than:first_timestamp);
       Chamelon.set fs path "do it again!!" >>= function | Error e -> fail_write e
       | Ok () ->
+        Lwt_unix.sleep 1.0 >>= fun () ->
         Chamelon.last_modified fs path >>= function | Error e -> fail_read e | Ok second_write_time ->
           let second_timestamp = second_write_time in
           Alcotest.(check bool) "after modifying, last modified time is later" true
@@ -135,6 +137,7 @@ let test_last_modified_dir block _ () =
   let contents = "delicious" in
   format_and_mount block >>= fun fs ->
   Chamelon.set fs cheese1 contents >>= function | Error e -> fail_write e | Ok () ->
+  Lwt_unix.sleep 1.0 >>= fun () ->
   Chamelon.set fs cheese2 contents >>= function | Error e -> fail_write e | Ok () ->
   Chamelon.last_modified fs cheese2 >>= function | Error e -> fail_read e | Ok cheese2_modified ->
   Chamelon.last_modified fs @@ Mirage_kv.Key.parent cheese2 >>= function
