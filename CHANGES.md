@@ -1,3 +1,8 @@
+# v0.2.1 (2025-10-09)
+
+* bugfix: use `dd` instead of `fallocate`, since `fallocate` is not available on many platforms (@yomimono)
+* tests: don't run `last_modified` tests, which are are flaky on 32-bit platforms and in general Need Work (@yomimono)
+
 # v0.2.0 (2025-10-03)
 
 * improvement: use the new-to-chamelon `Float.log2` for skip-list math (@yomimono)
