@@ -64,12 +64,12 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
   module Find : sig
     type blockwise_entry_list = blockpair * (Chamelon.Entry.t list)
 
-    (** [all_entries_in_dir t head] gives an *uncompacted* list of all
+    (** [uncompacted_entries t head] gives an *uncompacted* list of all
      * entries in the directory starting at [head].
      * the returned entries in the directory are split up by block,
      * so the caller can distinguish between re-uses of the same ID number
      * when the directory spans multiple block numbers *)
-    val all_entries_in_dir : t -> directory_head ->
+    val uncompacted_entries : t -> directory_head ->
       (blockwise_entry_list list, [ `Not_found of key ]) result Lwt.t
 
     (** [entries_of_name t head name] scans [head] (and any subsequent blockpairs in the directory's
@@ -99,7 +99,7 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
 
     (* nb: all does mean *all* here; the list is returned uncompacted,
      * so the caller may have to compact to avoid reporting on expired state *)
-    let rec all_entries_in_dir t block_pair =
+    let rec uncompacted_entries t block_pair =
       Read.block_of_block_pair t block_pair >>= function
       | Error _ -> Lwt.return @@ Error (`Not_found Mirage_kv.Key.empty)
       | Ok block ->
@@ -107,7 +107,7 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
         match Chamelon.Block.hardtail block with
         | None -> Lwt.return @@ Ok [(block_pair, this_blocks_entries)]
         | Some nextpair ->
-          all_entries_in_dir t nextpair >>= function
+          uncompacted_entries t nextpair >>= function
           | Ok entries -> Lwt.return @@ Ok ((block_pair, this_blocks_entries) :: entries)
           | Error _ -> Lwt.return @@ Error (`Not_found Mirage_kv.Key.empty)
 
@@ -138,7 +138,7 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
         DataMap.find_opt (Cstruct.of_string key) map
       in
       let open Lwt_result in
-      all_entries_in_dir t block_pair >>= fun entries_by_block ->
+      uncompacted_entries t block_pair >>= fun entries_by_block ->
       let entries_matching_name (block, entries) =
         match id_of_key (Chamelon.Entry.compact entries) name with
         | None ->

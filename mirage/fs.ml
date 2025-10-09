@@ -29,7 +29,7 @@ module Make(Sectors: Mirage_block.S) = struct
      * get the list of all entries naming files or directories
      * and sort them *)
     let ls_in_dir dir_pair =
-      Internal.Find.all_entries_in_dir t dir_pair >>= function
+      Internal.Find.uncompacted_entries t dir_pair >>= function
       | Error _ -> Lwt.return @@ Error (`Not_found key)
       | Ok entries_by_block ->
         let translate entries = List.filter_map Chamelon.Entry.info_of_entry entries |> List.sort cmp in
@@ -305,10 +305,10 @@ module Make(Sectors: Mirage_block.S) = struct
           | None -> Error (`Value_expected (Mirage_kv.Key.v filename))
 
     let rec size_all t blockpair =
-      Internal.Find.all_entries_in_dir t blockpair >>= function
+      Internal.Find.uncompacted_entries t blockpair >>= function
       | Error _ -> Lwt.return Optint.Int63.zero
       | Ok l ->
-        let entries = List.(map snd l |> flatten) in
+        let entries = List.(map snd l |> flatten |> Chamelon.Entry.compact) in
         Lwt_list.fold_left_s (fun acc e ->
             match Chamelon.Content.size e with
             | `File n -> Lwt.return @@ Optint.Int63.add n acc

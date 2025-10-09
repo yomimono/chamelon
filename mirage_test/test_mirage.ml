@@ -475,6 +475,56 @@ let test_nested_dir block _ () =
               (2 * (String.length contents)) (Optint.Int63.to_int n);
     Lwt.return_unit
 
+let test_overwritten_size block _ () =
+  let key = Mirage_kv.Key.v "/f0" in
+  let contents1 = String.make 256 '@' in
+  let contents2 = String.make 10 '!' in
+  format_and_mount block >>= fun fs ->
+  Chamelon.set fs key contents1 >>= function | Error e -> fail_write e | Ok () ->
+  Chamelon.size fs key >>= function
+  | Error e -> fail_read e
+  | Ok n ->
+    Alcotest.(check int) "pre-overwrite size (key)" (String.length contents1) (Optint.Int63.to_int n);
+    Chamelon.size fs Mirage_kv.Key.empty >>= function
+    | Error e -> fail_read e
+    | Ok n ->
+      Alcotest.(check int) "pre-overwrite size (dir)" (String.length contents1) (Optint.Int63.to_int n);
+      Chamelon.set fs key contents2 >>= function | Error e -> fail_write e | Ok () ->
+      Chamelon.size fs key >>= function
+      | Error e -> fail_read e
+      | Ok n ->
+        Alcotest.(check int) "post-overwrite size (key)" (String.length contents2) (Optint.Int63.to_int n);
+        Chamelon.size fs Mirage_kv.Key.empty >>= function
+        | Error e -> fail_read e
+        | Ok n -> Alcotest.(check int) "post-overwrite size (dir)" (String.length contents2) (Optint.Int63.to_int n);
+          Lwt.return_unit
+
+let test_size_deleted block _ () =
+  let write_and_delete fs k v =
+    Chamelon.set fs k v >>= function | Error e -> fail_write e | Ok () ->
+    Chamelon.get fs k >>= function | Error e -> fail_read e | Ok actual_v ->
+      Alcotest.(check string) "wrote successfully before deleting" v actual_v;
+      Chamelon.remove fs k >>= function | Error e -> fail_write e | Ok () ->
+      Lwt.return_unit
+  in
+  format_and_mount block >>= fun fs ->
+  write_and_delete fs (Mirage_kv.Key.v "/d0/f0") (String.make 0x0f '0') >>= fun () ->
+  write_and_delete fs (Mirage_kv.Key.v "/d0/f1") (String.make 0xff '1') >>= fun () ->
+  write_and_delete fs (Mirage_kv.Key.v "/d0/f2") (String.make 0x1ff '2') >>= fun () ->
+  (* we shouldn't be able to see a now-empty directory at all *)
+  Chamelon.size fs (Mirage_kv.Key.v "/d0") >>= function
+  | Error (`Not_found _) -> begin
+    (* good; we shouldn't see anything in the FS root either *)
+    Chamelon.size fs Mirage_kv.Key.empty >>= function
+    | Error e -> fail_read e
+    | Ok n ->
+      Alcotest.(check int) "after deleting all items in the filesystem, its size is 0" 0 (Optint.Int63.to_int n);
+      Lwt.return_unit
+  end
+  | Error e -> fail_read e
+  | Ok n ->
+    Alcotest.failf "got unexpected size %a for an empty directory, instead of `Not_found" Optint.Int63.pp n
+
 let test_many_files block _ () =
   format_and_mount block >>= fun fs ->
   let contents i = "number " ^ string_of_int i in
@@ -674,6 +724,8 @@ let test img =
         test_case "size of an empty fs" `Quick (test_size_empty block);
         test_case "size of a directory" `Quick (test_size_dir block);
         test_case "size of some nested stuff" `Quick (test_nested_dir block);
+        test_case "size after overwrite" `Quick (test_overwritten_size block);
+        test_case "size ater deleting items" `Quick (test_size_deleted block);
        ]
       );
       ("digest",

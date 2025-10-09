@@ -1,5 +1,6 @@
 # future
 
+* bugfix: don't count deleted entries when counting keys for `size`
 * maintenance: correct chamelon-unix's version dependency on mirage-crypto-rng (suggested by @jmid)
 
 # v0.2.1 (2025-10-09)
