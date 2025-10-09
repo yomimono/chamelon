@@ -2,6 +2,7 @@
 
 * bugfix: use `dd` instead of `fallocate`, since `fallocate` is not available on many platforms (@yomimono)
 * tests: don't run `last_modified` tests, which are are flaky on 32-bit platforms and in general Need Work (@yomimono)
+* maintenance: remove mirage-clock dependency (@hannesm)
 
 # v0.2.0 (2025-10-03)
 
