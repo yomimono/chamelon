@@ -1,3 +1,7 @@
+# future
+
+* maintenance: correct chamelon-unix's version dependency on mirage-crypto-rng (suggested by @jmid)
+
 # v0.2.1 (2025-10-09)
 
 * bugfix: use `dd` instead of `fallocate`, since `fallocate` is not available on many platforms (@yomimono)
