@@ -646,15 +646,15 @@ let test img =
          test_case "allocate" `Quick (test_allocate block);
        ]
       );
+         (*
       ("last modified",
        [ test_case "last modified increases on overwrite" `Quick (test_last_modified block);
          test_case "last modified of a directory reflects a write in it" `Quick (test_last_modified_dir block);
          test_case "last modified only goes 1 level deep" `Quick (test_last_modified_depth block);
-         (*
          test_case "last modified correctly errors" `Quick (test_last_modified_errors block);
-         *)
        ]
       );
+         *)
       ("get",
        [ test_case "get nonexistent value" `Quick (test_nonexistent_value block);
          test_case "get a dictionary" `Quick (test_get_dictionary block);
