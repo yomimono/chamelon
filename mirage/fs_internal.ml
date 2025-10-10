@@ -64,12 +64,12 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
   module Find : sig
     type blockwise_entry_list = blockpair * (Chamelon.Entry.t list)
 
-    (** [uncompacted_entries t head] gives an *uncompacted* list of all
+    (** [entries t head] gives a (compacted) list of all
      * entries in the directory starting at [head].
      * the returned entries in the directory are split up by block,
      * so the caller can distinguish between re-uses of the same ID number
      * when the directory spans multiple block numbers *)
-    val uncompacted_entries : t -> directory_head ->
+    val entries : t -> directory_head ->
       (blockwise_entry_list list, [ `Not_found of key ]) result Lwt.t
 
     (** [entries_of_name t head name] scans [head] (and any subsequent blockpairs in the directory's
@@ -111,6 +111,13 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
           | Ok entries -> Lwt.return @@ Ok ((block_pair, this_blocks_entries) :: entries)
           | Error _ -> Lwt.return @@ Error (`Not_found Mirage_kv.Key.empty)
 
+    let entries t block_pair =
+      uncompacted_entries t block_pair >>= function
+      | Error _ as e -> Lwt.return e
+      | Ok l ->
+        let compact_entries (block, entries) = (block, Chamelon.Entry.compact entries) in
+        Lwt.return_ok (List.map compact_entries l)
+
     let entries_of_name t block_pair name =
       let entries_of_id entries id =
         let matches (tag, _chunk) = (0 = compare tag.Chamelon.Tag.id id &&
@@ -138,9 +145,9 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
         DataMap.find_opt (Cstruct.of_string key) map
       in
       let open Lwt_result in
-      uncompacted_entries t block_pair >>= fun entries_by_block ->
+      entries t block_pair >>= fun entries_by_block ->
       let entries_matching_name (block, entries) =
-        match id_of_key (Chamelon.Entry.compact entries) name with
+        match id_of_key entries name with
         | None ->
           Log.debug (fun m -> m "id for %S not found in %d entries from %a"
                          name (List.length entries) pp_blockpair block);
@@ -155,10 +162,7 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
           Log.debug (fun m -> m "here are the tags for the entries for id %d: %a"
                         id
                         Fmt.(list Chamelon.Tag.pp) tags);
-          let compacted = Chamelon.Entry.compact entries in
-          Log.debug (fun m -> m "after compaction, %d entries for id %d in %a"
-                         (List.length compacted) id pp_blockpair block);
-          Ok (block, compacted)
+          Ok (block, entries)
       in
       let blockwise_matches = List.filter_map (fun es ->
           match entries_matching_name es with

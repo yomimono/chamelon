@@ -29,16 +29,14 @@ module Make(Sectors: Mirage_block.S) = struct
      * get the list of all entries naming files or directories
      * and sort them *)
     let ls_in_dir dir_pair =
-      Internal.Find.uncompacted_entries t dir_pair >>= function
+      Internal.Find.entries t dir_pair >>= function
       | Error _ -> Lwt.return @@ Error (`Not_found key)
       | Ok entries_by_block ->
+        (* we don't care which block any of these were on, since we also don't really care about their ids *)
+        let entries = List.map snd entries_by_block in
         let translate entries = List.filter_map Chamelon.Entry.info_of_entry entries |> List.sort cmp in
-        (* we have to compact first, because IDs are unique per *block*, not directory.
-         * If we compact after flattening the list, we might wrongly conflate multiple
-         * entries in the same directory, but on different blocks. *)
-        let compacted = List.map (fun (_block, entries) -> Chamelon.Entry.compact entries) entries_by_block in
         let to_key (k, x) = Mirage_kv.Key.add key k, x in
-        Lwt.return @@ Ok (List.map to_key (translate @@ List.flatten compacted))
+        Lwt.return @@ Ok (List.map to_key (translate @@ List.flatten entries))
     in
     (* find the parent directory of the [key] *)
     match (Mirage_kv.Key.segments key) with
@@ -305,10 +303,10 @@ module Make(Sectors: Mirage_block.S) = struct
           | None -> Error (`Value_expected (Mirage_kv.Key.v filename))
 
     let rec size_all t blockpair =
-      Internal.Find.uncompacted_entries t blockpair >>= function
+      Internal.Find.entries t blockpair >>= function
       | Error _ -> Lwt.return Optint.Int63.zero
       | Ok l ->
-        let entries = List.(map snd l |> flatten |> Chamelon.Entry.compact) in
+        let entries = List.(map snd l |> flatten) in
         Lwt_list.fold_left_s (fun acc e ->
             match Chamelon.Content.size e with
             | `File n -> Lwt.return @@ Optint.Int63.add n acc
