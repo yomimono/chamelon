@@ -10,6 +10,9 @@ let pp_link fmt = function
 let sizeof t =
   Cstruct.length (snd t) + Tag.size
 
+let id_matches n (tag, _data) =
+  (tag.Tag.length < Tag.Magic.deleted_tag) && Int.equal tag.Tag.id n
+
 let info_of_entry (tag, data) =
   match tag.Tag.type3 with
   | (LFS_TYPE_NAME, 0x01) ->

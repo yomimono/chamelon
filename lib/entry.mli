@@ -3,7 +3,10 @@ type link = | Metadata of (int64 * int64)
             | Data of (int32 * int32)
 
 val links : t -> link option
+val name_of_entry : t -> (int * string) option
 val info_of_entry : t -> (string * [ `Value | `Dictionary]) option
+
+val id_matches : int -> t -> bool
 
 val pp : Format.formatter -> t -> unit
 val pp_link : Format.formatter -> link -> unit
