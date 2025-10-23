@@ -17,6 +17,7 @@ module Make(Sectors: Mirage_block.S) = struct
   module Log = (val Logs.src_log log_src : Logs.LOG)
 
   let pp_blockpair = Internal.pp_blockpair
+  let pp_error = Internal.Find.pp_error
 
   let name_length_max t = t.Internal.name_length_max
 
@@ -417,11 +418,11 @@ module Make(Sectors: Mirage_block.S) = struct
               | Some n -> n + 1
             in
             let name = Chamelon.File.name filename next in
-            let ctime = Chamelon.Entry.ctime next (Mirage_ptime.now_d_ps ()) in
+            let mtime = Chamelon.Entry.mtime next (Mirage_ptime.now_d_ps ()) in
             let ctz = Chamelon.File.create_ctz next
                 ~pointer:last_pointer ~file_size:(Int32.of_int file_size)
             in
-            let new_entries = entries @ [name; ctime; ctz] in
+            let new_entries = entries @ [name; mtime; ctz] in
             Log.debug (fun m -> m "writing %d entries for ctz for file %s of size %d" (List.length new_entries) filename file_size);
             let new_block = Chamelon.Block.add_commit root new_entries in
             Internal.Write.block_to_block_pair t new_block dir_block_pair >>= function
@@ -446,9 +447,9 @@ module Make(Sectors: Mirage_block.S) = struct
             | None -> 1
             | Some n -> n + 1
           in
-          let ctime = Chamelon.Entry.ctime next (Mirage_ptime.now_d_ps ()) in
+          let mtime = Chamelon.Entry.mtime next (Mirage_ptime.now_d_ps ()) in
           let file = Chamelon.File.write_inline filename next (Cstruct.of_string data) in
-          let commit = entries @ (ctime :: file) in
+          let commit = entries @ (mtime :: file) in
           Log.debug (fun m -> m "writing %d entries for inline file %s" (List.length file) filename);
           let new_block = Chamelon.Block.add_commit extant_block commit in
           Internal.Write.block_to_block_pair t new_block block_pair >>= function

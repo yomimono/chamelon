@@ -19,10 +19,11 @@ val compact : t list -> t list
  * not including any hardtail entries present in [l]. *)
 val lenv_less_hardtail : t list -> int
 
-(** [ctime id d,ps] returns a creation time entry for [id] at [d,ps] *)
-val ctime : int -> int * int64 -> t
+(** [mtime id d,ps] returns a last-modified time entry for [id] at [d,ps] *)
+val mtime : int -> int * int64 -> t
 
-val ctime_of_cstruct : Cstruct.t -> (int * int64) option
+val mtime_of_cstruct : Cstruct.t -> (int * int64) option
+val mtime_of_entry : t -> (int * int64) option
 
 val into_cstructv : starting_xor_tag:Cstruct.t -> Cstruct.t -> t list -> int * Cstruct.t
 val to_cstructv : starting_xor_tag:Cstruct.t -> t list -> Cstruct.t * Cstruct.t

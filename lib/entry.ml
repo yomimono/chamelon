@@ -18,18 +18,18 @@ let info_of_entry (tag, data) =
     Some (Cstruct.to_string data, `Dictionary)
   | _ -> None
 
-let ctime id (d, ps) =
+let mtime id (d, ps) =
   let cs = Cstruct.create @@ 4 + 8 in
   Cstruct.LE.set_uint32 cs 0 (Int32.of_int d);
   Cstruct.LE.set_uint64 cs 4 ps;
   Tag.({
       valid = true;
-      type3 = (LFS_TYPE_USERATTR, 0x74);
+      type3 = (LFS_TYPE_USERATTR, Tag.Magic.userattr_mtime);
       length = 4 + 8;
       id;
     }), cs
 
-let ctime_of_cstruct cs =
+let mtime_of_cstruct cs =
   if Cstruct.length cs < 4 + 8 then None
   else begin
     let d = Cstruct.LE.get_uint32 cs 0 |> Int32.to_int in
@@ -76,6 +76,12 @@ let pp fmt (tag, data) =
       pp_link link
       Cstruct.hexdump_pp data
 
+let name_of_entry (tag, data) =
+  if Tag.is_name tag then Some (tag.id, (Cstruct.to_string data)) else None
+
+let mtime_of_entry (tag, data) =
+  if Tag.is_mtime tag then mtime_of_cstruct data else None
+
 (* the 'compact' operation tries to ensure that we keep
  * only the most recent entries for each id. we may have many entries
  * across multiple commits for any given id,
@@ -85,10 +91,7 @@ let compact entries =
   let map = TagMap.empty in
   let map = List.fold_left (fun map (tag, content) ->
       (* if the length is 0x3ff, the tag itself has been 'deleted' and shouldn't be retained *)
-      if tag.Tag.length >= 0x3ff then begin
-        Format.eprintf "tag %a looked deleted so I skipped it\n%!" Tag.pp tag;
-        map
-      end else begin
+      if tag.Tag.length >= 0x3ff then map else begin
       match tag.Tag.type3 with
       | Tag.LFS_TYPE_SPLICE, 0xff -> (* this is a "deletion" tag, so remove all
                                         the existing entries for this id *)

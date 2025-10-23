@@ -17,10 +17,15 @@ module Magic = struct
   let struct_dir = 0x00
   let struct_inline = 0x01
   let struct_ctz = 0x02
-  let name_superblock = 0xff
 
   let tail_soft = 0x00
   let tail_hard = 0x01
+
+  let name_file = 0x01
+  let name_directory = 0x02
+  let name_superblock = 0xff
+
+  let userattr_mtime = 0x74
 
   let not_associated = 0x3ff (* special value for "id" field *)
   let deleted_tag = 0x3ff (* special value for "length" field *)
@@ -85,6 +90,13 @@ let is_file_struct tag =
 
 let is_hardtail {type3; _} =
   (fst type3) = LFS_TYPE_TAIL && (snd type3) = Magic.tail_hard
+
+let is_mtime {type3; _} =
+  (fst type3) = LFS_TYPE_USERATTR && (snd type3) = Magic.userattr_mtime
+
+let is_name {type3; _ } =
+  (* while the superblock name entry _is_ a name, no caller is going to want to get that back from this *)
+  (fst type3) = LFS_TYPE_NAME && (snd type3) != Magic.name_superblock
 
 let has_links tag =
   is_file_struct tag || is_hardtail tag
