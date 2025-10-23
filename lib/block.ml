@@ -62,23 +62,24 @@ let of_commits ~hardtail ~revision_count commits =
     let new_commit = Commit.(of_entries_filter_crc (seed_tag commit) crc (entries commit)) in
     {commits = (new_commit :: l); revision_count; hardtail}
 
-let of_entries ~revision_count entries =
+let of_entries ?(hardtail=None) ~revision_count entries =
   let crc = crc_of_revision_count revision_count in
   let commit = Commit.of_entries_filter_crc (Cstruct.of_string "\xff\xff\xff\xff") crc entries in
-  of_commits ~hardtail:None ~revision_count (commit::[])
+  of_commits ~hardtail ~revision_count (commit::[])
 
 let compact t =
   let revision_count = Int32.(add t.revision_count one) in
+  let hardtail = t.hardtail in
   let old_entries = List.map Commit.entries t.commits |> List.flatten in
   let new_entries = Entry.compact old_entries in
-  of_entries ~revision_count new_entries
+  of_entries ~hardtail ~revision_count new_entries
 
 let add_commit {revision_count; commits; hardtail} entries =
   let revision_count = Int32.(add revision_count one) in
   match commits with
-  | [] -> of_entries ~revision_count entries
+  | [] -> of_entries ~hardtail ~revision_count entries
   | l ->
-    let last = List.(nth l ((length l) - 1)) in
+    let last = List.(hd @@ rev l) in
     let commit = Commit.commit_after last entries in
     of_commits ~hardtail ~revision_count (l @ [commit])
 
@@ -130,9 +131,14 @@ let into_cstruct ~program_block_size cs block =
       let hardtail_bytes, _raw_crc =
         write_hardtail ~after:List.(hd @@ rev commits) ~starting_xor_tag ~starting_offset block hardtail_region
       in
-      if (after_last_crc + hardtail_bytes) > Cstruct.length cs then `Unwriteable
-      else if (after_last_crc + hardtail_bytes) > ((Cstruct.length cs) / 2) then `Split
-      else `Ok
+        if (after_last_crc + hardtail_bytes) > Cstruct.length cs then `Unwriteable
+        else if (after_last_crc + hardtail_bytes) > ((Cstruct.length cs) / 2) then begin
+          (* if we don't have a hardtail, we can suggest splitting *)
+          match block.hardtail with
+          | None -> `Split
+          | Some _ -> `Ok (* we already have a hardtail, we can't suggest splitting again *)
+        end
+        else `Ok
     with
     | Invalid_argument _ -> `Unwriteable
 

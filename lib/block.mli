@@ -21,7 +21,7 @@ val hardtail : t -> (int64 * int64) option
 val of_commits : hardtail:Entry.t option -> revision_count:int32 -> Commit.t list -> t
 
 (* start a new block with one commit containing these entries *)
-val of_entries : revision_count:int32 -> Entry.t list -> t
+val of_entries : ?hardtail:Entry.t option -> revision_count:int32 -> Entry.t list -> t
 
 (* remove entries that have been deleted, and compact all commits into one *)
 val compact : t -> t

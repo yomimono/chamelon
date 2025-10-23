@@ -177,15 +177,25 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
             | Some next_pair ->
               block_containing t next_pair name
           end
-        | l -> Lwt.return_error (`Multiple_ids l)
+        | l ->
+          Log.err (fun f -> f "Multiple IDs found for name %s on blockpair %a: %a" name pp_blockpair block_pair
+                      Chamelon.Block.pp block);
+          Lwt.return_error (`Multiple_ids l)
 
     let blockwise_entries t block_pair =
       uncompacted_entries t block_pair >>= function
       | Error _ as e -> Lwt.return e
       | Ok l ->
         (* it's important to compact block-by-block, because ids are only unique within a metadata block *)
-        let compact_entries (block, entries) = (block, Chamelon.Entry.compact entries) in
-        Lwt.return_ok (List.map compact_entries l)
+        let compacted_entries = List.map (fun (block, entries) -> block, Chamelon.Entry.compact entries) l in
+        Log.debug (fun f ->
+            let flattened_uncompacted = List.map snd l |> List.flatten in
+            let flattened_compacted = List.map snd compacted_entries |> List.flatten in
+            f "directory starting at %a: %d uncompacted entries vs %d after compaction"
+              pp_blockpair block_pair
+              (List.length flattened_uncompacted) (List.length flattened_compacted)
+          );
+        Lwt.return_ok compacted_entries
 
     let all_names t block_pair =
       blockwise_entries t block_pair >>= function
@@ -204,17 +214,31 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
           if String.compare name content = 0 then Some id else None
         in
         let this_blocks_entries = Chamelon.Block.entries block |> Chamelon.Entry.compact in
+        Log.debug (fun f -> f "blockpair %a has %d entries (after compaction)"
+                      pp_blockpair block_pair (List.length this_blocks_entries));
+        Log.debug (fun f -> f "%a" Fmt.(list Chamelon.Entry.pp) this_blocks_entries);
         match List.filter_map name_matches this_blocks_entries with
-        | n::[] -> Lwt.return_ok (List.filter (Chamelon.Entry.id_matches n) this_blocks_entries)
+        | n::[] ->
+          let entries = List.filter (Chamelon.Entry.id_matches n) this_blocks_entries in
+          Log.debug (fun f -> f "got id %d for name %s with %d related entries" n name (List.length entries));
+          Lwt.return_ok entries
         | [] ->
           (* nothing here, so see whether there are more blocks in this directory *)
           begin
             match Chamelon.Block.hardtail block with
-            | None -> Lwt.return_error (`Not_found (Mirage_kv.Key.v name))
+            | None ->
+              Log.debug (fun f -> f "nothing found for %s and no hardtail on block %a, giving up"
+                            name pp_blockpair block_pair);
+              Lwt.return_error (`Not_found (Mirage_kv.Key.v name))
             | Some next_pair ->
+              Log.debug (fun f -> f "nothing for %s on %a, advancing to hardtail %a" name
+                            pp_blockpair block_pair pp_blockpair next_pair);
               entries_of_name t next_pair name
           end
-        | l -> Lwt.return_error (`Multiple_ids l)
+        | l ->
+          Log.err (fun f -> f "Multiple IDs found for name %s on blockpair %a: %a"
+                      name pp_blockpair block_pair Fmt.(list ~sep:comma int) l);
+          Lwt.return_error (`Multiple_ids l)
 
     let get_directory_head t block_pair name =
       entries_of_name t block_pair name >>= function
@@ -465,16 +489,17 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
             | Ok () -> begin
                 Log.debug (fun f -> f "wrote new pair %a; overwriting old pair %a with updated hardtail link"
                           pp_blockpair (new_block_1, new_block_2) pp_blockpair (b1, b2));
-                (* ignore any warnings about needing to split, etc *)
                 let cs1 = Cstruct.create t.block_size in
                 let serialize = Chamelon.Block.into_cstruct ~program_block_size:t.program_block_size in
                 match serialize cs1 old_block with
-                | `Unwriteable ->
+                | `Unwriteable | `Split_emergency ->
+                  (* in these cases `cs1` is not a complete serialization and shouldn't be written *)
                   Log.err (fun f -> f
                               "unwriteable block during split operation: %a"
                               Chamelon.Block.pp old_block);
                   Lwt.return (Error `No_space)
-                | `Split | `Split_emergency | `Ok ->
+                (* ignore any warnings about needing to split *)
+                | `Split | `Ok ->
                   Lwt_result.both
                     (block_to_block_number t cs1 b1)
                     (block_to_block_number t cs1 b2) >>= function
@@ -561,10 +586,20 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
         | Ok block ->
           Log.debug (fun m -> m "adding deletion for id %d on block pair %a"
                          id pp_blockpair blockpair_with_id);
+          Log.debug (fun m -> m "pre-deletion block: %a" Chamelon.Block.pp block);
           let deletion = Chamelon.Tag.delete id in
-          let new_block = Chamelon.Block.add_commit block [(deletion, Cstruct.empty)] in
+          (* we need to compact the block after adding this commit, because we might have added something
+           * after the hardtail (which we can only even try to do if the entry is a deletion). *)
+          let new_block = Chamelon.Block.add_commit block [(deletion, Cstruct.empty)] |> Chamelon.Block.compact in
+          Log.debug (fun m -> m "post-deletion block: %a" Chamelon.Block.pp new_block);
           Write.block_to_block_pair t new_block blockpair_with_id >>= function
-          | Error _ -> Lwt.return @@ Error `No_space
+          | Error `No_space -> Lwt.return @@ Error `No_space
+          | Error `Split_emergency ->
+            Log.err (fun f -> f"split emergency when trying to write a deletion, which especially shouldn't happen");
+            Lwt.return @@ Error `No_space
+          | Error `Split ->
+            Log.err (fun f -> f "needed to split to add a deletion, which shouldn't happen");
+            Lwt.return_error `No_space
           | Ok () -> Lwt.return @@ Ok ()
 
   end
@@ -575,7 +610,10 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
     | Ok (hd::tl) -> begin
       (* do any of the entries represent a valid directory entry? if so, we don't need to do anything *)
       match List.filter_map Chamelon.Dir.of_entry (hd::tl) with
-      | pair::_ -> Lwt.return (Ok pair)
+      | pair::[] ->
+        Log.debug (fun f -> f "found %s in directory starting on blockpair %a - it's at %a"
+                      new_directory_name pp_blockpair containing_directory_head pp_blockpair pair);
+        Lwt.return (Ok pair)
       | _ -> Lwt.return @@ Error (`Already_present (Mirage_kv.Key.v new_directory_name))
     end
     | Error (`Not_found _) | Ok [] -> begin
@@ -647,7 +685,7 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
         mkdir_nonrec t root next >>= function
           | Error _ as e -> Lwt.return e
           | Ok dir_head -> get_directory ~ensure_path t dir_head l
-        end else begin
+      end else begin
         (* in this case we shouldn't make it if it's not already there, so just go look for it *)
         Find.get_directory_head t root next >>= function
         | Error (`Not_found s) -> Lwt.return @@ Error (`Not_found s)

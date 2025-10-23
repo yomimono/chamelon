@@ -76,6 +76,7 @@ module Make(Sectors : Mirage_block.S) = struct
       Lwt.return @@ Error (`Not_found Mirage_kv.Key.empty)
     end else begin
       let dir = Mirage_kv.Key.parent key in
+      let filename = Mirage_kv.Key.basename key in
       Fs.mkdir t (Mirage_kv.Key.segments dir) >>= function
       | Error (`Already_present k) ->
         Log.err (fun f -> f "error making directory for write to %a: component %a already present and not a directory"
@@ -86,7 +87,6 @@ module Make(Sectors : Mirage_block.S) = struct
         Log.debug (fun m -> m "found dir for %a on block pair %a"
                       Mirage_kv.Key.pp key
                       Fs.pp_blockpair block_pair);
-        let filename = Mirage_kv.Key.basename key in
         Fs.File_write.set_in_directory block_pair t filename data >>= function
         | Error e -> Lwt.return_error @@ complain_write ~present:(`Value_expected (Mirage_kv.Key.v filename)) e
         | Ok () -> Lwt.return_ok ()

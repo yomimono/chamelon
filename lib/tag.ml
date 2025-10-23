@@ -91,6 +91,10 @@ let is_file_struct tag =
 let is_hardtail {type3; _} =
   (fst type3) = LFS_TYPE_TAIL && (snd type3) = Magic.tail_hard
 
+let is_directory tag =
+  (fst tag.type3) = LFS_TYPE_STRUCT &&
+  (snd tag.type3) = Magic.struct_dir
+
 let is_inline_file tag =
   (fst tag.type3) = LFS_TYPE_STRUCT &&
   (snd tag.type3) = Magic.struct_inline

@@ -568,14 +568,17 @@ let test_recursive_rm block _ () =
   in
   let isnt_there key =
     Chamelon.exists fs key >>= function
-    | Ok (Some _) -> Alcotest.failf "exists said %a existed after it was deleted" Mirage_kv.Key.pp key
-    | Ok None -> Lwt.return_unit
     | Error (`Not_found k) when Mirage_kv.Key.(equal k @@ parent key) -> Lwt.return_unit
     | Error e -> Alcotest.failf "unexpected error: %a" Chamelon.pp_error e
+    | Ok None -> Lwt.return_unit
+    | Ok (Some `Value) ->
+      Alcotest.failf "exists said value %a existed after it was deleted" Mirage_kv.Key.pp key
+    | Ok (Some `Dictionary) ->
+      Alcotest.failf "exists said dictionary %a existed after it was deleted" Mirage_kv.Key.pp key
   in
   write_until_full ~write fs 0 >>= fun last_written ->
   Alcotest.(check bool) "wrote more than one entry" true (last_written > 0);
-  Logs.debug (fun f -> f "wrote %d entries" last_written);
+  Logs.debug (fun f -> f "last written entry: %d" last_written);
   let dir_key = Mirage_kv.Key.(v @@ string_of_int last_written) in
   Chamelon.list fs Mirage_kv.Key.empty >>= function | Error e -> fail_read e | Ok l ->
   let items = List.length l in
