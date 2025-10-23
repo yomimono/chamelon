@@ -85,11 +85,19 @@ let xor ~into arg =
 
 let is_file_struct tag =
   (fst tag.type3) = LFS_TYPE_STRUCT &&
-  ((snd tag.type3) = Magic.struct_dir
+  ((snd tag.type3) = Magic.struct_inline
    || snd tag.type3 = Magic.struct_ctz)
 
 let is_hardtail {type3; _} =
   (fst type3) = LFS_TYPE_TAIL && (snd type3) = Magic.tail_hard
+
+let is_inline_file tag =
+  (fst tag.type3) = LFS_TYPE_STRUCT &&
+  (snd tag.type3) = Magic.struct_inline
+
+let is_ctz_file tag =
+  (fst tag.type3) = LFS_TYPE_STRUCT &&
+  (snd tag.type3) = Magic.struct_ctz
 
 let is_mtime {type3; _} =
   (fst type3) = LFS_TYPE_USERATTR && (snd type3) = Magic.userattr_mtime

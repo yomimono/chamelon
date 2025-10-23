@@ -21,15 +21,13 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
   type write_result = [ `No_space | `Split | `Split_emergency ]
   (* error type definitions straight outta mirage-kv *)
   type error = [
-    | `Not_found           of key (** key not found *)
-    | `Dictionary_expected of key (** key does not refer to a dictionary. *)
-    | `Value_expected      of key (** key does not refer to a value. *)
+    | Mirage_kv.error
+    | [ `Corrupt of [ `Multiple_ids | `Unparseable ] ]
   ]
   type write_error = [
     | error
     | `No_space                (** No space left on the device. *)
-    | `Already_present of key (** The key is already present. *)
-    | `Rename_source_prefix of key * key (** The source is a prefix of destination in rename. *)
+    | `Already_present of key  (** The key is already present. *)
   ]
 
   let root_pair = (0L, 1L)
@@ -63,22 +61,38 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
 
   module Find : sig
     type blockwise_entry_list = blockpair * (Chamelon.Entry.t list)
+    type error = [ `Multiple_ids of (int list)
+                 | `Not_found of key
+                 | `Chamelon of [`Corrupt ]
+                 | `Block of Shimmed_block.error
+                 ]
+
+    val pp_error : Format.formatter -> error -> unit
+
+    val all_names : t -> directory_head ->
+      ((string * [`Value | `Dictionary]) list, error) result Lwt.t
+
+    (** [block_containing t head name] attempts to find an id for [name] in the
+     * directory beginning at [head]. If found, the id
+     * along with the blockpair on which those entries can be found.  If multiple
+     * ids match this name, Error (`Multiple_ids l); for none, Ok None. *)
+    val block_containing : t -> directory_head -> string ->
+      ((blockpair * int) option, error) result Lwt.t
 
     (** [entries t head] gives a (compacted) list of all
      * entries in the directory starting at [head].
      * the returned entries in the directory are split up by block,
      * so the caller can distinguish between re-uses of the same ID number
      * when the directory spans multiple block numbers *)
-    val entries : t -> directory_head ->
-      (blockwise_entry_list list, [ `Not_found of key ]) result Lwt.t
+    val blockwise_entries : t -> directory_head ->
+      (blockwise_entry_list list, error) result Lwt.t
 
     (** [entries_of_name t head name] scans [head] (and any subsequent blockpairs in the directory's
      * hardtail list) for `id` entries matching [name]. If an `id` is found for [name],
-     * all entries matching `id` from the directory are returned (compacted). *)
-    val entries_of_name : t -> directory_head -> string -> (blockwise_entry_list list,
-                                                           [`No_id of string
-                                                           | `Not_found of key]
-                                                          ) result Lwt.t
+     * all entries matching `id` from the metadata block containing the `id` entry
+     * are returned (compacted). *)
+    val entries_of_name : t -> directory_head -> string -> (Chamelon.Entry.t list,
+                                                            error) result Lwt.t
 
     (** [find_first_blockpair_of_directory t head l] finds and enters
      *  the segments in [l] recursively until none remain.
@@ -91,17 +105,49 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
       | `Not_directory of string ] Lwt.t
 
     val get_directory_head : t -> directory_head -> string -> (directory_head option,
-                                                               [ `Not_found of key ]
+                                                           [ `Multiple_ids of (int list)
+                                                           | `Not_found of key
+                                                           | `Chamelon of [`Corrupt ]
+                                                           | `Block of Shimmed_block.error
+                                                           ]
                                                               ) result Lwt.t
+
+    (** [id_of_name t directory_head name] tries to find a matching numerical ID for [name].
+     *  If none exists, [Error (`Not_found name)] is returned; for one valid ID, [Ok (Some id)].
+     *  If multiple IDs exist for this entry, return [Error (`Multiple_ids l)] where [l]
+     *  is the list of IDs for [name]. Note that this will only detect the case where
+     *  multiple IDs exist for [name] on the same metadata block -
+     *  if there are multiple metadata blocks in the directory, each with mappings for the
+     *  same name, this will not be detected by `id_of_name`. `id_of_name` will use the first
+     *  block with a single valid ID mapping. *) (*
+    val id_of_name : t -> directory_head -> string -> (int, [`Multiple_ids of int | `Not_found of key]) result Lwt.t *)
+
+    val last_modified_of_name : t -> directory_head -> string ->
+      ((int * int64) option, [ `Multiple_ids of (int list)
+                             | `Not_found of key
+                             | `Chamelon of [`Corrupt ]
+                             | `Block of Shimmed_block.error
+                             ]) result Lwt.t
 
   end = struct
     type blockwise_entry_list = blockpair * (Chamelon.Entry.t list)
+    type error = [ `Multiple_ids of (int list)
+                 | `Not_found of key
+                 | `Chamelon of [ `Corrupt ]
+                 | `Block of Shimmed_block.error
+                 ]
 
-    (* nb: all does mean *all* here; the list is returned uncompacted,
-     * so the caller may have to compact to avoid reporting on expired state *)
+    let pp_error fmt = function
+      | `Multiple_ids l -> Format.fprintf fmt "multiple IDs found: %a" Fmt.(list int) l
+      | `Not_found key -> Format.fprintf fmt "key not found: %a" Mirage_kv.Key.pp key
+      | `Chamelon `Corrupt -> Format.fprintf fmt "FS CORRUPTION SUSPECTED"
+      | `Block error -> Format.fprintf fmt "%a" Shimmed_block.pp_error error
+
+    (* this raw list is not correct for most users;
+     * nearly every application will want to compact these items first *)
     let rec uncompacted_entries t block_pair =
       Read.block_of_block_pair t block_pair >>= function
-      | Error _ -> Lwt.return @@ Error (`Not_found Mirage_kv.Key.empty)
+      | Error _ as e -> Lwt.return e
       | Ok block ->
         let this_blocks_entries = Chamelon.Block.entries block in
         match Chamelon.Block.hardtail block with
@@ -109,74 +155,73 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
         | Some nextpair ->
           uncompacted_entries t nextpair >>= function
           | Ok entries -> Lwt.return @@ Ok ((block_pair, this_blocks_entries) :: entries)
-          | Error _ -> Lwt.return @@ Error (`Not_found Mirage_kv.Key.empty)
+          | Error _ as e -> Lwt.return e
 
-    let entries t block_pair =
+    let rec block_containing t block_pair name =
+      Read.block_of_block_pair t block_pair >>= function
+      | Error _ as e -> Lwt.return e
+      | Ok block ->
+        let name_matches entry =
+          let (>>=) = Option.bind in
+          Chamelon.Entry.name_of_entry entry >>= fun (id, content) ->
+          if String.compare name content = 0 then Some id else None
+        in
+        let this_blocks_entries = Chamelon.Block.entries block |> Chamelon.Entry.compact in
+        match List.filter_map name_matches this_blocks_entries with
+        | n::[] -> Lwt.return_ok (Some (block_pair, n))
+        | [] ->
+          (* nothing here, so see whether there are more blocks in this directory *)
+          begin
+            match Chamelon.Block.hardtail block with
+            | None -> Lwt.return_ok None
+            | Some next_pair ->
+              block_containing t next_pair name
+          end
+        | l -> Lwt.return_error (`Multiple_ids l)
+
+    let blockwise_entries t block_pair =
       uncompacted_entries t block_pair >>= function
       | Error _ as e -> Lwt.return e
       | Ok l ->
+        (* it's important to compact block-by-block, because ids are only unique within a metadata block *)
         let compact_entries (block, entries) = (block, Chamelon.Entry.compact entries) in
         Lwt.return_ok (List.map compact_entries l)
 
-    let entries_of_name t block_pair name =
-      let entries_of_id entries id =
-        let matches (tag, _chunk) = (0 = compare tag.Chamelon.Tag.id id &&
-                                tag.Chamelon.Tag.length < Chamelon.Tag.Magic.deleted_tag)
+    let all_names t block_pair =
+      blockwise_entries t block_pair >>= function
+      | Error _ as e -> Lwt.return e
+      | Ok l -> Lwt.return_ok List.(map snd l |> flatten |> filter_map Chamelon.Entry.info_of_entry)
+
+    (* id -> name mappings *should* be unique within a block,
+     * and names *should* be unique within a directory. *)
+    let rec entries_of_name t block_pair name =
+      Read.block_of_block_pair t block_pair >>= function
+      | Error _ as e -> Lwt.return e
+      | Ok block ->
+        let name_matches entry =
+          let (>>=) = Option.bind in
+          Chamelon.Entry.name_of_entry entry >>= fun (id, content) ->
+          if String.compare name content = 0 then Some id else None
         in
-        List.find_all matches entries
-      in
-      let id_of_key entries key =
-        let module DataMap = Map.Make(Cstruct) in
-        let data_matches c = 0 = String.(compare key @@ Cstruct.to_string c) in
-        let tag_matches t =
-          Chamelon.Tag.(fst t.type3 = LFS_TYPE_NAME) &&
-          Chamelon.Tag.(snd t.type3 = 0x01 || snd t.type3 = 0x02) &&
-          Chamelon.Tag.(t.length != Magic.deleted_tag)
-        in
-        let map = DataMap.empty in
-        (* we need to be sure to grab the *last* matching tag from the entry set *)
-        let map =
-          List.fold_left (fun map (tag, data) ->
-              if tag_matches tag && data_matches data then
-                DataMap.add data tag.Chamelon.Tag.id map
-              else map
-            ) map entries
-        in
-        DataMap.find_opt (Cstruct.of_string key) map
-      in
-      let open Lwt_result in
-      entries t block_pair >>= fun entries_by_block ->
-      let entries_matching_name (block, entries) =
-        match id_of_key entries name with
-        | None ->
-          Log.debug (fun m -> m "id for %S not found in %d entries from %a"
-                         name (List.length entries) pp_blockpair block);
-          Error (`No_id name)
-        | Some id ->
-          Log.debug (fun m -> m "name %S is associated with id %d on blockpair %a"
-                         name id pp_blockpair block);
-          let entries = entries_of_id entries id in
-          Log.debug (fun m -> m "found %d entries for id %d in %a"
-                         (List.length entries) id pp_blockpair block);
-          let tags = List.map fst entries in
-          Log.debug (fun m -> m "here are the tags for the entries for id %d: %a"
-                        id
-                        Fmt.(list Chamelon.Tag.pp) tags);
-          Ok (block, entries)
-      in
-      let blockwise_matches = List.filter_map (fun es ->
-          match entries_matching_name es with
-          | Ok (_, []) | Error _ -> None
-          | Ok (block, l) -> Some (block, l)
-        ) entries_by_block in
-      Lwt.return (Ok blockwise_matches)
+        let this_blocks_entries = Chamelon.Block.entries block |> Chamelon.Entry.compact in
+        match List.filter_map name_matches this_blocks_entries with
+        | n::[] -> Lwt.return_ok (List.filter (Chamelon.Entry.id_matches n) this_blocks_entries)
+        | [] ->
+          (* nothing here, so see whether there are more blocks in this directory *)
+          begin
+            match Chamelon.Block.hardtail block with
+            | None -> Lwt.return_error (`Not_found (Mirage_kv.Key.v name))
+            | Some next_pair ->
+              entries_of_name t next_pair name
+          end
+        | l -> Lwt.return_error (`Multiple_ids l)
 
     let get_directory_head t block_pair name =
       entries_of_name t block_pair name >>= function
       | Error _ as e -> Lwt.return e
       | Ok l ->
         let get_dirs = List.filter_map Chamelon.Dir.of_entry in
-        match List.map (fun (_block, dirs) -> get_dirs dirs) l |> List.flatten with
+        match get_dirs l with
         | [] -> Lwt.return @@ Ok None
         | a::[] -> Lwt.return @@ Ok (Some a)
         | l ->
@@ -195,14 +240,20 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
           find_first_blockpair_of_directory t next_directory_head remaining
         | Error _e -> Lwt.return @@ `No_id next
 
+    let last_modified_of_name t directory_head name =
+      entries_of_name t directory_head name >>= function
+      | Error _ as e -> Lwt.return e
+      | Ok entries ->
+        Lwt.return_ok @@ List.find_map Chamelon.Entry.mtime_of_entry entries
+
   end
   module Traverse : sig
     val follow_links : t -> blockpair list -> Chamelon.Entry.link ->
       (int64 list, Shimmed_block.error) result Lwt.t
 
     val last_block : t -> blockpair -> (blockpair,
-                                       [`Block of Shimmed_block.error |
-                                        `Chamelon of [> `Corrupt] ]) result Lwt.t
+                                       [ `Block of Shimmed_block.error
+                                       | `Chamelon of [> `Corrupt] ]) result Lwt.t
 
   end = struct
     let rec get_ctz_pointers t l index pointer =
@@ -400,8 +451,8 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
            * That's not enough for the split. *)
           Lwt.return @@ Error `No_space
         | Ok (new_block_1, new_block_2) -> begin
-            Log.debug (fun m -> m "splitting block pair %Ld, %Ld to %Ld, %Ld"
-                           b1 b2 new_block_1 new_block_2);
+            Log.debug (fun m -> m "splitting block pair %a to %a"
+                          pp_blockpair (b1, b2) pp_blockpair (new_block_1, new_block_2));
             let old_block, new_block = Chamelon.Block.split data (new_block_1, new_block_2) in
             Log.debug (fun m -> m "keeping %d entries in the old block, and putting %d in the new one"
                            (List.length @@ Chamelon.Block.entries old_block)
@@ -412,7 +463,8 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
             | Error `Split | Error `Split_emergency | Error `No_space ->
               Lwt.return @@ Error `No_space
             | Ok () -> begin
-                Log.debug (fun f -> f "wrote new pair; overwriting old pair");
+                Log.debug (fun f -> f "wrote new pair %a; overwriting old pair %a with updated hardtail link"
+                          pp_blockpair (new_block_1, new_block_2) pp_blockpair (b1, b2));
                 (* ignore any warnings about needing to split, etc *)
                 let cs1 = Cstruct.create t.block_size in
                 let serialize = Chamelon.Block.into_cstruct ~program_block_size:t.program_block_size in
@@ -482,22 +534,30 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
           Lwt.return @@ Error `No_space
   end
   module Delete = struct
+    (* `delete` is one of few operations where we really do care about which block
+     * in the directory contains the entries for the name on which we're seeking to operate. *)
     let delete_in_directory directory_head t name =
-      Find.entries_of_name t directory_head name >>= function
-        (* several "it's not here" cases *)
-      | Error (`No_id _) | Error (`Not_found _) ->
-        Log.debug (fun m -> m "no id or nothing found for %s" name);
+      Find.block_containing t directory_head name >>= function
+      | Error (`Not_found k) ->
+        Log.debug (fun m -> m "couldn't traverse past %a when looking for %s, so assuming delete would be a noop" Mirage_kv.Key.pp k name);
         Lwt.return @@ Ok ()
-      | Ok [] | Ok ((_,[])::_) ->
-        Log.debug (fun m -> m "no entries on %a for %s"
+      | Error e ->
+        Log.err (fun f -> f "error trying to delete: %a" Find.pp_error e);
+        Lwt.return @@ Error (`No_space)
+      | Ok None ->
+        Log.debug (fun m -> m "no entries on %a for %s, nothing to delete"
                        pp_blockpair directory_head name);
         Lwt.return @@ Ok ()
-      | Ok ((blockpair_with_id, hd::_tl)::_) ->
-        let id = Chamelon.Tag.((fst hd).id) in
+      | Ok (Some (blockpair_with_id, id)) ->
         Log.debug (fun m -> m "id %d found for name %s on block %a" id name
                    pp_blockpair blockpair_with_id);
         Read.block_of_block_pair t blockpair_with_id >>= function
-        | Error _ -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v name))
+        | Error (`Block e) ->
+          Log.err (fun m -> m "block-level error reading %a : %a" pp_blockpair blockpair_with_id Shimmed_block.pp_error e);
+          Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v name))
+        | Error _ ->
+          Log.err (fun m -> m "filesystem-level error reading %a" pp_blockpair blockpair_with_id);
+          Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v name))
         | Ok block ->
           Log.debug (fun m -> m "adding deletion for id %d on block pair %a"
                          id pp_blockpair blockpair_with_id);
@@ -514,14 +574,11 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
     Find.entries_of_name t containing_directory_head new_directory_name >>= function
     | Ok (hd::tl) -> begin
       (* do any of the entries represent a valid directory entry? if so, we don't need to do anything *)
-      (* TODO: the blockwise entry list returned by `entries_of_name` is pretty annoying to work with *)
-      let get_dirs = List.filter_map Chamelon.Dir.of_entry in
-      let dirs = List.map (fun (_block, dirs) -> get_dirs dirs) (hd::tl) |> List.flatten in
-      match List.rev dirs with
+      match List.filter_map Chamelon.Dir.of_entry (hd::tl) with
       | pair::_ -> Lwt.return (Ok pair)
-      | _ -> Lwt.return @@ Error (`Already_present new_directory_name)
+      | _ -> Lwt.return @@ Error (`Already_present (Mirage_kv.Key.v new_directory_name))
     end
-    | Error (`No_id _) | Error (`Not_found _) | Ok [] ->
+    | Error (`Not_found _) | Ok [] -> begin
       Traverse.last_block t containing_directory_head >>= function
       | Error (`Chamelon (`Corrupt)) ->
         Log.err (fun f -> f "FS CORRUPTION SUSPECTED: mkdir attempt failed. it was not possible to find the last block \
@@ -576,6 +633,10 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
                 | Error _ -> Lwt.return @@ Error `No_space
                 | Ok () -> Lwt.return @@ Ok new_pair
           end
+    end
+    | Error e ->
+      Log.err (fun f -> f "could not make directory: %a" Find.pp_error e);
+      Lwt.return @@ Error `No_space
 
   let rec get_directory ~ensure_path t root segments =
     match segments with
@@ -590,6 +651,9 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
         (* in this case we shouldn't make it if it's not already there, so just go look for it *)
         Find.get_directory_head t root next >>= function
         | Error (`Not_found s) -> Lwt.return @@ Error (`Not_found s)
+        | Error e ->
+          Log.err (fun f -> f "could not get directory: %a" Find.pp_error e);
+          Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v next))
         | Ok None -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v next))
         | Ok (Some dir_head) -> get_directory ~ensure_path t dir_head l
       end

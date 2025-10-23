@@ -18,12 +18,12 @@ let rec do_many fs ~f = function
 
 let just_mount block =
   Chamelon.connect ~program_block_size block >>= function
-  | Error e -> fail_read e
+  | Error _ -> Alcotest.fail "couldn't mount"
   | Ok fs -> Lwt.return fs
 
 let format_and_mount block =
   Chamelon.format ~program_block_size block >>= function
-  | Error e -> fail_write e
+  | Error _ -> Alcotest.fail "couldn't format"
   | Ok () -> just_mount block
 
 let assert_slash_empty fs =

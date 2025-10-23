@@ -11,7 +11,7 @@ module Make(Sectors: Mirage_block.S) = struct
 
   type t = Internal.t
   type blockpair = Internal.blockpair
-  type directory_head = blockpair
+  type directory_head = Internal.blockpair
 
   let log_src = Logs.Src.create "chamelon-fs" ~doc:"chamelon FS layer"
   module Log = (val Logs.src_log log_src : Logs.LOG)
@@ -30,16 +30,15 @@ module Make(Sectors: Mirage_block.S) = struct
      * get the list of all entries naming files or directories
      * and sort them *)
     let ls_in_dir dir_pair =
-      Internal.Find.entries t dir_pair >>= function
+      Internal.Find.all_names t dir_pair >>= function
       | Error _ -> Lwt.return @@ Error (`Not_found key)
-      | Ok entries_by_block ->
-        (* we don't care which block any of these were on, since we also don't really care about their ids *)
-        let entries = List.map snd entries_by_block in
-        let translate entries = List.filter_map Chamelon.Entry.info_of_entry entries |> List.sort cmp in
+      | Ok names ->
+        let names = List.sort cmp names in
         let to_key (k, x) = Mirage_kv.Key.add key k, x in
-        Lwt.return @@ Ok (List.map to_key (translate @@ List.flatten entries))
+        Lwt.return @@ Ok (List.map to_key names)
     in
     (* find the parent directory of the [key] *)
+    (* TODO why don't we use something in `Traverse` for this? *)
     match (Mirage_kv.Key.segments key) with
     | [] -> ls_in_dir Internal.root_pair
     | segments ->
@@ -62,32 +61,20 @@ module Make(Sectors: Mirage_block.S) = struct
     | `Not_directory k -> Lwt.return @@ Error (`Dictionary_expected (Mirage_kv.Key.v k))
     | `Final_dir_on block_pair ->
       (* get all the entries in (parent key) *)
-      Internal.(Find.entries_of_name t block_pair @@ Mirage_kv.Key.basename key) >>= function
-      | Error (`No_id k) -> Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v k))
+      Internal.Find.last_modified_of_name t block_pair @@ Mirage_kv.Key.basename key >>= function
       | Error (`Not_found k) -> Lwt.return @@ Error (`Not_found k)
-      | Ok l ->
-	(* [l] contains all entries associated with (basename key),
-	 * some of which are hopefully last-updated metadata entries. *)
-	(* We don't care which block any of the entries were on *)
-	let l = List.(map snd l |> flatten) in
-	(* find the mtime-looking entries *)
-	match List.find_opt (fun (tag, _data) ->
-	    Chamelon.Tag.(fst @@ tag.type3) = LFS_TYPE_USERATTR &&
-	    Chamelon.Tag.(snd @@ tag.type3) = 0x74
-	  ) l with
-	| None ->
-	  Log.warn (fun m -> m "Key %a found but it had no time attributes associated" Mirage_kv.Key.pp key);
-	  Lwt.return @@ Error (`Not_found key)
-	| Some (_tag, data) ->
-	  match Chamelon.Entry.ctime_of_cstruct data with
-	  | None ->
-	    Log.err (fun m -> m "Time attributes (%a) found for %a but they were not parseable" Cstruct.hexdump_pp data Mirage_kv.Key.pp key);
-            Lwt.return @@ Error (`Not_found key)
-	  | Some k -> Lwt.return @@ Ok k
+      | Error e -> Log.err (fun f -> f "couldn't get last-modified value for %a: %a"
+                               Mirage_kv.Key.pp key Internal.Find.pp_error e);
+        Lwt.return @@ Error (`Not_found key)
+      | Ok None ->
+        Log.warn (fun m -> m "Key %a found but it had no time attributes associated" Mirage_kv.Key.pp key);
+        Lwt.return @@ Error (`Not_found key)
+      | Ok (Some last_updated) -> Lwt.return_ok last_updated
+
   module File_read : sig
+
     val get : t -> Mirage_kv.Key.t -> (string, error) result Lwt.t
-    val get_partial : t -> Mirage_kv.Key.t -> offset:int -> length:int ->
-       (string, error) result Lwt.t
+    val get_partial : t -> Mirage_kv.Key.t -> offset:int -> length:int -> (string, error) result Lwt.t
 
   end = struct
 
@@ -123,17 +110,14 @@ module Make(Sectors: Mirage_block.S) = struct
       | Error _ | Ok [] -> Error (`Not_found filename)
       | Ok compacted ->
         (* if there are >1 block with entries, we only care about the last one *)
-        let compacted = snd @@ List.(hd @@ rev compacted) in
-        let inline_files = List.find_opt (fun (tag, _data) ->
-            Chamelon.Tag.((fst tag.type3) = LFS_TYPE_STRUCT) &&
-            Chamelon.Tag.((snd tag.type3) = 0x01)
-          )
-        in
-        let ctz_files = List.find_opt (fun (tag, _block) ->
-            Chamelon.Tag.((fst tag.type3 = LFS_TYPE_STRUCT) &&
-                          Chamelon.Tag.((snd tag.type3 = 0x02)
-                                       ))) in
+        let inline_files = List.find_opt (fun (tag, _data) -> Chamelon.Tag.is_inline_file tag) in
+        let ctz_files = List.find_opt (fun (tag, _block) -> Chamelon.Tag.is_ctz_file tag) in
         Log.debug (fun m -> m "found %d entries with name %s" (List.length compacted) filename);
+        Log.debug (fun m ->
+          let inline_file_list = List.filter (fun (tag, _data) -> Chamelon.Tag.is_inline_file tag) compacted in
+          let ctz_file_list = List.filter (fun (tag, _block) -> Chamelon.Tag.is_ctz_file tag) compacted in
+          m "%d inline file entries found, %d ctz file entries" (List.length inline_file_list) (List.length ctz_file_list)
+        );
         match inline_files compacted, ctz_files compacted with
         | Some (tag, data), None ->
           Log.debug (fun m -> m "found an inline entry with tag %a" Chamelon.Tag.pp tag);
@@ -282,8 +266,7 @@ module Make(Sectors: Mirage_block.S) = struct
     let get_file_size t parent_dir_head filename =
       Internal.Find.entries_of_name t parent_dir_head filename >|= function
       | Error _ | Ok [] -> Error (`Not_found (Mirage_kv.Key.v filename))
-      | Ok compacted ->
-        let entries = snd @@ List.(hd @@ rev compacted) in
+      | Ok entries ->
         let inline_files = List.find_opt (fun (tag, _data) ->
             Chamelon.Tag.((fst tag.type3) = LFS_TYPE_STRUCT) &&
             Chamelon.Tag.((snd tag.type3) = Chamelon.Tag.Magic.struct_inline)
@@ -293,7 +276,7 @@ module Make(Sectors: Mirage_block.S) = struct
             Chamelon.Tag.((fst tag.type3 = LFS_TYPE_STRUCT) &&
                           Chamelon.Tag.((snd tag.type3 = Chamelon.Tag.Magic.struct_ctz)
                                        ))) in
-        Log.debug (fun m -> m "found %d entries with name %s" (List.length compacted) filename);
+        Log.debug (fun m -> m "found %d entries with name %s" (List.length entries) filename);
         match inline_files entries, ctz_files entries with
         | None, None -> Error (`Not_found (Mirage_kv.Key.v filename))
         | Some (tag, _data), None ->
@@ -304,8 +287,11 @@ module Make(Sectors: Mirage_block.S) = struct
           | None -> Error (`Value_expected (Mirage_kv.Key.v filename))
 
     let rec size_all t blockpair =
-      Internal.Find.entries t blockpair >>= function
-      | Error _ -> Lwt.return Optint.Int63.zero
+      Internal.Find.blockwise_entries t blockpair >>= function
+      | Error (`Not_found _) -> Lwt.return Optint.Int63.zero
+      | Error e ->
+          Logs.err (fun f -> f "error calculating sizes: %a" Internal.Find.pp_error e);
+          Lwt.return Optint.Int63.zero
       | Ok l ->
         let entries = List.(map snd l |> flatten) in
         Lwt_list.fold_left_s (fun acc e ->
@@ -433,15 +419,18 @@ module Make(Sectors: Mirage_block.S) = struct
     let rec write_inline ?(ids_seen=Chamelon.Block.IdSet.empty) block_pair t filename data entries =
       Internal.Read.block_of_block_pair t block_pair >>= function
       | Error _ ->
-        Log.err (fun m -> m "error reading block pair %Ld, %Ld"
-                     (fst block_pair) (snd block_pair));
+        Log.err (fun m -> m "error reading block pair %a" pp_blockpair block_pair);
         Lwt.return @@ Error (`Not_found (Mirage_kv.Key.v filename))
       | Ok extant_block ->
         (* we need to keep track of which ids we've seen so far,
          * since we may traverse to a block that doesn't have any commits yet *)
         let ids_seen = Chamelon.Block.(IdSet.union ids_seen (ids extant_block)) in
         match Chamelon.Block.hardtail extant_block with
-        | Some next_blockpair -> write_inline ~ids_seen next_blockpair t filename data entries
+        | Some next_blockpair ->
+          Log.debug (fun f -> f "blockpair %a has a hardtail at %a, going there" pp_blockpair block_pair pp_blockpair next_blockpair);
+          (* TODO: problem here; if `entries` contains a deletion, we'll then put it on the hardtail,
+           * when it needs to go on this blockpair *)
+          write_inline ~ids_seen next_blockpair t filename data entries
         | None ->
           let next = match Chamelon.Block.IdSet.max_elt_opt ids_seen with
             | None -> 1
@@ -450,7 +439,8 @@ module Make(Sectors: Mirage_block.S) = struct
           let mtime = Chamelon.Entry.mtime next (Mirage_ptime.now_d_ps ()) in
           let file = Chamelon.File.write_inline filename next (Cstruct.of_string data) in
           let commit = entries @ (mtime :: file) in
-          Log.debug (fun m -> m "writing %d entries for inline file %s" (List.length file) filename);
+          Log.debug (fun m -> m "writing %d entries for inline file %s" (List.length commit) filename);
+          Log.debug (fun m -> m "entries: %a" Fmt.(list Chamelon.Entry.pp) commit);
           let new_block = Chamelon.Block.add_commit extant_block commit in
           Internal.Write.block_to_block_pair t new_block block_pair >>= function
           | Error `No_space -> Lwt.return @@ Error `No_space
@@ -460,7 +450,7 @@ module Make(Sectors: Mirage_block.S) = struct
           | Ok () -> Lwt.return @@ Ok ()
 
     let set_in_directory block_pair t (filename : string) data =
-      let delete_entry block id =
+      let overwrite block id =
         (* we *could* replace the previous ctz/inline entry,
          * instead of deleting the whole mapping and replacing it,
          * but since we do both the deletion and the new addition
@@ -468,8 +458,9 @@ module Make(Sectors: Mirage_block.S) = struct
          * error-prone work *)
         Log.debug (fun m -> m "deleting existing entry %s at id %d on block %a" filename id pp_blockpair block);
         let delete = (Chamelon.Tag.(delete id), Cstruct.create 0) in
-        (* we need to make sure our deletion and new items go in the same block pair as
-         * the originals did *)
+        (* TODO: we need to make sure our deletion goes in the same block pair as
+         * the original was in, and we also need to make sure that write happens after
+         * the write establishing the new mapping *)
         if (String.length data) > (t.Internal.block_size / 4) then begin
           Log.debug (fun m -> m "writing %s at id %d to ctz" filename id);
           write_in_ctz block t filename data [delete]
@@ -481,29 +472,22 @@ module Make(Sectors: Mirage_block.S) = struct
       if String.length filename < 1 then Lwt.return @@ Error (`Value_expected Mirage_kv.Key.empty)
       else begin
         Lwt_mutex.with_lock t.new_block_mutex @@ fun () ->
-        Internal.Find.entries_of_name t block_pair filename >>= function
+        (* if any blockpair exists that contains a currently-active id entry for `filename`,
+         * we need to remove that entry and add a new one *)
+        Internal.Find.block_containing t block_pair filename >>= function
         | Error (`Not_found _ ) as e -> Lwt.return e
-        | Ok [] | Ok ((_, [])::_) | Error (`No_id _) -> begin
+        | Error e ->
+          Log.err (fun f -> f "error overwriting %a: %a" Mirage_kv.Key.pp Mirage_kv.Key.(v filename) Internal.Find.pp_error e);
+          Lwt.return_error (`Not_found (Mirage_kv.Key.(v filename)))
+        | Ok None -> begin
             Log.debug (fun m -> m "writing new file %s, size %d to blocks %a" filename (String.length data) pp_blockpair block_pair);
             if (String.length data) > (t.block_size / 4) then
               write_in_ctz block_pair t filename data []
             else
               write_inline block_pair t filename data []
           end
-        | Ok ((block, hd::_)::[]) ->
-          (* wait, why do we only delete it and not write it? *)
-          delete_entry block Chamelon.Tag.((fst hd).id)
-        | Ok l ->
-          Log.debug (fun m -> m "got multiple blocks (%a) when looking for %s" Fmt.(list ~sep:semi pp_blockpair) (List.map fst l) filename);
-          Lwt_list.fold_left_s (fun acc (block, entries) ->
-            (* really regretting using 'list' here, not gonna lie *)
-            match entries with
-            | [] -> Lwt.return acc (* this should never happen, but if it does, noop is correct *)
-            | entry::_ ->
-              (* since all entries found will have the same id, and all we care about is the id,
-               * we don't care how many entries we got *)
-              delete_entry block Chamelon.Tag.((fst entry).id)
-          ) (Ok ()) l
+        | Ok (Some (block, id)) ->
+          overwrite block id
       end
   end
 
@@ -558,7 +542,7 @@ module Make(Sectors: Mirage_block.S) = struct
         Lwt.return @@ Error (`Not_found Mirage_kv.Key.empty)
 
   (* `device` should be an already-connected block device *)
-  let connect ~program_block_size ~block_size device : (t, error) result Lwt.t =
+  let connect ~program_block_size ~block_size device =
     This_Block.connect ~block_size device >>= fun block ->
     Log.debug (fun f -> f "initiating filesystem with block size %d (0x%x)" block_size block_size);
     let block0, block1 = Cstruct.create block_size, Cstruct.create block_size in
@@ -612,8 +596,7 @@ module Make(Sectors: Mirage_block.S) = struct
             Log.err (fun f -> f "writes to the filesystem are likely to fail");
             Lwt.return @@ Ok {t with block; block_size; program_block_size}
 
-  let format ~program_block_size ~block_size (sectors : Sectors.t) :
-    (unit, write_error) result Lwt.t =
+  let format ~program_block_size ~block_size (sectors : Sectors.t) =
     This_Block.connect ~block_size sectors >>= fun block ->
     let write_whole_block n b = This_Block.write block n
         [fst @@ Chamelon.Block.to_cstruct ~program_block_size ~block_size b]

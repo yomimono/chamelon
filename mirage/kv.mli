@@ -7,8 +7,8 @@ module Make(Sectors: Mirage_block.S) : sig
   include Mirage_kv.RW
 
   val dump : Format.formatter -> t -> unit Lwt.t
-  val format : program_block_size:int -> Sectors.t -> (unit, write_error) result Lwt.t
-  val connect : program_block_size:int -> Sectors.t -> (t, error) result Lwt.t
+  val format : program_block_size:int -> Sectors.t -> (unit, [ `No_space ]) result Lwt.t
+  val connect : program_block_size:int -> Sectors.t -> (t, [ `Not_found of key ]) result Lwt.t
   val size : t -> key -> (Optint.Int63.t, error) result Lwt.t
 
 end

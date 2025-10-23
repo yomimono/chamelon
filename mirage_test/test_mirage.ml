@@ -18,18 +18,18 @@ let rec write_until_full ~write fs n =
 
 let format_and_mount block =
   Chamelon.format ~program_block_size block >>= function
-  | Error e -> fail_write e
+  | Error `No_space -> Alcotest.fail "couldn't format the filesystem"
   | Ok () ->
     Chamelon.connect ~program_block_size block >>= function
-    | Error e -> fail_read e
+    | Error (`Not_found k) -> Alcotest.failf "couldn't mount the filesystem: %a" Mirage_kv.Key.pp k
     | Ok fs -> Lwt.return fs
 
 let test_format block _ () =
   Chamelon.format ~program_block_size block >>= function
-  | Error e -> fail_write e
+  | Error `No_space -> Alcotest.fail "couldn't format test filesystem"
   | Ok () ->
     Chamelon.connect ~program_block_size block >>= function
-    | Error e -> Alcotest.failf "couldn't mount the filesystem after formatting it: %a" Chamelon.pp_error e
+    | Error (`Not_found k) -> Alcotest.failf "couldn't mount the filesystem after formatting it: %a" Mirage_kv.Key.pp k
     | Ok fs ->
       Chamelon.list fs (Mirage_kv.Key.v "/") >>= function
       | Error e -> fail_read e
@@ -664,7 +664,7 @@ let test_set_2mb_set_2mb_reset_2mb block _ () =
   Logs.set_level (Some Logs.Debug);
   Chamelon.disconnect fs >>= fun () ->
   Chamelon.connect ~program_block_size block
-  >>= function Error e -> fail_read e | Ok fs ->
+  >>= function Error _ -> Alcotest.fail "connecting" | Ok fs ->
   Chamelon.set fs md5s (String.init (2 * 1024) (Fun.const '\003'))
   >>= function Error e -> fail_write e | Ok () ->
   Lwt.return ()

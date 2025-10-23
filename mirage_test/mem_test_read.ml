@@ -12,10 +12,10 @@ let mount_and_write =
   Block.connect "mount chamelon" >>= fun block ->
   Block.get_info block >>= fun info ->
   Chamelon.format ~program_block_size:16 block >>= function
-  | Error e -> Alcotest.failf "failed to format block device: %a" Chamelon.pp_write_error e
+  | Error `No_space -> Alcotest.fail "failed to format block device: no space"
   | Ok () ->
     Chamelon.connect ~program_block_size:16 block >>= function
-    | Error e -> Alcotest.failf "failed to mount fs: %a" Chamelon.pp_error e
+    | Error (`Not_found k) -> Alcotest.failf "failed to mount fs: %a" Mirage_kv.Key.pp k
     | Ok fs ->
       (* we want a real big buncha stuff *)
       let space = ((Int64.to_int info.size_sectors) / 2) * info.sector_size in

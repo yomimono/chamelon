@@ -14,12 +14,12 @@ let block_size = 512
 
 let just_mount block =
   Chamelon.connect ~program_block_size block >>= function
-  | Error e -> fail_read e
+  | Error (`Not_found k) -> Alcotest.failf "failure mounting: %a" Mirage_kv.Key.pp k
   | Ok fs -> Lwt.return fs
 
 let format_and_mount block =
   Chamelon.format ~program_block_size block >>= function
-  | Error e -> fail_write e
+  | Error (`No_space) -> Alcotest.fail "failure formatting filesystem"
   | Ok () -> just_mount block
 
 (* simple cycle: a directory with an entry referring to its own blockpair *)

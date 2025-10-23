@@ -34,16 +34,41 @@ module Make(Sectors : Mirage_block.S) = struct
 
   type t = Fs.t
 
-  let get = Fs.File_read.get
+  let complain_write ~present = function
+    | (`Corrupt (`Multiple_ids)) ->
+      Log.err (fun f -> f "FILESYSTEM CORRUPTION DETECTED: duplicate ID entries");
+      `No_space
+    | (`Corrupt (`Unparseable)) ->
+      Log.err (fun f -> f "FILESYSTEM CORRUPTION DETECTED: unparseable block");
+      `No_space
+    | (`No_space) -> `No_space
+    | (`Dictionary_expected _) as e -> e
+    | (`Not_found _) as e -> e
+    | (`Value_expected _) as e -> e
+    | (`Already_present _) -> present
+
+  let complain_read key = function
+    | (`Corrupt (`Multiple_ids)) ->
+      Log.err (fun f -> f "FILESYSTEM CORRUPTION DETECTED: duplicate ID entries");
+      `Not_found key
+    | (`Corrupt (`Unparseable)) ->
+      Log.err (fun f -> f "FILESYSTEM CORRUPTION DETECTED: unparseable block");
+      `Not_found key
+    | (`Dictionary_expected _) as e -> e
+    | (`Not_found _) as e -> e
+    | (`Value_expected _) as e -> e
+
+  let get t key = Lwt_result.map_error (complain_read key) (Fs.File_read.get t key)
 
   let get_partial t key ~offset ~length =
+    Lwt_result.map_error (complain_read key) @@
     Fs.File_read.get_partial t key ~offset:(Optint.Int63.to_int offset) ~length
 
   (* [set] does a little work on top of the filesystem's set functions, because
    * we need to make directories if the key has >1 segment in it. *)
   (* Once we've either found or created the parent directory, we can ask the FS layer
    * to set the data appropriately there. *)
-  let set t key data : (unit, write_error) result Lwt.t =
+  let set t key data =
     let name_length = String.length @@ Mirage_kv.Key.basename key in
     let name_length_max = Int32.to_int @@ Fs.name_length_max t in
     if name_length > name_length_max then begin
@@ -52,26 +77,32 @@ module Make(Sectors : Mirage_block.S) = struct
     end else begin
       let dir = Mirage_kv.Key.parent key in
       Fs.mkdir t (Mirage_kv.Key.segments dir) >>= function
+      | Error (`Already_present k) ->
+        Log.err (fun f -> f "error making directory for write to %a: component %a already present and not a directory"
+                    Mirage_kv.Key.pp key Mirage_kv.Key.pp k);
+        Lwt.return @@ Error (`Dictionary_expected k)
+      | Error e -> Lwt.return_error e
       | Ok block_pair ->
         Log.debug (fun m -> m "found dir for %a on block pair %a"
                       Mirage_kv.Key.pp key
                       Fs.pp_blockpair block_pair);
-        Fs.File_write.set_in_directory block_pair t (Mirage_kv.Key.basename key) data
-      | Error (`Already_present e) ->
-        Log.err (fun f -> f "error making directory for write to %a: component %s already present and not a directory" Mirage_kv.Key.pp key e);
-        Lwt.return @@ Error (`Dictionary_expected (Mirage_kv.Key.v e))
-      | Error `No_space as e -> Lwt.return e
-      | Error (`Not_found _k) as e -> Lwt.return e
+        let filename = Mirage_kv.Key.basename key in
+        Fs.File_write.set_in_directory block_pair t filename data >>= function
+        | Error e -> Lwt.return_error @@ complain_write ~present:(`Value_expected (Mirage_kv.Key.v filename)) e
+        | Ok () -> Lwt.return_ok ()
     end
 
   let set_partial t key ~offset data =
     get t key >>= function
-    | Error e -> Lwt.return (Error (e :> write_error))
+    | Error (`Dictionary_expected _) as e -> Lwt.return e
+    | Error (`Not_found _) as e -> Lwt.return e
+    | Error (`Value_expected _) as e -> Lwt.return e
     | Ok d ->
       let offset = Optint.Int63.to_int offset in
       Bytes.blit_string data 0 (Bytes.unsafe_of_string d) offset (String.length data);
       set t key d
 
+  (* TODO we shouldn't be ignoring last_modified here *)
   let allocate t key ?last_modified:_ size =
     (* [allocate t key ~last_modified size] should only allocate space
      * if there is nothing already present for this key *)
@@ -79,7 +110,11 @@ module Make(Sectors : Mirage_block.S) = struct
     | Ok _ -> Lwt.return @@ Error (`Already_present key)
     | Error (`Not_found key) ->
       set t key (String.make (Optint.Int63.to_int size) '\000')
-    | Error e -> Lwt.return @@ Error (e :> write_error)
+    | Error (`Corrupt _) ->
+      Log.err (fun f -> f "FILESYSTEM CORRUPTION DETECTED; set operation for key %a failed" Mirage_kv.Key.pp key);
+      Lwt.return_error `No_space
+    | Error (`Dictionary_expected _) as e -> Lwt.return e
+    | Error (`Value_expected _) as e -> Lwt.return e
 
   (** [list t key], where [key] is a reachable directory,
    * gives the files and directories (values and dictionaries) in [key].
@@ -100,18 +135,21 @@ module Make(Sectors : Mirage_block.S) = struct
       in
       Lwt.return @@ Ok (List.find_map lookup l)
 
-  let size t key = Fs.Size.size t key
+  let size t key =
+    Lwt_result.map_error (complain_read key) @@ Fs.Size.size t key
 
   let remove t key = Fs.remove t key
 
+  (* TODO: we don't correctly return `Rename_source_prefix when that occurs.
+   * Instead we will return `Value_expected . *)
   let rename t ~source ~dest =
     get t source >>= function
-    | Error e -> Lwt.return (Error (e :> write_error))
+    | Error e -> Lwt.return_error (complain_read source e)
     | Ok data ->
       set t dest data >>= function
+      | Error e -> Lwt.return_error ((complain_write ~present:(`Value_expected dest) e) :> write_error)
       | Ok () ->
         remove t source
-      | Error _ as e  -> Lwt.return e
 
   (* [last_modified t key] gives the timestamp metadata for a file/value,
    * or (for a directory) the most recently modified file/value within the directory.
