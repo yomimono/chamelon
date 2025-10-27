@@ -279,25 +279,30 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
                                        | `Chamelon of [> `Corrupt] ]) result Lwt.t
 
   end = struct
-    let rec get_ctz_pointers t l index pointer =
-      match l, index with
-      | Error _ as e, _ -> Lwt.return e
-      | Ok l, 1 -> Lwt.return @@ Ok (pointer :: l)
-      | Ok l, index ->
+    let rec get_ctz_pointers t acc index pointer buf =
+      let read_pointers index pointer =
         let open Lwt_result.Infix in
-        let data = Cstruct.create t.block_size in
-        Shimmed_block.read t.block pointer [data] >>= fun ()->
-        let pointers, _data_region = Chamelon.File.of_block index data in
-        match pointers with
-        | [] -> Lwt.return @@ Ok (pointer::l)
-        | next::_ -> get_ctz_pointers t (Ok (pointer::l)) (index - 1) (Int64.of_int32 next)
+        Shimmed_block.read t.block pointer [buf] >>= fun () ->
+        let pointers, _data_region = Chamelon.File.of_block index buf in
+        Lwt.return_ok pointers
+      in
+      match acc, index with
+      | Error _ as e, _ -> Lwt.return e
+      | Ok acc, n when n <= 1 -> Lwt.return @@ Ok (pointer :: acc)
+      | Ok acc, index ->
+        read_pointers index pointer >>= function
+        | Error _ as e -> Lwt.return e
+        | Ok [] -> Lwt.return @@ Ok (pointer::acc)
+        | Ok (next::_) ->
+          (* we care only about the first pointer, which gives us the next block of the file *)
+          get_ctz_pointers t (Ok (pointer::acc)) (index - 1) (Int64.of_int32 next) buf [@tailrec]
 
     let rec follow_links t visited = function
       | Chamelon.Entry.Data (pointer, length) -> begin
           let file_size = Int32.to_int length in
           let index = Chamelon.File.last_block_index ~file_size ~block_size:t.block_size in
           Log.debug (fun f -> f "data block: last block index %d found starting at %ld (0x%lx)" index pointer pointer);
-          get_ctz_pointers t (Ok []) index (Int64.of_int32 pointer)
+          get_ctz_pointers t (Ok []) index (Int64.of_int32 pointer) (Cstruct.create t.block_size)
         end
       | Chamelon.Entry.Metadata (a, b) ->
         match List.mem (a, b) visited with
@@ -350,9 +355,9 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
         | None -> Lwt.return @@ Ok pair
         | Some next_pair -> last_block t next_pair
   end
+  module IntSet = Set.Make(Int64)
   module Allocate = struct
     let rec unused t used_blocks : (unit, [ `No_space ]) result =
-      let module IntSet = Set.Make(Int64) in
       let actual_blocks = Shimmed_block.block_count t.block in
       let prev_offset = !(t.lookahead).offset in
       let alloc_size = max 16 ((min 256 actual_blocks) / 4) in
@@ -361,23 +366,25 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
         else prev_offset + alloc_size
       in
       Log.debug (fun f -> f "trying to find free blocks. %d were reported in-use out of %d"
-                    (List.length used_blocks) actual_blocks);
+                    (IntSet.cardinal used_blocks) actual_blocks);
       Log.debug (fun f -> f "will try to initialize %d starting at %d"
                     alloc_size this_offset);
       let pool = IntSet.of_list @@ List.init alloc_size
           (fun a -> Int64.of_int @@ a + this_offset)
       in
-      let candidate = IntSet.(elements @@ diff pool (of_list used_blocks)) in
-      if List.length candidate < 2 && (actual_blocks - (List.length used_blocks)) > 2 then begin
+      let candidate = IntSet.(diff pool used_blocks) in
+      if (IntSet.cardinal candidate) < 2 && (actual_blocks - (IntSet.cardinal used_blocks)) > 2 then begin
         (* that's not enough blocks, and we know there are more. go find them *)
         t.lookahead := { !(t.lookahead) with offset = this_offset };
-        match unused t (used_blocks @ candidate) with
+        match unused t (IntSet.union used_blocks candidate) with
         | Ok () ->
+          let candidate = IntSet.elements candidate in
           t.lookahead := { !(t.lookahead) with blocks = candidate @ !(t.lookahead).blocks};
           Ok ()
         | Error _ ->
           Error `No_space
-      end else if (List.length candidate) >= 2 then begin
+      end else if (IntSet.cardinal candidate) >= 2 then begin
+        let candidate = IntSet.elements candidate in
         t.lookahead := { !(t.lookahead) with offset = this_offset };
         t.lookahead := { !(t.lookahead) with blocks = candidate };
         Ok ()
@@ -390,8 +397,9 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
         Log.err (fun f -> f "error attempting to find unused blocks: %a" Shimmed_block.pp_error e);
         Error `No_space
       | Ok used_blocks ->
-        Log.debug (fun f -> f "%d blocks used: %a" (List.length used_blocks) Fmt.(list ~sep:sp uint64) used_blocks);
-        Ok (unused t (used_blocks @ except))
+        let used_blocks = IntSet.of_list used_blocks in
+        Log.debug (fun f -> f "%d blocks used" (IntSet.cardinal used_blocks));
+        Ok (unused t (IntSet.union used_blocks except))
 
     let get_blocks t n : (int64 list, write_error) result Lwt.t =
       let get_block t =
@@ -428,12 +436,13 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
             Log.debug (fun f -> f "wanted %d blocks, but the lookahead allocator only has %d"
                           n (List.length l));
             let open Lwt_result.Infix in
-            populate_lookahead ~except:(l @ acc) t >>= function
+            let already_claimed = l @ acc in
+            populate_lookahead ~except:(IntSet.of_list already_claimed) t >>= function
             | Error `No_space ->
               Log.err (fun f -> f "no blocks remain free on filesystem");
               Lwt.return @@ Error `No_space
             | Ok () ->
-              aux t (l @ acc) (n - (List.length l))
+              aux t already_claimed (n - (List.length l))
         in
         aux t [] n
       end

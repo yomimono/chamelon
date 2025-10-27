@@ -617,14 +617,15 @@ module Make(Sectors: Mirage_block.S) = struct
           Log.err (fun f -> f "couldn't get list of used blocks");
           Lwt.return @@ Error (`Not_found Mirage_kv.Key.empty)
         | Ok used_blocks ->
-          Log.debug (fun f -> f "found %d used blocks on block-based key-value store: %a" (List.length used_blocks) Fmt.(list ~sep:sp int64) used_blocks);
+          Log.debug (fun f -> f "found %d used blocks on block-based key-value store" (List.length used_blocks));
           let open Internal.Allocate in
-          match unused t used_blocks with
+          match unused t (Internal.IntSet.of_list used_blocks) with
           | Ok () ->
             Lwt_mutex.unlock t.new_block_mutex;
             Log.debug (fun f -> f "populated lookahead allocator with %d blocks" (List.length !(t.lookahead).blocks));
             Lwt.return @@ Ok {t with block; block_size; program_block_size}
           | Error `No_space ->
+            Lwt_mutex.unlock t.new_block_mutex;
             (* it's not great that there aren't free blocks,
              * but the user may well be connecting to try to do something about it,
              * so refusing to continue is the wrong move *)
