@@ -81,25 +81,26 @@ module Make(Sectors: Mirage_block.S) = struct
   end = struct
 
     let get_ctz t key (pointer, file_size) =
-      let rec read_block l index pointer =
+      let rec read_remaining_blocks l index pointer =
         let data = Cstruct.create t.Internal.block_size in
         This_Block.read t.block pointer [data] >>= function
         | Error _ as e -> Lwt.return e
         | Ok () ->
           let pointers, data_region = Chamelon.File.of_block index data in
-          let pointer_region = Cstruct.sub data 0 (4 * List.length pointers) in
-          Log.debug (fun f -> f "block index %d at block number %Ld has %d bytes of data and %d outgoing pointers: %a (raw %a)"
-                        index pointer (Cstruct.length data_region) (List.length pointers) Fmt.(list ~sep:comma int32) pointers Cstruct.hexdump_pp pointer_region);
+          Log.debug (fun f ->
+              let pointer_region = Cstruct.sub data 0 (4 * List.length pointers) in
+              f "block index %d at block number %Ld has %d bytes of data and %d outgoing pointers: %a (raw %a)"
+                index pointer (Cstruct.length data_region) (List.length pointers) Fmt.(list ~sep:comma int32) pointers Cstruct.hexdump_pp pointer_region);
           match pointers with
           | next::_ ->
-            read_block (data_region :: l) (index - 1) (Int64.of_int32 next)
+            read_remaining_blocks (data_region :: l) (index - 1) (Int64.of_int32 next)
           | [] ->
             Lwt.return @@ Ok (data_region :: l)
       in
       let index = Chamelon.File.last_block_index ~file_size
           ~block_size:t.block_size in
       Log.debug (fun f -> f "last block has index %d (file size is %d)" index file_size);
-      read_block [] index pointer >>= function
+      read_remaining_blocks [] index pointer >>= function
       | Error _ -> Lwt.return @@ Error (`Not_found key)
       | Ok l ->
         (* the last block very likely needs to be trimmed *)
@@ -133,20 +134,18 @@ module Make(Sectors: Mirage_block.S) = struct
           Log.debug (fun m -> m "found an inline entry with tag %a" Chamelon.Tag.pp tag);
           Ok (`Inline (Cstruct.to_string data))
         | None, None -> begin
-          (* is it actually a directory? *)
-            match List.find_opt (fun (tag, _data) ->
-                Chamelon.Tag.((fst tag.type3) = LFS_TYPE_STRUCT) &&
-                Chamelon.Tag.((snd tag.type3) = 0x00)
-              ) compacted with
+            (* is it actually a directory? *)
+            match List.find_opt (fun (tag, _data) -> Chamelon.Tag.is_directory tag) compacted with
             | Some _ -> Error (`Value_expected filename)
             | None ->
               Log.debug (fun f -> f "an ID was found for the filename, but no entries are structs or files");
               Error (`Not_found filename)
-        end
-        | _, Some (_, ctz) ->
+          end
+        | _, Some (_, ctz) -> begin
           match Chamelon.File.ctz_of_cstruct ctz with
           | Some (pointer, length) -> Ok (`Ctz (Int64.of_int32 pointer, Int32.to_int length))
           | None -> Error (`Value_expected filename)
+        end
 
     let get t key : (string, error) result Lwt.t =
       let map_result = function

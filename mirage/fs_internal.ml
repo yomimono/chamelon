@@ -249,10 +249,9 @@ module Make(Shimmed_block : Block_ops.Block_shim) = struct
         | [] -> Lwt.return @@ Ok None
         | a::[] -> Lwt.return @@ Ok (Some a)
         | l ->
-          let last = List.rev l |> List.hd in
-          Log.debug (fun f -> f "directory at %a had multiple directory entries for key %s. choosing the last one, which points to %a"
-                        pp_blockpair block_pair name pp_blockpair last);
-          Lwt.return @@ Ok (Some last)
+          Log.err (fun f -> f "directory at %a had %d directory entries for key %s"
+                        pp_blockpair block_pair (List.length l) name);
+          Lwt.return_error (`Not_found (Mirage_kv.Key.v name))
 
     let rec find_first_blockpair_of_directory t block_pair key =
       match key with

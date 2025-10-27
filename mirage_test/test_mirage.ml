@@ -615,8 +615,6 @@ let test_big_inline_writes block _ () =
   | Error e -> fail_read e
   | Ok v -> Alcotest.(check string) "correct value before expected-bad write" "\001" v;
     (* after this write, the value is not consistent with expectations *)
-    (* looking at the parse output, after this write we see a deletion for id *2*, whereas
-     * our file was id *1*, I believe *)
     Chamelon.set fs second_path "\000" >>= or_fail >>= fun () ->
     Chamelon.get fs second_path >>= function
     | Error e -> fail_read e
@@ -699,15 +697,13 @@ let test img =
          test_case "allocate" `Quick (test_allocate block);
        ]
       );
-         (*
       ("last modified",
        [ test_case "last modified increases on overwrite" `Quick (test_last_modified block);
          test_case "last modified of a directory reflects a write in it" `Quick (test_last_modified_dir block);
          test_case "last modified only goes 1 level deep" `Quick (test_last_modified_depth block);
-         test_case "last modified correctly errors" `Quick (test_last_modified_errors block);
+      (*   test_case "last modified correctly errors" `Quick (test_last_modified_errors block); *)
        ]
       );
-         *)
       ("get",
        [ test_case "get nonexistent value" `Quick (test_nonexistent_value block);
          test_case "get a dictionary" `Quick (test_get_dictionary block);
